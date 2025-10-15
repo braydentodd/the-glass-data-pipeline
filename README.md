@@ -2,7 +2,7 @@
 
 Automated data pipeline that extracts NBA game statistics from the NBA API and loads them into PostgreSQL
 
-## 📊 What It Does
+## What It Does
 
 - **Extracts** player and team statistics from NBA API endpoints
 - **Transforms** raw data into analytics-ready format
@@ -93,10 +93,3 @@ schedule:
   # Every day at 8 AM UTC
   - cron: '0 8 * * *'
 ```
-
-### Season Settings
-The NBA season is **automatically detected** based on the current date:
-- **Before July 1**: Uses previous year's season (e.g., `2024-25` in May 2025)
-- **July 1 or later**: Uses next season (e.g., `2025-26` in July 2025)
-
-No manual updates needed! The code automatically handles the season transition.
