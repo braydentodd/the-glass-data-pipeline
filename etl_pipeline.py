@@ -35,11 +35,28 @@ class Config:
     DB_USER = os.getenv('DB_USER', 'the_glass_user')
     DB_PASSWORD = os.getenv('DB_PASSWORD', '')  # Must be set via env var
     
-    # Season configuration
-    CURRENT_SEASON = "2024-25"
+    # Season configuration (auto-detected based on current date)
+    @staticmethod
+    def get_current_season():
+        """
+        Automatically determine the current NBA season based on the date.
+        Season changes on July 1st each year.
+        - Before July 1: Previous year's season (e.g., 2024-25 if it's May 2025)
+        - On/after July 1: Next season (e.g., 2025-26 if it's July 2025)
+        """
+        now = datetime.now()
+        if now.month >= 7:  # July 1 or later
+            start_year = now.year
+        else:  # Before July 1
+            start_year = now.year - 1
+        
+        end_year = start_year + 1
+        return f"{start_year}-{str(end_year)[2:]}"
     
-    # All season types to fetch
-    SEASON_TYPES = ["Regular Season", "Playoffs", "PlayIn", "Pre Season"]
+    CURRENT_SEASON = get_current_season.__func__()  # Call the static method
+    
+    # All season types to fetch (includes Summer League!)
+    SEASON_TYPES = ["Regular Season", "Playoffs", "PlayIn", "Pre Season", "Summer League"]
     
     # Date range for backfill (from env vars or None = today only)
     START_DATE = os.getenv('START_DATE')  # e.g., "2024-10-22" for backfill
@@ -281,11 +298,24 @@ def fetch_box_scores(game_id: str) -> Dict[str, pd.DataFrame]:
     
     return box_scores
 
-def fetch_shot_chart_data(game_id: str, player_ids: List[int]) -> Dict[int, pd.DataFrame]:
+def fetch_shot_chart_data(game_id: str, player_ids: List[int], season_type: str = 'Regular Season') -> Dict[int, pd.DataFrame]:
     """Fetch shot chart data for all players in a game"""
     log_info(f"Fetching shot chart data for {len(player_ids)} players")
     
     shot_charts = {}
+    
+    # Map our season types to NBA API season_type_all_star values
+    season_type_map = {
+        'Regular Season': 'Regular Season',
+        'Playoffs': 'Playoffs',
+        'PlayIn': 'Playoffs',  # API treats PlayIn as Playoffs
+        'Pre Season': 'Pre Season',
+        'Summer League': 'Regular Season',  # Summer League uses Regular Season endpoint
+        'IST': 'Regular Season',
+        'IST Championship': 'Regular Season'
+    }
+    
+    api_season_type = season_type_map.get(season_type, 'Regular Season')
     
     for player_id in player_ids:
         try:
@@ -295,7 +325,7 @@ def fetch_shot_chart_data(game_id: str, player_ids: List[int]) -> Dict[int, pd.D
                 game_id_nullable=game_id,
                 context_measure_simple='FGA',
                 season_nullable=Config.CURRENT_SEASON,
-                season_type_all_star='Regular Season'  # Shot charts only available for regular season
+                season_type_all_star=api_season_type
             )
             
             shot_df = shots.get_data_frames()[0]
@@ -714,10 +744,11 @@ def process_game(conn, game_id: str, game_date: str, season_type: str):
         if not box_scores['traditional_player'].empty:
             player_ids = box_scores['traditional_player']['PLAYER_ID'].tolist()
         
-        # Extract shot chart data (if players exist and it's regular season/IST)
+        # Extract shot chart data (if players exist)
+        # Note: Shot charts may not be available for all game types (especially Summer League)
         shot_charts = {}
-        if player_ids and season_type in ['Regular Season', 'IST', 'IST Championship']:
-            shot_charts = fetch_shot_chart_data(game_id, player_ids)
+        if player_ids:
+            shot_charts = fetch_shot_chart_data(game_id, player_ids, season_type)
         
         # Extract matchup data
         matchup_data = fetch_matchup_data(game_id)

@@ -7,7 +7,9 @@ Automated data pipeline that extracts NBA game statistics from the NBA API and l
 - **Extracts** player and team statistics from NBA API endpoints
 - **Transforms** raw data into analytics-ready format
 - **Loads** into PostgreSQL database
-- **Runs automatically** every day via GitHub Actions
+- **Runs automatically** every day year-round via GitHub Actions
+- **Auto-detects** the current NBA season (changes July 1st)
+- **Captures** all game types: Regular Season, Playoffs, PlayIn, Pre Season, and Summer League
 
 
 ### GitHub Actions Setup
@@ -30,6 +32,8 @@ Automated data pipeline that extracts NBA game statistics from the NBA API and l
 
 ### Extraction
 - Fetches games for specified date(s)
+- Auto-detects current NBA season (July 1 cutoff)
+- Retrieves all season types: Regular Season, Playoffs, PlayIn, Pre Season, Summer League
 - Retrieves box scores:
   - Traditional (points, rebounds, assists)
   - Advanced (ratings, efficiency)
@@ -61,7 +65,7 @@ To load historical data:
    - Enter end date: `2024-10-24`
    - Click "Run workflow"
 
-## 🗄️ Database Schema
+## Database Schema
 
 The pipeline loads into these tables:
 - `games` - Game metadata and scores
@@ -77,23 +81,22 @@ The pipeline loads into these tables:
 ## Configuration
 
 ### Schedule
-The pipeline runs **October 1 - June 30** at **6 AM UTC** daily.
+The pipeline runs **daily at 8 AM UTC year-round** to capture:
+- Regular season (October - April)
+- Playoffs (April - June)
+- Summer League (July)
+- Pre-season (September - October)
 
 To change the schedule, edit `.github/workflows/etl_pipeline.yml`:
 ```yaml
 schedule:
-  # October 1 - December 31 at 6 AM UTC
-  - cron: '0 6 1-31 10-12 *'
-  # January 1 - June 30 at 6 AM UTC
-  - cron: '0 6 1-30 1-6 *'
+  # Every day at 8 AM UTC
+  - cron: '0 8 * * *'
 ```
 
 ### Season Settings
-Edit `etl_pipeline.py` to customize:
+The NBA season is **automatically detected** based on the current date:
+- **Before July 1**: Uses previous year's season (e.g., `2024-25` in May 2025)
+- **July 1 or later**: Uses next season (e.g., `2025-26` in July 2025)
 
-```python
-class Config:
-    # Season
-    CURRENT_SEASON = "2024-25"
-    SEASON_TYPE = "Regular Season"
-```
+No manual updates needed! The code automatically handles the season transition.
