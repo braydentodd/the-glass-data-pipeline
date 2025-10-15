@@ -17,15 +17,20 @@ Automated data pipeline that extracts NBA game statistics from the NBA API and l
 1. **Add GitHub Secrets**
    
    Go to your repository → Settings → Secrets and variables → Actions → New repository secret
-
+   - `DB_HOST`: Your PostgreSQL host
+   - `DB_NAME`: Your database name
+   - `DB_USER`: Your database user
+   - `DB_PASSWORD`: Your database password
 
 2. **Enable GitHub Actions**
    
    Go to your repository → Actions tab → Enable workflows
 
 3. **Pipeline will run automatically**
-   - Every day at 4 AM UTC (after most games finish)
+   - Every day at 8 AM UTC (processes previous day's games)
    - Or trigger manually from Actions tab
+
+⚠️ **Known Limitation**: GitHub Actions may experience timeouts connecting to the NBA API. If this occurs, run the pipeline locally or use a self-hosted runner.
 
 
 ## ETL Pipeline Details
@@ -55,15 +60,30 @@ Automated data pipeline that extracts NBA game statistics from the NBA API and l
 - Handles conflicts automatically
 - Updates timestamps
 
-## Running Backfills
+## Running the Pipeline
 
-To load historical data:
+### Daily Automated Runs
+The pipeline runs daily at 8 AM UTC and processes **yesterday's games** (since games finish late at night).
 
-1. **Via GitHub Actions (recommended)**
-   - Go to Actions → The Glass ETL Pipeline → Run workflow
-   - Enter start date: `2024-10-22`
-   - Enter end date: `2024-10-24`
-   - Click "Run workflow"
+### Manual Runs
+
+**Via GitHub Actions:**
+- Go to Actions → The Glass ETL Pipeline → Run workflow
+- Leave dates empty for yesterday's games
+- Or enter specific dates for backfill:
+  - Start date: `2024-10-22`
+  - End date: `2024-10-24`
+- Click "Run workflow"
+
+**Locally (recommended for backfills):**
+```bash
+# Load environment variables and run for yesterday
+export $(cat .env | xargs)
+python etl_pipeline.py
+
+# Or run for specific date range
+START_DATE=2024-10-22 END_DATE=2024-10-24 python etl_pipeline.py
+```
 
 ## Database Schema
 

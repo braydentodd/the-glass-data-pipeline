@@ -76,6 +76,20 @@ class Config:
         "2024-12-17",  # 2024-25 season
         "2025-12-16",  # 2025-26 season (estimated)
     ]
+    
+    # Custom headers to bypass NBA API cloud IP blocking
+    # NBA API blocks cloud infrastructure IPs (AWS, Azure, GCP) to prevent DDOS
+    # These headers make requests look like they're coming from a real browser
+    NBA_API_HEADERS = {
+        'Host': 'stats.nba.com',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'max-age=0',
+        'Upgrade-Insecure-Requests': '1',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
 
 # ============================================
 # DATABASE CONNECTION
@@ -210,13 +224,15 @@ def fetch_games_for_date(game_date: str) -> List[Tuple[str, str]]:
     # Try each season type
     for season_type in Config.SEASON_TYPES:
         try:
-            # Use retry logic for API call
+            # Use retry logic for API call with custom headers to bypass cloud IP blocking
             def fetch_games():
                 gf = leaguegamefinder.LeagueGameFinder(
                     season_nullable=Config.CURRENT_SEASON,
                     season_type_nullable=season_type,
                     date_from_nullable=game_date,
-                    date_to_nullable=game_date
+                    date_to_nullable=game_date,
+                    headers=Config.NBA_API_HEADERS,
+                    timeout=100
                 )
                 return gf.get_data_frames()[0]
             
@@ -262,7 +278,11 @@ def fetch_box_scores(game_id: str) -> Dict[str, pd.DataFrame]:
     
     # Traditional box score
     try:
-        box = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id)
+        box = boxscoretraditionalv2.BoxScoreTraditionalV2(
+            game_id=game_id,
+            headers=Config.NBA_API_HEADERS,
+            timeout=100
+        )
         box_scores['traditional_player'] = box.get_data_frames()[0]
         box_scores['traditional_team'] = box.get_data_frames()[1]
         log_info(f"  ✓ Traditional: {len(box_scores['traditional_player'])} players")
@@ -275,7 +295,11 @@ def fetch_box_scores(game_id: str) -> Dict[str, pd.DataFrame]:
     
     # Advanced box score
     try:
-        box = boxscoreadvancedv2.BoxScoreAdvancedV2(game_id=game_id)
+        box = boxscoreadvancedv2.BoxScoreAdvancedV2(
+            game_id=game_id,
+            headers=Config.NBA_API_HEADERS,
+            timeout=100
+        )
         box_scores['advanced_player'] = box.get_data_frames()[0]
         box_scores['advanced_team'] = box.get_data_frames()[1]
         log_info(f"  ✓ Advanced: {len(box_scores['advanced_player'])} players")
@@ -288,7 +312,11 @@ def fetch_box_scores(game_id: str) -> Dict[str, pd.DataFrame]:
     
     # Hustle stats
     try:
-        box = boxscorehustlev2.BoxScoreHustleV2(game_id=game_id)
+        box = boxscorehustlev2.BoxScoreHustleV2(
+            game_id=game_id,
+            headers=Config.NBA_API_HEADERS,
+            timeout=100
+        )
         box_scores['hustle_player'] = box.get_data_frames()[0]
         box_scores['hustle_team'] = box.get_data_frames()[1]
         log_info(f"  ✓ Hustle: {len(box_scores['hustle_player'])} players")
@@ -301,7 +329,11 @@ def fetch_box_scores(game_id: str) -> Dict[str, pd.DataFrame]:
     
     # Scoring stats
     try:
-        box = boxscorescoringv2.BoxScoreScoringV2(game_id=game_id)
+        box = boxscorescoringv2.BoxScoreScoringV2(
+            game_id=game_id,
+            headers=Config.NBA_API_HEADERS,
+            timeout=100
+        )
         box_scores['scoring_player'] = box.get_data_frames()[0]
         box_scores['scoring_team'] = box.get_data_frames()[1]
         log_info(f"  ✓ Scoring: {len(box_scores['scoring_player'])} players")
@@ -341,7 +373,9 @@ def fetch_shot_chart_data(game_id: str, player_ids: List[int], season_type: str 
                 game_id_nullable=game_id,
                 context_measure_simple='FGA',
                 season_nullable=Config.CURRENT_SEASON,
-                season_type_all_star=api_season_type
+                season_type_all_star=api_season_type,
+                headers=Config.NBA_API_HEADERS,
+                timeout=100
             )
             
             shot_df = shots.get_data_frames()[0]
@@ -362,7 +396,11 @@ def fetch_matchup_data(game_id: str) -> Dict:
     log_info(f"Fetching matchup data for game {game_id}")
     
     try:
-        box = boxscorematchupsv3.BoxScoreMatchupsV3(game_id=game_id)
+        box = boxscorematchupsv3.BoxScoreMatchupsV3(
+            game_id=game_id,
+            headers=Config.NBA_API_HEADERS,
+            timeout=100
+        )
         matchup_data = box.get_dict()
         log_info(f"  ✓ Retrieved matchup data")
         return matchup_data
