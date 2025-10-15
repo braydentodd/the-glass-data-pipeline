@@ -95,6 +95,8 @@ def get_db_connection():
         log_error(f"Database connection failed: {e}")
         raise
 
+# Teams table population removed - use populate_teams.py script instead
+
 # ============================================
 # LOGGING
 # ============================================
@@ -834,6 +836,9 @@ def run_etl_pipeline():
     log_info("\n" + "="*60)
     log_info("THE GLASS - ETL PIPELINE")
     log_info("="*60)
+    
+    # Note: Teams and Players tables must be populated before running this pipeline
+    # Run populate_teams.py once, then populate_players.py monthly
     
     # Determine date range
     if Config.START_DATE and Config.END_DATE:
