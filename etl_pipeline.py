@@ -6,13 +6,11 @@ Extracts NBA data and loads it into PostgreSQL
 import os
 import sys
 import time
-import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-from nba_api.stats.static import teams as static_teams, players as static_players
 from nba_api.stats.endpoints import (
     leaguegamefinder,
     boxscoretraditionalv2,
@@ -21,7 +19,6 @@ from nba_api.stats.endpoints import (
     boxscorescoringv2,
     boxscorematchupsv3,
     shotchartdetail,
-    commonplayerinfo,
 )
 
 # ============================================
@@ -62,8 +59,10 @@ class Config:
     START_DATE = os.getenv('START_DATE')  # e.g., "2024-10-22" for backfill
     END_DATE = os.getenv('END_DATE')      # e.g., "2024-10-24" for backfill
     
-    # Rate limiting
+    # Rate limiting and retry
     RATE_LIMIT_DELAY = 0.6  # 600ms between requests
+    MAX_RETRIES = 3         # Number of retries for API calls
+    RETRY_DELAY = 2         # Seconds to wait between retries
     
     # Logging
     LOG_FILE = "etl_pipeline.log"
@@ -125,6 +124,20 @@ def log_success(message: str):
 def rate_limit():
     """Sleep to avoid API rate limits"""
     time.sleep(Config.RATE_LIMIT_DELAY)
+
+def retry_api_call(func, *args, **kwargs):
+    """Retry an API call with exponential backoff"""
+    for attempt in range(Config.MAX_RETRIES):
+        try:
+            result = func(*args, **kwargs)
+            return result
+        except Exception as e:
+            if attempt < Config.MAX_RETRIES - 1:
+                wait_time = Config.RETRY_DELAY * (2 ** attempt)  # Exponential backoff
+                log_info(f"  Retry {attempt + 1}/{Config.MAX_RETRIES} after {wait_time}s due to: {str(e)[:100]}")
+                time.sleep(wait_time)
+            else:
+                raise  # Re-raise on final attempt
 
 def safe_float(value, default=None):
     """Safely convert to float"""
@@ -197,14 +210,17 @@ def fetch_games_for_date(game_date: str) -> List[Tuple[str, str]]:
     # Try each season type
     for season_type in Config.SEASON_TYPES:
         try:
-            gamefinder = leaguegamefinder.LeagueGameFinder(
-                season_nullable=Config.CURRENT_SEASON,
-                season_type_nullable=season_type,
-                date_from_nullable=game_date,
-                date_to_nullable=game_date
-            )
+            # Use retry logic for API call
+            def fetch_games():
+                gf = leaguegamefinder.LeagueGameFinder(
+                    season_nullable=Config.CURRENT_SEASON,
+                    season_type_nullable=season_type,
+                    date_from_nullable=game_date,
+                    date_to_nullable=game_date
+                )
+                return gf.get_data_frames()[0]
             
-            games_df = gamefinder.get_data_frames()[0]
+            games_df = retry_api_call(fetch_games)
             
             if not games_df.empty:
                 # Get unique game IDs
@@ -786,17 +802,30 @@ def run_etl_for_date(date_str: str):
         games = fetch_games_for_date(date_str)
         
         if not games:
-            log_info("No games to process")
+            log_info("No games to process for this date")
             return
         
         # Process each game
-        for game_id, season_type in games:
-            process_game(conn, game_id, date_str, season_type)
+        games_processed = 0
+        games_failed = 0
         
-        log_success(f"\n✓ ETL complete for {date_str}")
+        for game_id, season_type in games:
+            try:
+                process_game(conn, game_id, date_str, season_type)
+                games_processed += 1
+            except Exception as e:
+                games_failed += 1
+                log_error(f"Failed to process game {game_id}: {e}")
+        
+        # Report results
+        if games_failed > 0:
+            log_error(f"⚠ ETL complete for {date_str}: {games_processed} succeeded, {games_failed} failed")
+        else:
+            log_success(f"✓ ETL complete for {date_str}: {games_processed} games processed successfully")
         
     except Exception as e:
         log_error(f"ETL failed for {date_str}: {e}")
+        raise  # Re-raise to trigger exit code
     finally:
         conn.close()
 
@@ -815,18 +844,31 @@ def run_etl_pipeline():
                  for x in range((end - start).days + 1)]
         log_info(f"Backfill mode: {len(dates)} dates")
     else:
-        # Today only
-        today = datetime.now().strftime("%Y-%m-%d")
-        dates = [today]
-        log_info(f"Daily mode: {today}")
+        # Yesterday only (games finish late, so we process previous day)
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        dates = [yesterday]
+        log_info(f"Daily mode: {yesterday} (yesterday's games)")
     
     # Process each date
-    for date_str in dates:
-        run_etl_for_date(date_str)
+    total_success = 0
+    total_failed = 0
     
-    log_success("\n" + "="*60)
-    log_success("ETL PIPELINE COMPLETE")
-    log_success("="*60)
+    for date_str in dates:
+        try:
+            run_etl_for_date(date_str)
+            total_success += 1
+        except Exception as e:
+            total_failed += 1
+            log_error(f"Failed to process date {date_str}: {e}")
+    
+    # Final report
+    log_info("\n" + "="*60)
+    if total_failed > 0:
+        log_error(f"ETL PIPELINE COMPLETE: {total_success} dates succeeded, {total_failed} failed")
+        sys.exit(1)  # Exit with error code
+    else:
+        log_success(f"ETL PIPELINE COMPLETE: {total_success} dates processed successfully")
+        log_success("="*60)
 
 # ============================================
 # ENTRY POINT
