@@ -2,7 +2,7 @@
 
 Automated data pipeline that extracts NBA game statistics from the NBA API and loads them into PostgreSQL
 
-## 📊 What It Does
+## What It Does
 
 - **Extracts** player and team statistics from NBA API endpoints
 - **Transforms** raw data into analytics-ready format
