@@ -33,6 +33,7 @@ from nba_api.stats.endpoints import (
     boxscorescoringv2,
     boxscorematchupsv3,
     shotchartdetail,
+    scheduleleaguev2,
 )
 
 # ============================================
@@ -256,8 +257,10 @@ def detect_ist_game(game_date: str, game_count: int = 1) -> str:
 
 def fetch_upcoming_games(season: str = None, season_type: str = 'Regular Season') -> List[Dict]:
     """
-    Fetch all scheduled (upcoming) games for the current season
+    Fetch all scheduled (upcoming) games for the current season using ScheduleLeagueV2
     Returns: List of game dicts with basic info (no stats yet)
+    
+    NOTE: Only fetches games that are in the future (game_date >= today) and match the season_type
     """
     if season is None:
         season = Config.CURRENT_SEASON
@@ -265,52 +268,97 @@ def fetch_upcoming_games(season: str = None, season_type: str = 'Regular Season'
     log_info(f"Fetching upcoming games for {season} {season_type}")
     
     try:
-        def fetch_games():
-            finder = leaguegamefinder.LeagueGameFinder(
-                season_nullable=season,
-                season_type_nullable=season_type,
-                league_id_nullable='00'  # NBA
+        # Use ScheduleLeagueV2 to get the complete season schedule
+        def fetch_schedule():
+            schedule = scheduleleaguev2.ScheduleLeagueV2(
+                season=season,
+                league_id='00'  # NBA
             )
-            return finder.get_data_frames()[0]
+            return schedule.get_data_frames()[0]
         
-        games_df = retry_api_call(fetch_games)
+        schedule_df = retry_api_call(fetch_schedule)
         
-        if games_df.empty:
-            log_info("No games found")
+        if schedule_df.empty:
+            log_info("No games found in schedule")
             return []
         
-        # Group by GAME_ID to get unique games (API returns one row per team)
-        unique_games = games_df.drop_duplicates(subset=['GAME_ID'])
+        # Filter to only future games (today or later)
+        today = datetime.now().date()
+        schedule_df['game_date_parsed'] = pd.to_datetime(schedule_df['gameDate']).dt.date
+        future_games_df = schedule_df[schedule_df['game_date_parsed'] >= today]
         
+        if future_games_df.empty:
+            log_info("No future games found")
+            return []
+        
+        # Map our season_type to the API's gameLabel values
+        # NOTE: Regular Season games have BLANK gameLabel in the API!
+        # gameLabel is only populated for special cases: "Preseason", "Emirates NBA Cup", "Playoffs", etc.
+        season_type_map = {
+            'Pre Season': 'Preseason',
+            'Regular Season': '',  # Regular season games have empty gameLabel!
+            'Playoffs': 'Playoffs',
+            'PlayIn': 'Play-In',  # API might use "Play-In" with hyphen
+            'Summer League': 'Summer League',
+            'IST': 'Emirates NBA Cup',  # New name for In-Season Tournament
+            'IST Championship': 'Emirates NBA Cup'
+        }
+        
+        # Get the expected gameLabel for this season_type
+        expected_label = season_type_map.get(season_type, season_type)
+        
+        # Filter by season type
+        if season_type == 'Regular Season':
+            # Regular season games have BLANK gameLabel (not labeled specially)
+            # Exclude games with special labels like "Preseason", "Emirates NBA Cup", "Playoffs"
+            filtered_df = future_games_df[
+                (future_games_df['gameLabel'].isna()) | (future_games_df['gameLabel'] == '')
+            ]
+        elif season_type in ['IST', 'IST Championship']:
+            # IST/Emirates NBA Cup games have specific gameLabel
+            filtered_df = future_games_df[
+                future_games_df['gameLabel'].str.contains('NBA Cup', case=False, na=False) |
+                future_games_df['gameLabel'].str.contains('In-Season Tournament', case=False, na=False)
+            ]
+        else:
+            # For other season types (Preseason, Playoffs, etc.), filter by gameLabel
+            filtered_df = future_games_df[future_games_df['gameLabel'] == expected_label]
+        
+        if filtered_df.empty:
+            log_info(f"No future {season_type} games found")
+            return []
+        
+        # Convert to our game format
         upcoming_games = []
-        for _, game in unique_games.iterrows():
-            game_id = game['GAME_ID']
-            game_date = game['GAME_DATE']
+        for _, game in filtered_df.iterrows():
+            # gameStatus: 1 = scheduled, 2 = in progress, 3 = final
+            game_status_num = game.get('gameStatus', 1)
             
-            # Parse game date
-            if isinstance(game_date, str):
-                game_date = datetime.strptime(game_date, '%Y-%m-%d').date()
+            # Skip games that are already final
+            if game_status_num == 3:
+                continue
             
-            # Get both teams for this game
-            game_teams = games_df[games_df['GAME_ID'] == game_id]
-            if len(game_teams) == 2:
-                # First row is visitor (away), second is home
-                away_team = game_teams.iloc[0]
-                home_team = game_teams.iloc[1]
-                
-                upcoming_games.append({
-                    'game_id': game_id,
-                    'game_date': game_date,
-                    'season': season,
-                    'season_type': season_type,
-                    'home_team_id': safe_int(home_team['TEAM_ID']),
-                    'away_team_id': safe_int(away_team['TEAM_ID']),
-                    'home_score': None,  # Not played yet
-                    'away_score': None,
-                    'game_status': 'Scheduled'
-                })
+            # Determine game status
+            if game_status_num == 1:
+                game_status = 'Scheduled'
+            elif game_status_num == 2:
+                game_status = 'In Progress'
+            else:
+                game_status = 'Scheduled'  # Default
+            
+            upcoming_games.append({
+                'game_id': game['gameId'],
+                'game_date': game['game_date_parsed'],
+                'season': season,
+                'season_type': season_type,
+                'home_team_id': safe_int(game.get('homeTeam_teamId')),
+                'away_team_id': safe_int(game.get('awayTeam_teamId')),
+                'home_score': safe_int(game.get('homeTeam_score')) if game_status_num == 3 else None,
+                'away_score': safe_int(game.get('awayTeam_score')) if game_status_num == 3 else None,
+                'game_status': game_status
+            })
         
-        log_info(f"Found {len(upcoming_games)} upcoming games")
+        log_info(f"Found {len(upcoming_games)} upcoming {season_type} games")
         return upcoming_games
         
     except Exception as e:
@@ -1480,6 +1528,84 @@ def populate_upcoming_games(conn, season: str = None):
     except Exception as e:
         conn.rollback()
         log_error(f"Failed to populate upcoming games: {e}")
+
+def clean_postponed_games(conn, season: str = None):
+    """
+    Remove games from database that were postponed/rescheduled and no longer appear in the NBA schedule.
+    
+    This handles cases where:
+    - A game was originally scheduled but got postponed (will have new game_id when rescheduled)
+    - A game date was changed (original game_id removed from schedule)
+    - A game was cancelled entirely
+    
+    Strategy: Fetch current schedule from NBA API and remove any 'Scheduled' games that are no longer listed.
+    """
+    if season is None:
+        season = Config.CURRENT_SEASON
+    
+    log_info(f"\nChecking for postponed/rescheduled games for {season}...")
+    
+    # Get all currently scheduled game IDs from NBA API
+    api_game_ids = set()
+    
+    for season_type in Config.SEASON_TYPES:
+        try:
+            upcoming = fetch_upcoming_games(season, season_type)
+            for game in upcoming:
+                api_game_ids.add(game['game_id'])
+            rate_limit()
+        except Exception as e:
+            log_error(f"Failed to fetch games for {season_type}: {e}")
+    
+    if not api_game_ids:
+        log_info("No games found in NBA API (this might be off-season)")
+        return
+    
+    log_info(f"Found {len(api_game_ids)} games in current NBA schedule")
+    
+    # Get all 'Scheduled' games from our database for this season
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT game_id, game_date, season_type 
+                FROM games 
+                WHERE season = %s 
+                AND game_status = 'Scheduled'
+            """, (season,))
+            
+            db_games = cur.fetchall()
+        
+        if not db_games:
+            log_info("No scheduled games in database to check")
+            return
+        
+        log_info(f"Found {len(db_games)} scheduled games in database")
+        
+        # Find games in database that are no longer in the NBA schedule
+        postponed_game_ids = []
+        for game_id, game_date, season_type in db_games:
+            if game_id not in api_game_ids:
+                postponed_game_ids.append(game_id)
+                log_info(f"  Game {game_id} ({game_date}, {season_type}) no longer in NBA schedule - marking as postponed")
+        
+        if not postponed_game_ids:
+            log_success("✓ No postponed games detected - all scheduled games still valid")
+            return
+        
+        # Delete postponed games from database
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM games 
+                WHERE game_id = ANY(%s)
+            """, (postponed_game_ids,))
+        
+        conn.commit()
+        log_success(f"✓ Removed {len(postponed_game_ids)} postponed/rescheduled games from database")
+        
+    except Exception as e:
+        conn.rollback()
+        log_error(f"Failed to clean postponed games: {e}")
+        raise
         raise
 
 def update_game_statuses(conn):
@@ -2007,6 +2133,7 @@ def run_etl_for_date(date_str: str, check_upcoming: bool = True):
         if check_upcoming:
             try:
                 populate_upcoming_games(conn, Config.CURRENT_SEASON)
+                clean_postponed_games(conn, Config.CURRENT_SEASON)
                 update_game_statuses(conn)
             except Exception as e:
                 log_error(f"Failed to update upcoming games: {e}")
