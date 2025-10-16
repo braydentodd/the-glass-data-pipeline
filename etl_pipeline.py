@@ -173,6 +173,14 @@ def safe_int(value, default=None):
     except:
         return default
 
+def safe_str(value):
+    """Safely convert value to str, handling None and numpy types"""
+    if value is None or value == '' or (hasattr(value, '__len__') and len(value) == 0):
+        return None
+    if pd.isna(value):
+        return None
+    return str(value)
+
 def parse_minutes(min_str):
     """Convert MIN string (e.g., '33:45') to decimal minutes"""
     if pd.isna(min_str) or min_str is None or min_str == '':
@@ -984,10 +992,118 @@ def transform_team_game_stats(
 # DATA LOADING
 # ============================================
 
+def ensure_players_exist(conn, player_ids: List[int]):
+    """Ensure all players exist in the database, add minimal records if missing"""
+    if not player_ids:
+        return
+    
+    # Check which players are missing
+    query = "SELECT player_id FROM players WHERE player_id = ANY(%s)"
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, (player_ids,))
+            existing_ids = set(row[0] for row in cur.fetchall())
+        
+        missing_ids = set(player_ids) - existing_ids
+        
+        if not missing_ids:
+            return  # All players exist
+        
+        log_info(f"Found {len(missing_ids)} players not in database, fetching details...")
+        
+        # Fetch basic info for missing players
+        from nba_api.stats.endpoints import commonplayerinfo
+        
+        players_to_insert = []
+        for player_id in missing_ids:
+            try:
+                player_info = commonplayerinfo.CommonPlayerInfo(player_id=player_id)
+                info_df = player_info.get_data_frames()[0]
+                
+                if not info_df.empty:
+                    row = info_df.iloc[0]
+                    
+                    # Parse height
+                    height_inches = None
+                    height_str = row.get('HEIGHT')
+                    if height_str and '-' in str(height_str):
+                        parts = str(height_str).split('-')
+                        if len(parts) == 2:
+                            feet = int(parts[0])
+                            inches = int(parts[1])
+                            height_inches = (feet * 12) + inches
+                    
+                    # Parse weight
+                    weight_lbs = safe_int(row.get('WEIGHT'))
+                    
+                    # Get team_id
+                    team_id = safe_int(row.get('TEAM_ID'))
+                    if team_id == 0:
+                        team_id = None
+                    
+                    players_to_insert.append((
+                        player_id,
+                        team_id,
+                        safe_str(row.get('FIRST_NAME')),
+                        safe_str(row.get('LAST_NAME')),
+                        safe_str(row.get('DISPLAY_FIRST_LAST')),
+                        height_inches,
+                        weight_lbs,
+                        None,  # age_decimal - will be updated by daily script
+                        safe_int(row.get('SEASON_EXP')),
+                        safe_str(row.get('JERSEY')),
+                        safe_str(row.get('SCHOOL')),
+                        safe_str(row.get('COUNTRY')),
+                        safe_str(row.get('POSITION')),
+                        player_id,
+                        f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+                    ))
+                    
+                    log_info(f"  ✓ Fetched info for player {player_id}: {row.get('DISPLAY_FIRST_LAST')}")
+                
+                rate_limit()
+                
+            except Exception as e:
+                log_error(f"  ✗ Failed to fetch player {player_id}: {e}")
+                # Insert minimal record so we don't fail on foreign key
+                players_to_insert.append((
+                    player_id,
+                    None, None, None, f"Unknown Player {player_id}",
+                    None, None, None, None, None, None, None, None,
+                    player_id,
+                    f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+                ))
+        
+        if players_to_insert:
+            insert_query = """
+                INSERT INTO players (
+                    player_id, team_id, first_name, last_name, full_name,
+                    height_inches, weight_lbs, age_decimal, years_experience,
+                    jersey_number, pre_nba_team, birthplace, position,
+                    nba_api_id, headshot_url
+                )
+                VALUES %s
+                ON CONFLICT (player_id) DO NOTHING
+            """
+            
+            with conn.cursor() as cur:
+                execute_values(cur, insert_query, players_to_insert)
+            conn.commit()
+            log_success(f"✓ Added {len(players_to_insert)} missing players to database")
+    
+    except Exception as e:
+        log_error(f"Failed to ensure players exist: {e}")
+        # Don't raise - let the foreign key constraint fail with better context
+
 def upsert_player_game_stats(conn, records: List[Dict]):
     """Insert or update player game stats in PostgreSQL"""
     if not records:
         return
+    
+    # Ensure all players exist in database first
+    player_ids = [r['player_id'] for r in records if r.get('player_id')]
+    ensure_players_exist(conn, player_ids)
     
     log_info(f"Upserting {len(records)} player game stats...")
     

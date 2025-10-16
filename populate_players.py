@@ -162,12 +162,10 @@ def populate_players():
     all_players = static_players.get_players()
     log(f"Found {len(all_players)} total players in NBA history")
     
-    # Filter to only active players (optional - you can remove this to get all historical players)
-    active_players = [p for p in all_players if p.get('is_active', False)]
-    log(f"Found {len(active_players)} active players")
-    
-    # You can choose: process all players or just active ones
-    players_to_process = active_players  # Change to all_players for full history
+    # Process ALL players (not just "active" since NBA API's is_active flag is unreliable)
+    # Players who haven't played recently will be cleaned up by a separate script
+    players_to_process = all_players
+    log(f"Will fetch details for all {len(players_to_process)} players")
     
     log(f"Fetching detailed information for {len(players_to_process)} players...")
     log("This will take several minutes due to API rate limiting...")
@@ -264,11 +262,73 @@ def populate_players():
         conn.commit()
         log(f"✓ Successfully populated {len(player_records)} players!")
         
+        # Cleanup: Remove inactive players who haven't played in current or previous season
+        cleanup_inactive_players(conn)
+        
         conn.close()
         
     except Exception as e:
         log(f"✗ Database error: {e}")
         sys.exit(1)
+
+def cleanup_inactive_players(conn):
+    """
+    Remove players who haven't appeared in games during current or previous season.
+    This keeps the database clean while ensuring we don't accidentally remove active players.
+    """
+    log("\n" + "="*60)
+    log("Cleaning up inactive players...")
+    log("="*60)
+    
+    # Determine current and previous season
+    from datetime import datetime
+    now = datetime.now()
+    if now.month >= 7:
+        current_season_start = now.year
+    else:
+        current_season_start = now.year - 1
+    
+    current_season = f"{current_season_start}-{str(current_season_start + 1)[2:]}"
+    prev_season = f"{current_season_start - 1}-{str(current_season_start)[2:]}"
+    
+    log(f"Current season: {current_season}")
+    log(f"Previous season: {prev_season}")
+    
+    # Find players who have NOT played in current or previous season
+    query = """
+        WITH active_player_ids AS (
+            SELECT DISTINCT pgs.player_id
+            FROM player_game_stats pgs
+            JOIN games g ON pgs.game_id = g.game_id
+            WHERE g.season IN (%s, %s)
+        )
+        DELETE FROM players
+        WHERE player_id NOT IN (SELECT player_id FROM active_player_ids)
+        RETURNING player_id, full_name
+    """
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, (current_season, prev_season))
+            removed_players = cur.fetchall()
+            
+        conn.commit()
+        
+        if removed_players:
+            log(f"\n✓ Removed {len(removed_players)} inactive players:")
+            for player_id, full_name in removed_players[:10]:  # Show first 10
+                log(f"  - {full_name} ({player_id})")
+            if len(removed_players) > 10:
+                log(f"  ... and {len(removed_players) - 10} more")
+        else:
+            log("✓ No inactive players to remove")
+        
+        log("="*60)
+        
+    except Exception as e:
+        log(f"✗ Failed to cleanup inactive players: {e}")
+        # Don't fail the entire script if cleanup fails
+        conn.rollback()
 
 if __name__ == "__main__":
     if not DB_PASSWORD:
