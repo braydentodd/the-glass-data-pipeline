@@ -377,17 +377,14 @@ def fetch_games_for_date(game_date: str) -> List[Tuple[str, str]]:
     # Try each season type
     for season_type in Config.SEASON_TYPES:
         try:
-            # Use retry logic for API call
-            def fetch_games():
-                gf = leaguegamefinder.LeagueGameFinder(
-                    season_nullable=Config.CURRENT_SEASON,
-                    season_type_nullable=season_type,
-                    date_from_nullable=game_date,
-                    date_to_nullable=game_date
-                )
-                return gf.get_data_frames()[0]
-            
-            games_df = retry_api_call(fetch_games)
+            # Fetch games (API returns KeyError 'resultSet' when no games exist - not a real error)
+            gf = leaguegamefinder.LeagueGameFinder(
+                season_nullable=Config.CURRENT_SEASON,
+                season_type_nullable=season_type,
+                date_from_nullable=game_date,
+                date_to_nullable=game_date
+            )
+            games_df = gf.get_data_frames()[0]
             
             if not games_df.empty:
                 # Get unique game IDs
@@ -409,9 +406,15 @@ def fetch_games_for_date(game_date: str) -> List[Tuple[str, str]]:
             
             rate_limit()
             
+        except KeyError as e:
+            # 'resultSet' KeyError = no games for this date/season_type (normal, not an error)
+            if "resultSet" in str(e):
+                pass  # Expected when no games exist
+            else:
+                log_error(f"Unexpected KeyError fetching {season_type} games: {e}")
+            rate_limit()
         except Exception as e:
-            if "resultSet" not in str(e):  # Ignore invalid season type errors
-                log_error(f"Error fetching {season_type} games: {e}")
+            log_error(f"Error fetching {season_type} games: {e}")
             rate_limit()
     
     if not all_games:
