@@ -1560,7 +1560,7 @@ def calculate_player_season_stats(conn, season: str = None):
                 ROUND(AVG(pgs.def_rtg))::smallint as def_rtg,  -- x100
                 -- PLUS/MINUS as total (x100 for storage)
                 (ROUND(SUM(pgs.plus_minus) * 100))::smallint as plus_minus,  -- x100
-                -- Nulls
+                -- Nulls (cast to proper types)
                 NULL::smallint as rim_fga,
                 NULL::smallint as uast_rim_fga,
                 NULL::smallint as mr_fga,
@@ -1568,10 +1568,10 @@ def calculate_player_season_stats(conn, season: str = None):
                 NULL::smallint as uast_3fga,
                 NULL::smallint as cont_3pa,
                 NULL::smallint as open_3pa,
-                NULL as pot_assists,
-                NULL as avg_sec_touch,
-                NULL as off_distance,
-                NULL as def_distance
+                NULL::numeric as pot_assists,
+                NULL::numeric as avg_sec_touch,
+                NULL::numeric as off_distance,
+                NULL::numeric as def_distance
             FROM player_game_stats pgs
             JOIN games g ON pgs.game_id = g.game_id
             WHERE g.season = %s AND g.game_status = 'Final'
@@ -1719,7 +1719,7 @@ def calculate_team_season_stats(conn, season: str = None):
                 ROUND(AVG(tgs.def_rtg))::smallint as def_rtg,  -- x100
                 -- PLUS/MINUS as total
                 SUM(tgs.plus_minus) as plus_minus,  -- Total plus/minus
-                -- Nulls for unused fields
+                -- Nulls for unused fields (cast to proper types)
                 NULL::smallint as rim_fga,
                 NULL::smallint as uast_rim_fga,
                 NULL::smallint as mr_fga,
@@ -1727,13 +1727,13 @@ def calculate_team_season_stats(conn, season: str = None):
                 NULL::smallint as uast_3fga,
                 NULL::smallint as cont_3pa,
                 NULL::smallint as open_3pa,
-                NULL as pot_assists,
-                NULL as avg_sec_touch,
-                NULL as off_distance,
-                NULL as charges_drawn,
-                NULL as deflections,
-                NULL as contests,
-                NULL as def_distance,
+                NULL::numeric as pot_assists,
+                NULL::numeric as avg_sec_touch,
+                NULL::numeric as off_distance,
+                NULL::smallint as charges_drawn,
+                NULL::smallint as deflections,
+                NULL::smallint as contests,
+                NULL::numeric as def_distance,
                 -- OPPONENT TOTALS
                 SUM(tgs.opp_points) as opp_points,
                 SUM(tgs.opp_fg2a) as opp_fg2a,
@@ -1760,7 +1760,7 @@ def calculate_team_season_stats(conn, season: str = None):
                 ROUND(AVG(tgs.opp_dreb_pct))::smallint as opp_dreb_pct,  -- x1000
                 ROUND(AVG(tgs.opp_off_rtg))::smallint as opp_off_rtg,  -- x100
                 ROUND(AVG(tgs.opp_def_rtg))::smallint as opp_def_rtg,  -- x100
-                -- OPPONENT Nulls for unused fields
+                -- OPPONENT Nulls for unused fields (cast to proper types)
                 NULL::smallint as opp_rim_fga,
                 NULL::smallint as opp_uast_rim_fga,
                 NULL::smallint as opp_mr_fga,
@@ -1768,13 +1768,13 @@ def calculate_team_season_stats(conn, season: str = None):
                 NULL::smallint as opp_uast_3fga,
                 NULL::smallint as opp_cont_3pa,
                 NULL::smallint as opp_open_3pa,
-                NULL as opp_pot_assists,
-                NULL as opp_avg_sec_touch,
-                NULL as opp_off_distance,
-                NULL as opp_charges_drawn,
-                NULL as opp_deflections,
-                NULL as opp_contests,
-                NULL as opp_def_distance
+                NULL::numeric as opp_pot_assists,
+                NULL::numeric as opp_avg_sec_touch,
+                NULL::numeric as opp_off_distance,
+                NULL::smallint as opp_charges_drawn,
+                NULL::smallint as opp_deflections,
+                NULL::smallint as opp_contests,
+                NULL::numeric as opp_def_distance
             FROM team_game_stats tgs
             JOIN games g ON tgs.game_id = g.game_id
             WHERE g.season = %s AND g.game_status = 'Final'
