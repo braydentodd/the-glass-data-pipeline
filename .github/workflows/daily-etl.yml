@@ -4,7 +4,16 @@ on:
   schedule:
     # Runs at 8:00 AM UTC every day
     - cron: '0 8 * * *'
-  workflow_dispatch:  # Allows manual trigger
+  workflow_dispatch:  # Allows manual trigger with optional backfill dates
+    inputs:
+      start_date:
+        description: 'Start date for backfill (YYYY-MM-DD). Leave empty for yesterday only.'
+        required: false
+        type: string
+      end_date:
+        description: 'End date for backfill (YYYY-MM-DD). Leave empty for yesterday only.'
+        required: false
+        type: string
 
 jobs:
   run-etl:
