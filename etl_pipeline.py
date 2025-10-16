@@ -1430,9 +1430,17 @@ def populate_upcoming_games(conn, season: str = None):
         return
     
     # Filter games: keep if at least ONE team is an NBA team (preseason vs non-NBA teams is OK)
+    # Also replace non-NBA team IDs with NULL
     valid_games = []
     for g in all_upcoming:
         if g['home_team_id'] in valid_team_ids or g['away_team_id'] in valid_team_ids:
+            # Replace non-NBA team IDs with None (NULL in database)
+            if g['home_team_id'] not in valid_team_ids:
+                log_info(f"Game {g['game_id']}: Home team {g['home_team_id']} not in database (exhibition opponent) - setting to NULL")
+                g['home_team_id'] = None
+            if g['away_team_id'] not in valid_team_ids:
+                log_info(f"Game {g['game_id']}: Away team {g['away_team_id']} not in database (exhibition opponent) - setting to NULL")
+                g['away_team_id'] = None
             valid_games.append(g)
         else:
             # Skip only if BOTH teams are non-NBA (shouldn't happen, but just in case)
