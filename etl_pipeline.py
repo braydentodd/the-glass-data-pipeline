@@ -1167,15 +1167,34 @@ def ensure_players_exist(conn, player_ids: List[int]):
         # Don't raise - let the foreign key constraint fail with better context
 
 def upsert_player_game_stats(conn, records: List[Dict]):
-    """Insert or update player game stats in PostgreSQL"""
+    """Insert or update player game stats in PostgreSQL (only for players on NBA teams)"""
     if not records:
         return
     
+    # Get valid NBA team IDs from database
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT team_id FROM teams")
+            valid_team_ids = {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        log_error(f"Failed to fetch valid team IDs: {e}")
+        return
+    
+    # Filter to only players on NBA teams (skip players on non-NBA exhibition opponents)
+    nba_records = [r for r in records if r.get('team_id') in valid_team_ids]
+    
+    if not nba_records:
+        log_info("No NBA player stats to upsert (exhibition game)")
+        return
+    
+    if len(nba_records) < len(records):
+        log_info(f"Filtered to {len(nba_records)} NBA players (skipped {len(records) - len(nba_records)} non-NBA opponent players)")
+    
     # Ensure all players exist in database first
-    player_ids = [r['player_id'] for r in records if r.get('player_id')]
+    player_ids = [r['player_id'] for r in nba_records if r.get('player_id')]
     ensure_players_exist(conn, player_ids)
     
-    log_info(f"Upserting {len(records)} player game stats...")
+    log_info(f"Upserting {len(nba_records)} player game stats...")
     
     columns = [
         'game_id', 'player_id', 'team_id', 'opponent_team_id', 'is_home', 'game_date',
@@ -1194,9 +1213,9 @@ def upsert_player_game_stats(conn, records: List[Dict]):
         'off_distance', 'charges_drawn', 'deflections', 'contests', 'def_efg_pct', 'def_distance'
     ]
     
-    # Prepare values
+    # Prepare values (using nba_records instead of records)
     values = []
-    for record in records:
+    for record in nba_records:
         values.append(tuple(record.get(col) for col in columns))
     
     # Build upsert query
@@ -1217,18 +1236,37 @@ def upsert_player_game_stats(conn, records: List[Dict]):
         with conn.cursor() as cur:
             execute_values(cur, query, values)
         conn.commit()
-        log_success(f"✓ Upserted {len(records)} player game stats")
+        log_success(f"✓ Upserted {len(nba_records)} player game stats")
     except Exception as e:
         conn.rollback()
         log_error(f"Failed to upsert player game stats: {e}")
         raise
 
 def upsert_team_game_stats(conn, records: List[Dict]):
-    """Insert or update team game stats in PostgreSQL"""
+    """Insert or update team game stats in PostgreSQL (only for NBA teams)"""
     if not records:
         return
     
-    log_info(f"Upserting {len(records)} team game stats...")
+    # Get valid NBA team IDs from database
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT team_id FROM teams")
+            valid_team_ids = {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        log_error(f"Failed to fetch valid team IDs: {e}")
+        return
+    
+    # Filter to only NBA teams (skip non-NBA exhibition opponents)
+    nba_records = [r for r in records if r.get('team_id') in valid_team_ids]
+    
+    if not nba_records:
+        log_info("No NBA team stats to upsert (exhibition game)")
+        return
+    
+    if len(nba_records) < len(records):
+        log_info(f"Filtered to {len(nba_records)} NBA teams (skipped {len(records) - len(nba_records)} non-NBA opponents)")
+    
+    log_info(f"Upserting {len(nba_records)} team game stats...")
     
     columns = [
         'game_id', 'team_id', 'opponent_team_id', 'is_home',
@@ -1259,9 +1297,9 @@ def upsert_team_game_stats(conn, records: List[Dict]):
         'opp_dreb_pct', 'opp_def_distance'
     ]
     
-    # Prepare values
+    # Prepare values (using nba_records instead of records)
     values = []
-    for record in records:
+    for record in nba_records:
         values.append(tuple(record.get(col) for col in columns))
     
     # Build upsert query
@@ -1282,7 +1320,7 @@ def upsert_team_game_stats(conn, records: List[Dict]):
         with conn.cursor() as cur:
             execute_values(cur, query, values)
         conn.commit()
-        log_success(f"✓ Upserted {len(records)} team game stats")
+        log_success(f"✓ Upserted {len(nba_records)} team game stats")
     except Exception as e:
         conn.rollback()
         log_error(f"Failed to upsert team game stats: {e}")
@@ -1300,11 +1338,39 @@ def upsert_game(conn, game_id: str, game_date: str, season_type: str, box_scores
     home_team = trad_team[trad_team['GAME_ID'] == game_id].iloc[0]
     away_team = trad_team[trad_team['GAME_ID'] == game_id].iloc[1]
     
+    home_team_id = safe_int(home_team['TEAM_ID'])
+    away_team_id = safe_int(away_team['TEAM_ID'])
+    
+    # Get valid NBA team IDs to check if teams exist
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT team_id FROM teams WHERE team_id IN (%s, %s)", (home_team_id, away_team_id))
+            valid_team_ids = {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        log_error(f"Failed to validate team IDs: {e}")
+        return
+    
+    # If neither team is in our database, skip this game entirely
+    if not valid_team_ids:
+        log_info(f"Skipping game {game_id}: No NBA teams found")
+        return
+    
+    # Set non-NBA team IDs to NULL (for preseason exhibition games)
+    if home_team_id not in valid_team_ids:
+        log_info(f"  Home team {home_team_id} not in database (exhibition opponent)")
+        home_team_id = None
+    
+    if away_team_id not in valid_team_ids:
+        log_info(f"  Away team {away_team_id} not in database (exhibition opponent)")
+        away_team_id = None
+    
     query = """
         INSERT INTO games (game_id, game_date, season, season_type, home_team_id, away_team_id, home_score, away_score, game_status)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (game_id) DO UPDATE SET
             season_type = EXCLUDED.season_type,
+            home_team_id = EXCLUDED.home_team_id,
+            away_team_id = EXCLUDED.away_team_id,
             home_score = EXCLUDED.home_score,
             away_score = EXCLUDED.away_score,
             game_status = EXCLUDED.game_status
@@ -1317,8 +1383,8 @@ def upsert_game(conn, game_id: str, game_date: str, season_type: str, box_scores
                 game_date,
                 Config.CURRENT_SEASON,
                 season_type,
-                safe_int(home_team['TEAM_ID']),
-                safe_int(away_team['TEAM_ID']),
+                home_team_id,
+                away_team_id,
                 safe_int(home_team['PTS']),
                 safe_int(away_team['PTS']),
                 'Final'
@@ -1353,6 +1419,29 @@ def populate_upcoming_games(conn, season: str = None):
     
     log_info(f"Inserting {len(all_upcoming)} upcoming games...")
     
+    # Get valid NBA team IDs from database
+    valid_team_ids = set()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT team_id FROM teams")
+            valid_team_ids = {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        log_error(f"Failed to fetch valid team IDs: {e}")
+        return
+    
+    # Filter games: keep if at least ONE team is an NBA team (preseason vs non-NBA teams is OK)
+    valid_games = []
+    for g in all_upcoming:
+        if g['home_team_id'] in valid_team_ids or g['away_team_id'] in valid_team_ids:
+            valid_games.append(g)
+        else:
+            # Skip only if BOTH teams are non-NBA (shouldn't happen, but just in case)
+            log_info(f"Skipping non-NBA game: {g['game_id']} ({g['home_team_id']} vs {g['away_team_id']})")
+    
+    if not valid_games:
+        log_info("No valid upcoming games to insert")
+        return
+    
     # Insert games (only if they don't exist)
     query = """
         INSERT INTO games (game_id, game_date, season, season_type, home_team_id, away_team_id, home_score, away_score, game_status)
@@ -1372,14 +1461,14 @@ def populate_upcoming_games(conn, season: str = None):
             g['away_score'],
             g['game_status']
         )
-        for g in all_upcoming
+        for g in valid_games
     ]
     
     try:
         with conn.cursor() as cur:
             execute_values(cur, query, values)
         conn.commit()
-        log_success(f"✓ Populated {len(all_upcoming)} upcoming games")
+        log_success(f"✓ Populated {len(valid_games)} upcoming games")
     except Exception as e:
         conn.rollback()
         log_error(f"Failed to populate upcoming games: {e}")
@@ -1441,7 +1530,7 @@ def calculate_player_season_stats(conn, season: str = None):
                 SUM(pgs.minutes) as minutes,  -- Total minutes (x10)
                 SUM(pgs.points) as points,  -- Total points
                 SUM(pgs.fg2a) as fg2a,  -- Total 2PA
-                SUM(pgs.fg3a) as fg3a,  # Total 3PA
+                SUM(pgs.fg3a) as fg3a,  -- Total 3PA
                 SUM(pgs.fta) as fta,  -- Total FTA
                 SUM(pgs.off_rebs) as off_rebs,  -- Total offensive rebounds
                 SUM(pgs.def_rebs) as def_rebs,  -- Total defensive rebounds
