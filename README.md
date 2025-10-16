@@ -24,7 +24,7 @@ Automated data pipeline that extracts NBA game statistics from the NBA API and l
    Go to your repository → Actions tab → Enable workflows
 
 3. **Pipeline will run automatically**
-   - Every day at 4 AM UTC (after most games finish)
+   - Every day at 8 AM UTC (after most games finish)
    - Or trigger manually from Actions tab
 
 

@@ -1,6 +1,20 @@
 """
 THE GLASS - ETL Pipeline
 Extracts NBA data and loads it into PostgreSQL
+
+COMPLETE PIPELINE - Updates ALL tables:
+1. games - Game records with scores and status (Scheduled → Final)
+2. player_game_stats - Individual player stats per game
+3. team_game_stats - Team stats per game (includes opponent stats)
+4. player_season_stats - Aggregated player season averages
+5. team_season_stats - Aggregated team season averages (includes opponent stats)
+
+Features:
+- Fetches and pre-populates upcoming games (game_status = 'Scheduled')
+- Updates completed games with final scores (game_status = 'Final')
+- Processes all game types (Regular Season, Playoffs, PlayIn, Pre Season, Summer League)
+- Aggregates season statistics after each daily run
+- Includes advanced stats: shot charts, matchup data, hustle stats, scoring stats
 """
 
 import os
@@ -199,6 +213,69 @@ def detect_ist_game(game_date: str, game_count: int = 1) -> str:
         pass
     
     return None
+
+def fetch_upcoming_games(season: str = None, season_type: str = 'Regular Season') -> List[Dict]:
+    """
+    Fetch all scheduled (upcoming) games for the current season
+    Returns: List of game dicts with basic info (no stats yet)
+    """
+    if season is None:
+        season = Config.CURRENT_SEASON
+    
+    log_info(f"Fetching upcoming games for {season} {season_type}")
+    
+    try:
+        def fetch_games():
+            finder = leaguegamefinder.LeagueGameFinder(
+                season_nullable=season,
+                season_type_nullable=season_type,
+                league_id_nullable='00'  # NBA
+            )
+            return finder.get_data_frames()[0]
+        
+        games_df = retry_api_call(fetch_games)
+        
+        if games_df.empty:
+            log_info("No games found")
+            return []
+        
+        # Group by GAME_ID to get unique games (API returns one row per team)
+        unique_games = games_df.drop_duplicates(subset=['GAME_ID'])
+        
+        upcoming_games = []
+        for _, game in unique_games.iterrows():
+            game_id = game['GAME_ID']
+            game_date = game['GAME_DATE']
+            
+            # Parse game date
+            if isinstance(game_date, str):
+                game_date = datetime.strptime(game_date, '%Y-%m-%d').date()
+            
+            # Get both teams for this game
+            game_teams = games_df[games_df['GAME_ID'] == game_id]
+            if len(game_teams) == 2:
+                # First row is visitor (away), second is home
+                away_team = game_teams.iloc[0]
+                home_team = game_teams.iloc[1]
+                
+                upcoming_games.append({
+                    'game_id': game_id,
+                    'game_date': game_date,
+                    'season': season,
+                    'season_type': season_type,
+                    'home_team_id': safe_int(home_team['TEAM_ID']),
+                    'away_team_id': safe_int(away_team['TEAM_ID']),
+                    'home_score': None,  # Not played yet
+                    'away_score': None,
+                    'game_status': 'Scheduled'
+                })
+        
+        log_info(f"Found {len(upcoming_games)} upcoming games")
+        return upcoming_games
+        
+    except Exception as e:
+        log_error(f"Failed to fetch upcoming games: {e}")
+        return []
 
 def fetch_games_for_date(game_date: str) -> List[Tuple[str, str]]:
     """
@@ -644,6 +721,265 @@ def transform_player_game_stats(
     log_info(f"Transformed {len(records)} player records")
     return records
 
+def transform_team_game_stats(
+    game_id: str,
+    game_date: str,
+    box_scores: Dict[str, pd.DataFrame],
+    shot_charts: Dict[int, pd.DataFrame] = None,
+    matchup_data: Dict = None
+) -> List[Dict]:
+    """Transform box score data into team_game_stats records (includes opponent stats)"""
+    
+    trad_team = box_scores['traditional_team']
+    adv_team = box_scores['advanced_team']
+    hustle_team = box_scores['hustle_team']
+    scoring_team = box_scores['scoring_team']
+    
+    if trad_team.empty:
+        log_error("No team traditional stats available")
+        return []
+    
+    # Get team stats
+    merged_team = trad_team.copy()
+    
+    if not adv_team.empty:
+        merged_team = merged_team.merge(
+            adv_team[['TEAM_ID', 'OFF_RATING', 'DEF_RATING', 'POSS', 'TS_PCT', 'OREB_PCT', 'DREB_PCT']],
+            on='TEAM_ID', how='left', suffixes=('', '_adv')
+        )
+    
+    if not hustle_team.empty:
+        hustle_team_renamed = hustle_team.rename(columns={'teamId': 'TEAM_ID'})
+        merged_team = merged_team.merge(
+            hustle_team_renamed[['TEAM_ID', 'chargesDrawn', 'deflections', 'contestedShots']],
+            on='TEAM_ID', how='left', suffixes=('', '_hustle')
+        )
+    
+    if not scoring_team.empty:
+        merged_team = merged_team.merge(
+            scoring_team[['TEAM_ID', 'PCT_UAST_3PM', 'PCT_UAST_FGM']],
+            on='TEAM_ID', how='left', suffixes=('', '_scoring')
+        )
+    
+    # Aggregate shot chart stats by team
+    team_shot_stats = {}
+    if shot_charts:
+        for player_id, shot_df in shot_charts.items():
+            if shot_df.empty:
+                continue
+            team_id = shot_df['TEAM_ID'].iloc[0] if 'TEAM_ID' in shot_df.columns else None
+            if team_id:
+                if team_id not in team_shot_stats:
+                    team_shot_stats[team_id] = {
+                        'rim_fga': 0, 'rim_fgm': 0,
+                        'mr_fga': 0, 'mr_fgm': 0,
+                        'open_3pa': 0, 'open_3pm': 0,
+                        'uast_rim_fga': 0, 'uast_mr_fga': 0
+                    }
+                
+                stats = aggregate_shot_chart_stats(shot_df)
+                if stats.get('rim_fga'):
+                    team_shot_stats[team_id]['rim_fga'] += stats['rim_fga']
+                    team_shot_stats[team_id]['rim_fgm'] += int(stats['rim_fga'] * stats['rim_fg_pct']) if stats.get('rim_fg_pct') else 0
+                if stats.get('uast_rim_fga'):
+                    team_shot_stats[team_id]['uast_rim_fga'] += stats['uast_rim_fga']
+                if stats.get('mr_fga'):
+                    team_shot_stats[team_id]['mr_fga'] += stats['mr_fga']
+                    team_shot_stats[team_id]['mr_fgm'] += int(stats['mr_fga'] * stats['mr_fg_pct']) if stats.get('mr_fg_pct') else 0
+                if stats.get('uast_mr_fga'):
+                    team_shot_stats[team_id]['uast_mr_fga'] += stats['uast_mr_fga']
+                if stats.get('open_3pa'):
+                    team_shot_stats[team_id]['open_3pa'] += stats['open_3pa']
+                    team_shot_stats[team_id]['open_3pm'] += int(stats['open_3pa'] * stats['open_3p_pct']) if stats.get('open_3p_pct') else 0
+    
+    # Calculate percentages for aggregated shot stats
+    for team_id, stats in team_shot_stats.items():
+        stats['rim_fg_pct'] = stats['rim_fgm'] / stats['rim_fga'] if stats['rim_fga'] > 0 else None
+        stats['mr_fg_pct'] = stats['mr_fgm'] / stats['mr_fga'] if stats['mr_fga'] > 0 else None
+        stats['open_3p_pct'] = stats['open_3pm'] / stats['open_3pa'] if stats['open_3pa'] > 0 else None
+    
+    # Aggregate matchup stats by team
+    team_matchup_stats = {}
+    if matchup_data and 'boxScoreMatchups' in matchup_data:
+        for matchup in matchup_data['boxScoreMatchups']:
+            team_id = matchup.get('teamId')
+            if team_id:
+                if team_id not in team_matchup_stats:
+                    team_matchup_stats[team_id] = {
+                        'cont_3pa': 0, 'cont_3pm': 0,
+                        'def_fga': 0, 'def_fgm': 0
+                    }
+                
+                cont_3pa = matchup.get('contestedShots3pt', 0) or 0
+                cont_3pm = matchup.get('contestedShots3ptMade', 0) or 0
+                def_fga = matchup.get('defendingFga', 0) or 0
+                def_fgm = matchup.get('defendingFgm', 0) or 0
+                
+                team_matchup_stats[team_id]['cont_3pa'] += cont_3pa
+                team_matchup_stats[team_id]['cont_3pm'] += cont_3pm
+                team_matchup_stats[team_id]['def_fga'] += def_fga
+                team_matchup_stats[team_id]['def_fgm'] += def_fgm
+    
+    # Calculate percentages for aggregated matchup stats
+    for team_id, stats in team_matchup_stats.items():
+        stats['cont_3p_pct'] = stats['cont_3pm'] / stats['cont_3pa'] if stats['cont_3pa'] > 0 else None
+        stats['def_efg_pct'] = stats['def_fgm'] / stats['def_fga'] if stats['def_fga'] > 0 else None
+    
+    records = []
+    
+    # Process both teams (should be exactly 2 rows)
+    if len(merged_team) != 2:
+        log_error(f"Expected 2 teams, got {len(merged_team)}")
+        return []
+    
+    for idx, row in merged_team.iterrows():
+        team_id = safe_int(row.get('TEAM_ID'))
+        
+        # Determine opponent
+        opponent_row = merged_team[merged_team['TEAM_ID'] != team_id].iloc[0]
+        opponent_team_id = safe_int(opponent_row.get('TEAM_ID'))
+        
+        # Determine home/away
+        # The first team in the dataframe is typically the home team
+        is_home = idx == 0
+        
+        # Calculate fg2a and fg2_pct
+        fga = safe_int(row.get('FGA'))
+        fg3a = safe_int(row.get('FG3A'))
+        fgm = safe_int(row.get('FGM'))
+        fg3m = safe_int(row.get('FG3M'))
+        
+        fg2a = None
+        fg2_pct = None
+        if fga is not None and fg3a is not None:
+            fg2a = fga - fg3a
+            fg2m = (fgm - fg3m) if (fgm is not None and fg3m is not None) else None
+            fg2_pct = fg2m / fg2a if (fg2a > 0 and fg2m is not None) else None
+        
+        # Calculate unassisted 3PA
+        uast_3fga = None
+        pct_uast_3pm = safe_float(row.get('PCT_UAST_3PM'))
+        if pct_uast_3pm is not None and fg3a is not None:
+            uast_3fga = int(fg3a * pct_uast_3pm)
+        
+        # Get aggregated shot stats
+        shot_stats = team_shot_stats.get(team_id, {})
+        
+        # Get aggregated matchup stats
+        matchup_stats = team_matchup_stats.get(team_id, {})
+        
+        # Opponent stats (mirror of opponent row)
+        opp_fga = safe_int(opponent_row.get('FGA'))
+        opp_fg3a = safe_int(opponent_row.get('FG3A'))
+        opp_fgm = safe_int(opponent_row.get('FGM'))
+        opp_fg3m = safe_int(opponent_row.get('FG3M'))
+        
+        opp_fg2a = None
+        opp_fg2_pct = None
+        if opp_fga is not None and opp_fg3a is not None:
+            opp_fg2a = opp_fga - opp_fg3a
+            opp_fg2m = (opp_fgm - opp_fg3m) if (opp_fgm is not None and opp_fg3m is not None) else None
+            opp_fg2_pct = opp_fg2m / opp_fg2a if (opp_fg2a > 0 and opp_fg2m is not None) else None
+        
+        opp_uast_3fga = None
+        opp_pct_uast_3pm = safe_float(opponent_row.get('PCT_UAST_3PM'))
+        if opp_pct_uast_3pm is not None and opp_fg3a is not None:
+            opp_uast_3fga = int(opp_fg3a * opp_pct_uast_3pm)
+        
+        opp_shot_stats = team_shot_stats.get(opponent_team_id, {})
+        opp_matchup_stats = team_matchup_stats.get(opponent_team_id, {})
+        
+        record = {
+            'game_id': game_id,
+            'team_id': team_id,
+            'opponent_team_id': opponent_team_id,
+            'is_home': is_home,
+            'minutes': parse_minutes(row.get('MIN')),
+            'points': safe_int(row.get('PTS')),
+            'fg2a': fg2a,
+            'fg2_pct': fg2_pct,
+            'fg3a': fg3a,
+            'fg3_pct': safe_float(row.get('FG3_PCT')),
+            'fta': safe_int(row.get('FTA')),
+            'ft_pct': safe_float(row.get('FT_PCT')),
+            'off_rebs': safe_int(row.get('OREB')),
+            'def_rebs': safe_int(row.get('DREB')),
+            'assists': safe_int(row.get('AST')),
+            'turnovers': safe_int(row.get('TO')),
+            'steals': safe_int(row.get('STL')),
+            'blocks': safe_int(row.get('BLK')),
+            'plus_minus': safe_int(row.get('PLUS_MINUS')),
+            'off_rtg': safe_float(row.get('OFF_RATING')),
+            'def_rtg': safe_float(row.get('DEF_RATING')),
+            'possessions': safe_int(row.get('POSS')),
+            'ts_pct': safe_float(row.get('TS_PCT')),
+            'rim_fga': shot_stats.get('rim_fga'),
+            'rim_fg_pct': shot_stats.get('rim_fg_pct'),
+            'uast_rim_fga': shot_stats.get('uast_rim_fga'),
+            'mr_fga': shot_stats.get('mr_fga'),
+            'mr_fg_pct': shot_stats.get('mr_fg_pct'),
+            'uast_mr_fga': shot_stats.get('uast_mr_fga'),
+            'uast_3fga': uast_3fga,
+            'cont_3pa': matchup_stats.get('cont_3pa'),
+            'cont_3p_pct': matchup_stats.get('cont_3p_pct'),
+            'open_3pa': shot_stats.get('open_3pa'),
+            'open_3p_pct': shot_stats.get('open_3p_pct'),
+            'pot_assists': None,
+            'avg_sec_touch': None,
+            'oreb_pct': safe_float(row.get('OREB_PCT')),
+            'off_distance': None,
+            'charges_drawn': safe_int(row.get('chargesDrawn')),
+            'deflections': safe_int(row.get('deflections')),
+            'contests': safe_int(row.get('contestedShots')),
+            'def_efg_pct': matchup_stats.get('def_efg_pct'),
+            'dreb_pct': safe_float(row.get('DREB_PCT')),
+            'def_distance': None,
+            # Opponent stats
+            'opp_points': safe_int(opponent_row.get('PTS')),
+            'opp_fg2a': opp_fg2a,
+            'opp_fg2_pct': opp_fg2_pct,
+            'opp_fg3a': opp_fg3a,
+            'opp_fg3_pct': safe_float(opponent_row.get('FG3_PCT')),
+            'opp_fta': safe_int(opponent_row.get('FTA')),
+            'opp_ft_pct': safe_float(opponent_row.get('FT_PCT')),
+            'opp_off_rebs': safe_int(opponent_row.get('OREB')),
+            'opp_def_rebs': safe_int(opponent_row.get('DREB')),
+            'opp_assists': safe_int(opponent_row.get('AST')),
+            'opp_turnovers': safe_int(opponent_row.get('TO')),
+            'opp_steals': safe_int(opponent_row.get('STL')),
+            'opp_blocks': safe_int(opponent_row.get('BLK')),
+            'opp_off_rtg': safe_float(opponent_row.get('OFF_RATING')),
+            'opp_def_rtg': safe_float(opponent_row.get('DEF_RATING')),
+            'opp_possessions': safe_int(opponent_row.get('POSS')),
+            'opp_ts_pct': safe_float(opponent_row.get('TS_PCT')),
+            'opp_rim_fga': opp_shot_stats.get('rim_fga'),
+            'opp_rim_fg_pct': opp_shot_stats.get('rim_fg_pct'),
+            'opp_uast_rim_fga': opp_shot_stats.get('uast_rim_fga'),
+            'opp_mr_fga': opp_shot_stats.get('mr_fga'),
+            'opp_mr_fg_pct': opp_shot_stats.get('mr_fg_pct'),
+            'opp_uast_mr_fga': opp_shot_stats.get('uast_mr_fga'),
+            'opp_uast_3fga': opp_uast_3fga,
+            'opp_cont_3pa': opp_matchup_stats.get('cont_3pa'),
+            'opp_cont_3p_pct': opp_matchup_stats.get('cont_3p_pct'),
+            'opp_open_3pa': opp_shot_stats.get('open_3pa'),
+            'opp_open_3p_pct': opp_shot_stats.get('open_3p_pct'),
+            'opp_pot_assists': None,
+            'opp_avg_sec_touch': None,
+            'opp_oreb_pct': safe_float(opponent_row.get('OREB_PCT')),
+            'opp_off_distance': None,
+            'opp_charges_drawn': safe_int(opponent_row.get('chargesDrawn')),
+            'opp_deflections': safe_int(opponent_row.get('deflections')),
+            'opp_contests': safe_int(opponent_row.get('contestedShots')),
+            'opp_def_efg_pct': opp_matchup_stats.get('def_efg_pct'),
+            'opp_dreb_pct': safe_float(opponent_row.get('DREB_PCT')),
+            'opp_def_distance': None,
+        }
+        
+        records.append(record)
+    
+    log_info(f"Transformed {len(records)} team records")
+    return records
+
 # ============================================
 # DATA LOADING
 # ============================================
@@ -702,6 +1038,71 @@ def upsert_player_game_stats(conn, records: List[Dict]):
         log_error(f"Failed to upsert player game stats: {e}")
         raise
 
+def upsert_team_game_stats(conn, records: List[Dict]):
+    """Insert or update team game stats in PostgreSQL"""
+    if not records:
+        return
+    
+    log_info(f"Upserting {len(records)} team game stats...")
+    
+    columns = [
+        'game_id', 'team_id', 'opponent_team_id', 'is_home',
+        'minutes', 'points',
+        'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct', 'fta', 'ft_pct',
+        'off_rebs', 'def_rebs',
+        'assists', 'turnovers',
+        'steals', 'blocks',
+        'plus_minus', 'off_rtg', 'def_rtg', 'possessions',
+        'ts_pct',
+        'rim_fga', 'rim_fg_pct', 'uast_rim_fga',
+        'mr_fga', 'mr_fg_pct', 'uast_mr_fga',
+        'uast_3fga', 'cont_3pa', 'cont_3p_pct', 'open_3pa', 'open_3p_pct',
+        'pot_assists', 'avg_sec_touch',
+        'oreb_pct', 'off_distance',
+        'charges_drawn', 'deflections', 'contests', 'def_efg_pct',
+        'dreb_pct', 'def_distance',
+        'opp_points', 'opp_fg2a', 'opp_fg2_pct', 'opp_fg3a', 'opp_fg3_pct',
+        'opp_fta', 'opp_ft_pct', 'opp_off_rebs', 'opp_def_rebs',
+        'opp_assists', 'opp_turnovers', 'opp_steals', 'opp_blocks',
+        'opp_off_rtg', 'opp_def_rtg', 'opp_possessions', 'opp_ts_pct',
+        'opp_rim_fga', 'opp_rim_fg_pct', 'opp_uast_rim_fga',
+        'opp_mr_fga', 'opp_mr_fg_pct', 'opp_uast_mr_fga',
+        'opp_uast_3fga', 'opp_cont_3pa', 'opp_cont_3p_pct', 'opp_open_3pa', 'opp_open_3p_pct',
+        'opp_pot_assists', 'opp_avg_sec_touch',
+        'opp_oreb_pct', 'opp_off_distance',
+        'opp_charges_drawn', 'opp_deflections', 'opp_contests', 'opp_def_efg_pct',
+        'opp_dreb_pct', 'opp_def_distance'
+    ]
+    
+    # Prepare values
+    values = []
+    for record in records:
+        values.append(tuple(record.get(col) for col in columns))
+    
+    # Build upsert query
+    columns_str = ', '.join(columns)
+    
+    # Update clause (all columns except keys)
+    update_cols = [col for col in columns if col not in ['game_id', 'team_id']]
+    update_str = ', '.join([f"{col} = EXCLUDED.{col}" for col in update_cols])
+    
+    query = f"""
+        INSERT INTO team_game_stats ({columns_str})
+        VALUES %s
+        ON CONFLICT (game_id, team_id)
+        DO UPDATE SET {update_str}, updated_at = CURRENT_TIMESTAMP
+    """
+    
+    try:
+        with conn.cursor() as cur:
+            execute_values(cur, query, values)
+        conn.commit()
+        log_success(f"✓ Upserted {len(records)} team game stats")
+    except Exception as e:
+        conn.rollback()
+        log_error(f"Failed to upsert team game stats: {e}")
+        raise
+
 def upsert_game(conn, game_id: str, game_date: str, season_type: str, box_scores: Dict[str, pd.DataFrame]):
     """Insert or update game record"""
     
@@ -743,6 +1144,496 @@ def upsert_game(conn, game_id: str, game_date: str, season_type: str, box_scores
         conn.rollback()
         log_error(f"Failed to upsert game: {e}")
 
+def populate_upcoming_games(conn, season: str = None):
+    """Fetch and insert upcoming games for the season"""
+    if season is None:
+        season = Config.CURRENT_SEASON
+    
+    log_info(f"\nPopulating upcoming games for {season}...")
+    
+    all_upcoming = []
+    
+    # Fetch for each season type
+    for season_type in Config.SEASON_TYPES:
+        try:
+            upcoming = fetch_upcoming_games(season, season_type)
+            all_upcoming.extend(upcoming)
+            rate_limit()
+        except Exception as e:
+            log_error(f"Failed to fetch upcoming games for {season_type}: {e}")
+    
+    if not all_upcoming:
+        log_info("No upcoming games found")
+        return
+    
+    log_info(f"Inserting {len(all_upcoming)} upcoming games...")
+    
+    # Insert games (only if they don't exist)
+    query = """
+        INSERT INTO games (game_id, game_date, season, season_type, home_team_id, away_team_id, home_score, away_score, game_status)
+        VALUES %s
+        ON CONFLICT (game_id) DO NOTHING
+    """
+    
+    values = [
+        (
+            g['game_id'],
+            g['game_date'],
+            g['season'],
+            g['season_type'],
+            g['home_team_id'],
+            g['away_team_id'],
+            g['home_score'],
+            g['away_score'],
+            g['game_status']
+        )
+        for g in all_upcoming
+    ]
+    
+    try:
+        with conn.cursor() as cur:
+            execute_values(cur, query, values)
+        conn.commit()
+        log_success(f"✓ Populated {len(all_upcoming)} upcoming games")
+    except Exception as e:
+        conn.rollback()
+        log_error(f"Failed to populate upcoming games: {e}")
+        raise
+
+def update_game_statuses(conn):
+    """Update game statuses from 'Scheduled' to 'Final' for completed games"""
+    log_info("\nUpdating game statuses...")
+    
+    # Query to find scheduled games in the past that should be marked as Final
+    query = """
+        UPDATE games
+        SET game_status = 'Final'
+        WHERE game_status = 'Scheduled'
+        AND game_date < CURRENT_DATE
+        AND home_score IS NOT NULL
+        AND away_score IS NOT NULL
+    """
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            rows_updated = cur.rowcount
+        conn.commit()
+        if rows_updated > 0:
+            log_success(f"✓ Updated {rows_updated} game statuses to Final")
+        else:
+            log_info("No game statuses to update")
+    except Exception as e:
+        conn.rollback()
+        log_error(f"Failed to update game statuses: {e}")
+        raise
+
+def calculate_player_season_stats(conn, season: str = None):
+    """Calculate and upsert player season stats (aggregated from player_game_stats)"""
+    if season is None:
+        season = Config.CURRENT_SEASON
+    
+    log_info(f"Calculating player season stats for {season}...")
+    
+    # Query to aggregate player stats by season and season_type
+    query = """
+        WITH game_data AS (
+            SELECT 
+                pgs.player_id,
+                pgs.team_id,
+                g.season,
+                g.season_type,
+                COUNT(DISTINCT pgs.game_id) as games_played,
+                -- Assume games_started if minutes >= 24
+                COUNT(DISTINCT CASE WHEN pgs.minutes >= 24 THEN pgs.game_id END) as games_started,
+                AVG(pgs.minutes) as minutes,
+                AVG(pgs.points) as points,
+                AVG(pgs.fg2a) as fg2a,
+                AVG(CASE WHEN pgs.fg2a > 0 THEN pgs.fg2_pct END) as fg2_pct,
+                AVG(pgs.fg3a) as fg3a,
+                AVG(CASE WHEN pgs.fg3a > 0 THEN pgs.fg3_pct END) as fg3_pct,
+                AVG(pgs.fta) as fta,
+                AVG(CASE WHEN pgs.fta > 0 THEN pgs.ft_pct END) as ft_pct,
+                AVG(pgs.off_rebs) as off_rebs,
+                AVG(pgs.def_rebs) as def_rebs,
+                AVG(pgs.assists) as assists,
+                AVG(pgs.turnovers) as turnovers,
+                AVG(pgs.steals) as steals,
+                AVG(pgs.blocks) as blocks,
+                AVG(pgs.plus_minus) as plus_minus,
+                AVG(pgs.on_off) as on_off,
+                AVG(pgs.off_rtg) as off_rtg,
+                AVG(pgs.def_rtg) as def_rtg,
+                AVG(pgs.possessions) as possessions,
+                AVG(pgs.ts_pct) as ts_pct,
+                AVG(pgs.rim_fga) as rim_fga,
+                AVG(CASE WHEN pgs.rim_fga > 0 THEN pgs.rim_fg_pct END) as rim_fg_pct,
+                AVG(pgs.uast_rim_fga) as uast_rim_fga,
+                AVG(pgs.mr_fga) as mr_fga,
+                AVG(CASE WHEN pgs.mr_fga > 0 THEN pgs.mr_fg_pct END) as mr_fg_pct,
+                AVG(pgs.uast_mr_fga) as uast_mr_fga,
+                AVG(pgs.uast_3fga) as uast_3fga,
+                AVG(pgs.cont_3pa) as cont_3pa,
+                AVG(CASE WHEN pgs.cont_3pa > 0 THEN pgs.cont_3p_pct END) as cont_3p_pct,
+                AVG(pgs.open_3pa) as open_3pa,
+                AVG(CASE WHEN pgs.open_3pa > 0 THEN pgs.open_3p_pct END) as open_3p_pct,
+                AVG(pgs.pot_assists) as pot_assists,
+                AVG(pgs.on_ball_pct) as on_ball_pct,
+                AVG(pgs.avg_sec_touch) as avg_sec_touch,
+                AVG(pgs.oreb_pct) as oreb_pct,
+                AVG(pgs.off_distance) as off_distance,
+                AVG(pgs.charges_drawn) as charges_drawn,
+                AVG(pgs.deflections) as deflections,
+                AVG(pgs.contests) as contests,
+                AVG(pgs.def_efg_pct) as def_efg_pct,
+                AVG(pgs.dreb_pct) as dreb_pct,
+                AVG(pgs.def_distance) as def_distance
+            FROM player_game_stats pgs
+            JOIN games g ON pgs.game_id = g.game_id
+            WHERE g.season = %s AND g.game_status = 'Final'
+            GROUP BY pgs.player_id, pgs.team_id, g.season, g.season_type
+        )
+        INSERT INTO player_season_stats (
+            player_id, team_id, season, season_type,
+            games_played, games_started,
+            minutes, points, fg2a, fg2_pct, fg3a, fg3_pct, fta, ft_pct,
+            off_rebs, def_rebs, assists, turnovers, steals, blocks,
+            plus_minus, on_off, off_rtg, def_rtg, possessions, ts_pct,
+            rim_fga, rim_fg_pct, uast_rim_fga,
+            mr_fga, mr_fg_pct, uast_mr_fga,
+            uast_3fga, cont_3pa, cont_3p_pct, open_3pa, open_3p_pct,
+            pot_assists, on_ball_pct, avg_sec_touch,
+            oreb_pct, off_distance,
+            charges_drawn, deflections, contests, def_efg_pct,
+            dreb_pct, def_distance,
+            last_calculated
+        )
+        SELECT 
+            player_id, team_id, season, season_type,
+            games_played, games_started,
+            minutes, points, fg2a, fg2_pct, fg3a, fg3_pct, fta, ft_pct,
+            off_rebs, def_rebs, assists, turnovers, steals, blocks,
+            plus_minus, on_off, off_rtg, def_rtg, possessions, ts_pct,
+            rim_fga, rim_fg_pct, uast_rim_fga,
+            mr_fga, mr_fg_pct, uast_mr_fga,
+            uast_3fga, cont_3pa, cont_3p_pct, open_3pa, open_3p_pct,
+            pot_assists, on_ball_pct, avg_sec_touch,
+            oreb_pct, off_distance,
+            charges_drawn, deflections, contests, def_efg_pct,
+            dreb_pct, def_distance,
+            CURRENT_TIMESTAMP
+        FROM game_data
+        ON CONFLICT (player_id, season, season_type, team_id)
+        DO UPDATE SET
+            games_played = EXCLUDED.games_played,
+            games_started = EXCLUDED.games_started,
+            minutes = EXCLUDED.minutes,
+            points = EXCLUDED.points,
+            fg2a = EXCLUDED.fg2a,
+            fg2_pct = EXCLUDED.fg2_pct,
+            fg3a = EXCLUDED.fg3a,
+            fg3_pct = EXCLUDED.fg3_pct,
+            fta = EXCLUDED.fta,
+            ft_pct = EXCLUDED.ft_pct,
+            off_rebs = EXCLUDED.off_rebs,
+            def_rebs = EXCLUDED.def_rebs,
+            assists = EXCLUDED.assists,
+            turnovers = EXCLUDED.turnovers,
+            steals = EXCLUDED.steals,
+            blocks = EXCLUDED.blocks,
+            plus_minus = EXCLUDED.plus_minus,
+            on_off = EXCLUDED.on_off,
+            off_rtg = EXCLUDED.off_rtg,
+            def_rtg = EXCLUDED.def_rtg,
+            possessions = EXCLUDED.possessions,
+            ts_pct = EXCLUDED.ts_pct,
+            rim_fga = EXCLUDED.rim_fga,
+            rim_fg_pct = EXCLUDED.rim_fg_pct,
+            uast_rim_fga = EXCLUDED.uast_rim_fga,
+            mr_fga = EXCLUDED.mr_fga,
+            mr_fg_pct = EXCLUDED.mr_fg_pct,
+            uast_mr_fga = EXCLUDED.uast_mr_fga,
+            uast_3fga = EXCLUDED.uast_3fga,
+            cont_3pa = EXCLUDED.cont_3pa,
+            cont_3p_pct = EXCLUDED.cont_3p_pct,
+            open_3pa = EXCLUDED.open_3pa,
+            open_3p_pct = EXCLUDED.open_3p_pct,
+            pot_assists = EXCLUDED.pot_assists,
+            on_ball_pct = EXCLUDED.on_ball_pct,
+            avg_sec_touch = EXCLUDED.avg_sec_touch,
+            oreb_pct = EXCLUDED.oreb_pct,
+            off_distance = EXCLUDED.off_distance,
+            charges_drawn = EXCLUDED.charges_drawn,
+            deflections = EXCLUDED.deflections,
+            contests = EXCLUDED.contests,
+            def_efg_pct = EXCLUDED.def_efg_pct,
+            dreb_pct = EXCLUDED.dreb_pct,
+            def_distance = EXCLUDED.def_distance,
+            last_calculated = CURRENT_TIMESTAMP
+    """
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, (season,))
+            rows_affected = cur.rowcount
+        conn.commit()
+        log_success(f"✓ Calculated player season stats: {rows_affected} records")
+    except Exception as e:
+        conn.rollback()
+        log_error(f"Failed to calculate player season stats: {e}")
+        raise
+
+def calculate_team_season_stats(conn, season: str = None):
+    """Calculate and upsert team season stats (aggregated from team_game_stats)"""
+    if season is None:
+        season = Config.CURRENT_SEASON
+    
+    log_info(f"Calculating team season stats for {season}...")
+    
+    # Query to aggregate team stats by season and season_type
+    query = """
+        WITH game_data AS (
+            SELECT 
+                tgs.team_id,
+                g.season,
+                g.season_type,
+                COUNT(DISTINCT tgs.game_id) as games_played,
+                -- Count wins (when team scored more than opponent)
+                COUNT(DISTINCT CASE WHEN tgs.points > tgs.opp_points THEN tgs.game_id END) as wins,
+                COUNT(DISTINCT CASE WHEN tgs.points < tgs.opp_points THEN tgs.game_id END) as losses,
+                AVG(tgs.minutes) as minutes,
+                AVG(tgs.points) as points,
+                AVG(tgs.fg2a) as fg2a,
+                AVG(CASE WHEN tgs.fg2a > 0 THEN tgs.fg2_pct END) as fg2_pct,
+                AVG(tgs.fg3a) as fg3a,
+                AVG(CASE WHEN tgs.fg3a > 0 THEN tgs.fg3_pct END) as fg3_pct,
+                AVG(tgs.fta) as fta,
+                AVG(CASE WHEN tgs.fta > 0 THEN tgs.ft_pct END) as ft_pct,
+                AVG(tgs.off_rebs) as off_rebs,
+                AVG(tgs.def_rebs) as def_rebs,
+                AVG(tgs.assists) as assists,
+                AVG(tgs.turnovers) as turnovers,
+                AVG(tgs.steals) as steals,
+                AVG(tgs.blocks) as blocks,
+                AVG(tgs.plus_minus) as plus_minus,
+                AVG(tgs.off_rtg) as off_rtg,
+                AVG(tgs.def_rtg) as def_rtg,
+                AVG(tgs.possessions) as possessions,
+                AVG(tgs.ts_pct) as ts_pct,
+                AVG(tgs.rim_fga) as rim_fga,
+                AVG(CASE WHEN tgs.rim_fga > 0 THEN tgs.rim_fg_pct END) as rim_fg_pct,
+                AVG(tgs.uast_rim_fga) as uast_rim_fga,
+                AVG(tgs.mr_fga) as mr_fga,
+                AVG(CASE WHEN tgs.mr_fga > 0 THEN tgs.mr_fg_pct END) as mr_fg_pct,
+                AVG(tgs.uast_mr_fga) as uast_mr_fga,
+                AVG(tgs.uast_3fga) as uast_3fga,
+                AVG(tgs.cont_3pa) as cont_3pa,
+                AVG(CASE WHEN tgs.cont_3pa > 0 THEN tgs.cont_3p_pct END) as cont_3p_pct,
+                AVG(tgs.open_3pa) as open_3pa,
+                AVG(CASE WHEN tgs.open_3pa > 0 THEN tgs.open_3p_pct END) as open_3p_pct,
+                AVG(tgs.pot_assists) as pot_assists,
+                AVG(tgs.avg_sec_touch) as avg_sec_touch,
+                AVG(tgs.oreb_pct) as oreb_pct,
+                AVG(tgs.off_distance) as off_distance,
+                AVG(tgs.charges_drawn) as charges_drawn,
+                AVG(tgs.deflections) as deflections,
+                AVG(tgs.contests) as contests,
+                AVG(tgs.def_efg_pct) as def_efg_pct,
+                AVG(tgs.dreb_pct) as dreb_pct,
+                AVG(tgs.def_distance) as def_distance,
+                -- Opponent stats
+                AVG(tgs.opp_points) as opp_points,
+                AVG(tgs.opp_fg2a) as opp_fg2a,
+                AVG(CASE WHEN tgs.opp_fg2a > 0 THEN tgs.opp_fg2_pct END) as opp_fg2_pct,
+                AVG(tgs.opp_fg3a) as opp_fg3a,
+                AVG(CASE WHEN tgs.opp_fg3a > 0 THEN tgs.opp_fg3_pct END) as opp_fg3_pct,
+                AVG(tgs.opp_fta) as opp_fta,
+                AVG(CASE WHEN tgs.opp_fta > 0 THEN tgs.opp_ft_pct END) as opp_ft_pct,
+                AVG(tgs.opp_off_rebs) as opp_off_rebs,
+                AVG(tgs.opp_def_rebs) as opp_def_rebs,
+                AVG(tgs.opp_assists) as opp_assists,
+                AVG(tgs.opp_turnovers) as opp_turnovers,
+                AVG(tgs.opp_steals) as opp_steals,
+                AVG(tgs.opp_blocks) as opp_blocks,
+                AVG(tgs.opp_off_rtg) as opp_off_rtg,
+                AVG(tgs.opp_def_rtg) as opp_def_rtg,
+                AVG(tgs.opp_possessions) as opp_possessions,
+                AVG(tgs.opp_ts_pct) as opp_ts_pct,
+                AVG(tgs.opp_rim_fga) as opp_rim_fga,
+                AVG(CASE WHEN tgs.opp_rim_fga > 0 THEN tgs.opp_rim_fg_pct END) as opp_rim_fg_pct,
+                AVG(tgs.opp_uast_rim_fga) as opp_uast_rim_fga,
+                AVG(tgs.opp_mr_fga) as opp_mr_fga,
+                AVG(CASE WHEN tgs.opp_mr_fga > 0 THEN tgs.opp_mr_fg_pct END) as opp_mr_fg_pct,
+                AVG(tgs.opp_uast_mr_fga) as opp_uast_mr_fga,
+                AVG(tgs.opp_uast_3fga) as opp_uast_3fga,
+                AVG(tgs.opp_cont_3pa) as opp_cont_3pa,
+                AVG(CASE WHEN tgs.opp_cont_3pa > 0 THEN tgs.opp_cont_3p_pct END) as opp_cont_3p_pct,
+                AVG(tgs.opp_open_3pa) as opp_open_3pa,
+                AVG(CASE WHEN tgs.opp_open_3pa > 0 THEN tgs.opp_open_3p_pct END) as opp_open_3p_pct,
+                AVG(tgs.opp_pot_assists) as opp_pot_assists,
+                AVG(tgs.opp_avg_sec_touch) as opp_avg_sec_touch,
+                AVG(tgs.opp_oreb_pct) as opp_oreb_pct,
+                AVG(tgs.opp_off_distance) as opp_off_distance,
+                AVG(tgs.opp_charges_drawn) as opp_charges_drawn,
+                AVG(tgs.opp_deflections) as opp_deflections,
+                AVG(tgs.opp_contests) as opp_contests,
+                AVG(tgs.opp_def_efg_pct) as opp_def_efg_pct,
+                AVG(tgs.opp_dreb_pct) as opp_dreb_pct,
+                AVG(tgs.opp_def_distance) as opp_def_distance
+            FROM team_game_stats tgs
+            JOIN games g ON tgs.game_id = g.game_id
+            WHERE g.season = %s AND g.game_status = 'Final'
+            GROUP BY tgs.team_id, g.season, g.season_type
+        )
+        INSERT INTO team_season_stats (
+            team_id, season, season_type,
+            games_played, wins, losses,
+            minutes, points, fg2a, fg2_pct, fg3a, fg3_pct, fta, ft_pct,
+            off_rebs, def_rebs, assists, turnovers, steals, blocks,
+            plus_minus, off_rtg, def_rtg, possessions, ts_pct,
+            rim_fga, rim_fg_pct, uast_rim_fga,
+            mr_fga, mr_fg_pct, uast_mr_fga,
+            uast_3fga, cont_3pa, cont_3p_pct, open_3pa, open_3p_pct,
+            pot_assists, avg_sec_touch,
+            oreb_pct, off_distance,
+            charges_drawn, deflections, contests, def_efg_pct,
+            dreb_pct, def_distance,
+            opp_points, opp_fg2a, opp_fg2_pct, opp_fg3a, opp_fg3_pct,
+            opp_fta, opp_ft_pct, opp_off_rebs, opp_def_rebs,
+            opp_assists, opp_turnovers, opp_steals, opp_blocks,
+            opp_off_rtg, opp_def_rtg, opp_possessions, opp_ts_pct,
+            opp_rim_fga, opp_rim_fg_pct, opp_uast_rim_fga,
+            opp_mr_fga, opp_mr_fg_pct, opp_uast_mr_fga,
+            opp_uast_3fga, opp_cont_3pa, opp_cont_3p_pct, opp_open_3pa, opp_open_3p_pct,
+            opp_pot_assists, opp_avg_sec_touch,
+            opp_oreb_pct, opp_off_distance,
+            opp_charges_drawn, opp_deflections, opp_contests, opp_def_efg_pct,
+            opp_dreb_pct, opp_def_distance,
+            last_calculated
+        )
+        SELECT 
+            team_id, season, season_type,
+            games_played, wins, losses,
+            minutes, points, fg2a, fg2_pct, fg3a, fg3_pct, fta, ft_pct,
+            off_rebs, def_rebs, assists, turnovers, steals, blocks,
+            plus_minus, off_rtg, def_rtg, possessions, ts_pct,
+            rim_fga, rim_fg_pct, uast_rim_fga,
+            mr_fga, mr_fg_pct, uast_mr_fga,
+            uast_3fga, cont_3pa, cont_3p_pct, open_3pa, open_3p_pct,
+            pot_assists, avg_sec_touch,
+            oreb_pct, off_distance,
+            charges_drawn, deflections, contests, def_efg_pct,
+            dreb_pct, def_distance,
+            opp_points, opp_fg2a, opp_fg2_pct, opp_fg3a, opp_fg3_pct,
+            opp_fta, opp_ft_pct, opp_off_rebs, opp_def_rebs,
+            opp_assists, opp_turnovers, opp_steals, opp_blocks,
+            opp_off_rtg, opp_def_rtg, opp_possessions, opp_ts_pct,
+            opp_rim_fga, opp_rim_fg_pct, opp_uast_rim_fga,
+            opp_mr_fga, opp_mr_fg_pct, opp_uast_mr_fga,
+            opp_uast_3fga, opp_cont_3pa, opp_cont_3p_pct, opp_open_3pa, opp_open_3p_pct,
+            opp_pot_assists, opp_avg_sec_touch,
+            opp_oreb_pct, opp_off_distance,
+            opp_charges_drawn, opp_deflections, opp_contests, opp_def_efg_pct,
+            opp_dreb_pct, opp_def_distance,
+            CURRENT_TIMESTAMP
+        FROM game_data
+        ON CONFLICT (team_id, season, season_type)
+        DO UPDATE SET
+            games_played = EXCLUDED.games_played,
+            wins = EXCLUDED.wins,
+            losses = EXCLUDED.losses,
+            minutes = EXCLUDED.minutes,
+            points = EXCLUDED.points,
+            fg2a = EXCLUDED.fg2a,
+            fg2_pct = EXCLUDED.fg2_pct,
+            fg3a = EXCLUDED.fg3a,
+            fg3_pct = EXCLUDED.fg3_pct,
+            fta = EXCLUDED.fta,
+            ft_pct = EXCLUDED.ft_pct,
+            off_rebs = EXCLUDED.off_rebs,
+            def_rebs = EXCLUDED.def_rebs,
+            assists = EXCLUDED.assists,
+            turnovers = EXCLUDED.turnovers,
+            steals = EXCLUDED.steals,
+            blocks = EXCLUDED.blocks,
+            plus_minus = EXCLUDED.plus_minus,
+            off_rtg = EXCLUDED.off_rtg,
+            def_rtg = EXCLUDED.def_rtg,
+            possessions = EXCLUDED.possessions,
+            ts_pct = EXCLUDED.ts_pct,
+            rim_fga = EXCLUDED.rim_fga,
+            rim_fg_pct = EXCLUDED.rim_fg_pct,
+            uast_rim_fga = EXCLUDED.uast_rim_fga,
+            mr_fga = EXCLUDED.mr_fga,
+            mr_fg_pct = EXCLUDED.mr_fg_pct,
+            uast_mr_fga = EXCLUDED.uast_mr_fga,
+            uast_3fga = EXCLUDED.uast_3fga,
+            cont_3pa = EXCLUDED.cont_3pa,
+            cont_3p_pct = EXCLUDED.cont_3p_pct,
+            open_3pa = EXCLUDED.open_3pa,
+            open_3p_pct = EXCLUDED.open_3p_pct,
+            pot_assists = EXCLUDED.pot_assists,
+            avg_sec_touch = EXCLUDED.avg_sec_touch,
+            oreb_pct = EXCLUDED.oreb_pct,
+            off_distance = EXCLUDED.off_distance,
+            charges_drawn = EXCLUDED.charges_drawn,
+            deflections = EXCLUDED.deflections,
+            contests = EXCLUDED.contests,
+            def_efg_pct = EXCLUDED.def_efg_pct,
+            dreb_pct = EXCLUDED.dreb_pct,
+            def_distance = EXCLUDED.def_distance,
+            opp_points = EXCLUDED.opp_points,
+            opp_fg2a = EXCLUDED.opp_fg2a,
+            opp_fg2_pct = EXCLUDED.opp_fg2_pct,
+            opp_fg3a = EXCLUDED.opp_fg3a,
+            opp_fg3_pct = EXCLUDED.opp_fg3_pct,
+            opp_fta = EXCLUDED.opp_fta,
+            opp_ft_pct = EXCLUDED.opp_ft_pct,
+            opp_off_rebs = EXCLUDED.opp_off_rebs,
+            opp_def_rebs = EXCLUDED.opp_def_rebs,
+            opp_assists = EXCLUDED.opp_assists,
+            opp_turnovers = EXCLUDED.opp_turnovers,
+            opp_steals = EXCLUDED.opp_steals,
+            opp_blocks = EXCLUDED.opp_blocks,
+            opp_off_rtg = EXCLUDED.opp_off_rtg,
+            opp_def_rtg = EXCLUDED.opp_def_rtg,
+            opp_possessions = EXCLUDED.opp_possessions,
+            opp_ts_pct = EXCLUDED.opp_ts_pct,
+            opp_rim_fga = EXCLUDED.opp_rim_fga,
+            opp_rim_fg_pct = EXCLUDED.opp_rim_fg_pct,
+            opp_uast_rim_fga = EXCLUDED.opp_uast_rim_fga,
+            opp_mr_fga = EXCLUDED.opp_mr_fga,
+            opp_mr_fg_pct = EXCLUDED.opp_mr_fg_pct,
+            opp_uast_mr_fga = EXCLUDED.opp_uast_mr_fga,
+            opp_uast_3fga = EXCLUDED.opp_uast_3fga,
+            opp_cont_3pa = EXCLUDED.opp_cont_3pa,
+            opp_cont_3p_pct = EXCLUDED.opp_cont_3p_pct,
+            opp_open_3pa = EXCLUDED.opp_open_3pa,
+            opp_open_3p_pct = EXCLUDED.opp_open_3p_pct,
+            opp_pot_assists = EXCLUDED.opp_pot_assists,
+            opp_avg_sec_touch = EXCLUDED.opp_avg_sec_touch,
+            opp_oreb_pct = EXCLUDED.opp_oreb_pct,
+            opp_off_distance = EXCLUDED.opp_off_distance,
+            opp_charges_drawn = EXCLUDED.opp_charges_drawn,
+            opp_deflections = EXCLUDED.opp_deflections,
+            opp_contests = EXCLUDED.opp_contests,
+            opp_def_efg_pct = EXCLUDED.opp_def_efg_pct,
+            opp_dreb_pct = EXCLUDED.opp_dreb_pct,
+            opp_def_distance = EXCLUDED.opp_def_distance,
+            last_calculated = CURRENT_TIMESTAMP
+    """
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, (season,))
+            rows_affected = cur.rowcount
+        conn.commit()
+        log_success(f"✓ Calculated team season stats: {rows_affected} records")
+    except Exception as e:
+        conn.rollback()
+        log_error(f"Failed to calculate team season stats: {e}")
+        raise
+
 # ============================================
 # PIPELINE ORCHESTRATION
 # ============================================
@@ -780,9 +1671,18 @@ def process_game(conn, game_id: str, game_date: str, season_type: str):
             matchup_data=matchup_data
         )
         
+        team_records = transform_team_game_stats(
+            game_id,
+            game_date,
+            box_scores,
+            shot_charts=shot_charts,
+            matchup_data=matchup_data
+        )
+        
         # Load
         upsert_game(conn, game_id, game_date, season_type, box_scores)
         upsert_player_game_stats(conn, player_records)
+        upsert_team_game_stats(conn, team_records)
         
         log_success(f"✓ Successfully processed game {game_id}")
         
@@ -791,7 +1691,7 @@ def process_game(conn, game_id: str, game_date: str, season_type: str):
         import traceback
         traceback.print_exc()
 
-def run_etl_for_date(date_str: str):
+def run_etl_for_date(date_str: str, check_upcoming: bool = True):
     """Run ETL for a specific date"""
     log_info(f"\n{'='*60}")
     log_info(f"ETL Pipeline - {date_str}")
@@ -800,6 +1700,15 @@ def run_etl_for_date(date_str: str):
     conn = get_db_connection()
     
     try:
+        # Check for upcoming games (only on first run of day or when requested)
+        if check_upcoming:
+            try:
+                populate_upcoming_games(conn, Config.CURRENT_SEASON)
+                update_game_statuses(conn)
+            except Exception as e:
+                log_error(f"Failed to update upcoming games: {e}")
+                # Don't fail the entire ETL
+        
         # Fetch games for date (returns list of (game_id, season_type) tuples)
         games = fetch_games_for_date(date_str)
         
@@ -824,6 +1733,17 @@ def run_etl_for_date(date_str: str):
             log_error(f"⚠ ETL complete for {date_str}: {games_processed} succeeded, {games_failed} failed")
         else:
             log_success(f"✓ ETL complete for {date_str}: {games_processed} games processed successfully")
+        
+        # Update season stats after processing all games
+        if games_processed > 0:
+            log_info("\nUpdating season statistics...")
+            try:
+                calculate_player_season_stats(conn, Config.CURRENT_SEASON)
+                calculate_team_season_stats(conn, Config.CURRENT_SEASON)
+                log_success("✓ Season statistics updated")
+            except Exception as e:
+                log_error(f"Failed to update season statistics: {e}")
+                # Don't fail the entire ETL if season stats fail
         
     except Exception as e:
         log_error(f"ETL failed for {date_str}: {e}")
