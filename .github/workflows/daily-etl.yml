@@ -39,7 +39,16 @@ jobs:
           DB_NAME: ${{ secrets.DB_NAME }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
         run: |
+          if [ -n "${{ inputs.start_date }}" ] && [ -n "${{ inputs.end_date }}" ]; then
+            echo "Running backfill from ${{ inputs.start_date }} to ${{ inputs.end_date }}"
+          elif [ -n "${{ inputs.start_date }}" ]; then
+            echo "Running backfill for single date: ${{ inputs.start_date }}"
+          else
+            echo "Running normal daily ETL for yesterday"
+          fi
           python etl_pipeline.py
       
       - name: Notify on failure
