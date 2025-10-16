@@ -194,6 +194,38 @@ def parse_minutes(min_str):
         return None
 
 # ============================================
+# SCHEMA OPTIMIZATION HELPERS
+# ============================================
+
+def scale_minutes(minutes):
+    """Convert minutes to smallint (tenths of minutes, x10)"""
+    if minutes is None:
+        return None
+    return round(minutes * 10)
+
+def scale_percentage(pct):
+    """Convert percentage (0.0-1.0) to smallint (x1000)"""
+    if pct is None:
+        return None
+    return round(pct * 1000)
+
+def scale_rating(rating):
+    """Convert rating to smallint (x100)"""
+    if rating is None:
+        return None
+    return round(rating * 100)
+
+def to_smallint(value):
+    """Safely convert integer to smallint (ensure within range -32768 to 32767)"""
+    if value is None:
+        return None
+    val = int(value)
+    if val < -32768 or val > 32767:
+        log_error(f"Value {val} out of smallint range, capping")
+        return max(-32768, min(32767, val))
+    return val
+
+# ============================================
 # DATA EXTRACTION
 # ============================================
 
@@ -464,37 +496,36 @@ def fetch_matchup_data(game_id: str) -> Dict:
 # ============================================
 
 def aggregate_shot_chart_stats(shot_df: pd.DataFrame) -> Dict:
-    """Aggregate shot chart data into location-based stats"""
+    """
+    Aggregate shot chart data into location-based stats.
+    
+    NOTE: Only uses RELIABLE shot zone data from NBA API.
+    Does NOT approximate unassisted/open shots via string matching due to fragility.
+    """
     
     stats = {
         'rim_fga': None,
         'rim_fg_pct': None,
-        'uast_rim_fga': None,
+        'uast_rim_fga': None,  # Not available - set to None
         'mr_fga': None,
         'mr_fg_pct': None,
-        'uast_mr_fga': None,
-        'open_3pa': None,
-        'open_3p_pct': None,
+        'uast_mr_fga': None,  # Not available - set to None
+        'open_3pa': None,  # Not available - set to None
+        'open_3p_pct': None,  # Not available - set to None
     }
     
     if shot_df.empty:
         return stats
     
-    # Rim shots (Restricted Area)
+    # Rim shots (Restricted Area) - RELIABLE from SHOT_ZONE_BASIC
     rim_shots = shot_df[shot_df['SHOT_ZONE_BASIC'] == 'Restricted Area']
     if not rim_shots.empty:
         stats['rim_fga'] = len(rim_shots)
         rim_made = rim_shots[rim_shots['SHOT_MADE_FLAG'] == 1]
         stats['rim_fg_pct'] = len(rim_made) / len(rim_shots) if len(rim_shots) > 0 else None
-        
-        # Unassisted rim shots (ACTION_TYPE contains specific keywords)
-        unassisted_keywords = ['Driving', 'Running', 'Layup', 'Dunk']
-        unassisted_rim = rim_shots[
-            rim_shots['ACTION_TYPE'].str.contains('|'.join(unassisted_keywords), case=False, na=False)
-        ]
-        stats['uast_rim_fga'] = len(unassisted_rim)
+        # NOTE: uast_rim_fga left as None - no reliable data for unassisted shots
     
-    # Mid-range shots (8-16 ft and 16-24 ft)
+    # Mid-range shots (8-16 ft and 16-24 ft) - RELIABLE from SHOT_ZONE_RANGE
     mr_shots = shot_df[
         shot_df['SHOT_ZONE_RANGE'].isin(['8-16 ft.', '16-24 ft.'])
     ]
@@ -502,26 +533,11 @@ def aggregate_shot_chart_stats(shot_df: pd.DataFrame) -> Dict:
         stats['mr_fga'] = len(mr_shots)
         mr_made = mr_shots[mr_shots['SHOT_MADE_FLAG'] == 1]
         stats['mr_fg_pct'] = len(mr_made) / len(mr_shots) if len(mr_shots) > 0 else None
-        
-        # Unassisted mid-range (pull-ups, step-backs, etc.)
-        unassisted_mr_keywords = ['Pullup', 'Pull-Up', 'Step Back', 'Fadeaway', 'Turnaround']
-        unassisted_mr = mr_shots[
-            mr_shots['ACTION_TYPE'].str.contains('|'.join(unassisted_mr_keywords), case=False, na=False)
-        ]
-        stats['uast_mr_fga'] = len(unassisted_mr)
+        # NOTE: uast_mr_fga left as None - no reliable data for unassisted shots
     
-    # Open 3-point shots (closest defender > 4 feet, approximated by shot type)
-    three_shots = shot_df[shot_df['SHOT_TYPE'] == '3PT Field Goal']
-    if not three_shots.empty:
-        # Use ACTION_TYPE as proxy: "Open" or wide open attempts
-        open_keywords = ['Open']
-        open_threes = three_shots[
-            three_shots['ACTION_TYPE'].str.contains('|'.join(open_keywords), case=False, na=False)
-        ]
-        if not open_threes.empty:
-            stats['open_3pa'] = len(open_threes)
-            open_made = open_threes[open_threes['SHOT_MADE_FLAG'] == 1]
-            stats['open_3p_pct'] = len(open_made) / len(open_threes) if len(open_threes) > 0 else None
+    # NOTE: open_3pa and open_3p_pct left as None
+    # NBA API shot chart does not include reliable defender distance or contest data
+    # Approximating via ACTION_TYPE string matching is too fragile and unreliable
     
     return stats
 
@@ -551,6 +567,7 @@ def aggregate_matchup_stats(matchup_data: Dict, player_id: int) -> Dict:
         total_cont_3pm = 0
         total_def_fga = 0
         total_def_fgm = 0
+        total_def_3pm = 0
         
         for matchup in player_matchups:
             # Contested 3-pointers
@@ -559,12 +576,13 @@ def aggregate_matchup_stats(matchup_data: Dict, player_id: int) -> Dict:
             total_cont_3pa += cont_3pa if cont_3pa else 0
             total_cont_3pm += cont_3pm if cont_3pm else 0
             
-            # Defensive eFG%
+            # Defensive eFG% components
             def_fga = matchup.get('defensiveFga', 0)
             def_fgm = matchup.get('defensiveFgm', 0)
             def_3pm = matchup.get('defensive3pm', 0)
             total_def_fga += def_fga if def_fga else 0
             total_def_fgm += def_fgm if def_fgm else 0
+            total_def_3pm += def_3pm if def_3pm else 0
         
         # Calculate stats
         if total_cont_3pa > 0:
@@ -572,9 +590,9 @@ def aggregate_matchup_stats(matchup_data: Dict, player_id: int) -> Dict:
             stats['cont_3p_pct'] = total_cont_3pm / total_cont_3pa
         
         if total_def_fga > 0:
-            # eFG% = (FGM + 0.5 * 3PM) / FGA
-            # For defense, we use opponent's makes
-            stats['def_efg_pct'] = total_def_fgm / total_def_fga
+            # Defensive eFG% = (FGM + 0.5 * 3PM) / FGA
+            # Accounts for 3-pointers being worth 1.5x as much
+            stats['def_efg_pct'] = (total_def_fgm + 0.5 * total_def_3pm) / total_def_fga
     
     except Exception as e:
         log_error(f"Error aggregating matchup stats for player {player_id}: {e}")
@@ -598,6 +616,16 @@ def transform_player_game_stats(
     if trad.empty:
         log_error("No traditional stats available")
         return []
+    
+    # Get team IDs to determine home/away and opponent
+    # NBA API returns home team first, then away team
+    team_ids = trad['TEAM_ID'].unique().tolist()
+    if len(team_ids) != 2:
+        log_error(f"Expected 2 teams, found {len(team_ids)}")
+        return []
+    
+    home_team_id = team_ids[0]
+    away_team_id = team_ids[1]
     
     # Merge all dataframes on PLAYER_ID
     merged = trad.copy()
@@ -653,74 +681,82 @@ def transform_player_game_stats(
         if matchup_data:
             matchup_stats = aggregate_matchup_stats(matchup_data, player_id)
         
+        # Determine opponent and home/away
+        team_id = safe_int(row.get('TEAM_ID'))
+        is_home = team_id == home_team_id
+        opponent_team_id = away_team_id if is_home else home_team_id
+        
         record = {
             'game_id': game_id,
             'player_id': player_id,
-            'team_id': safe_int(row.get('TEAM_ID')),
+            'team_id': team_id,
+            'opponent_team_id': opponent_team_id,
+            'is_home': is_home,
             'game_date': game_date,
             
-            # Basic
-            'minutes': parse_minutes(row.get('MIN')),
+            # Basic - SCALED
+            'minutes': scale_minutes(parse_minutes(row.get('MIN'))),  # x10 -> smallint
             'points': safe_int(row.get('PTS')),
             
-            # Shooting
-            'fg2a': fg2a,
-            'fg2_pct': fg2_pct,
-            'fg3a': fg3a,
-            'fg3_pct': safe_float(row.get('FG3_PCT')),
-            'fta': safe_int(row.get('FTA')),
-            'ft_pct': safe_float(row.get('FT_PCT')),
+            # Shooting - SCALED PERCENTAGES
+            'fg2a': to_smallint(fg2a),
+            'fg2_pct': scale_percentage(fg2_pct),  # x1000 -> smallint
+            'fg3a': to_smallint(fg3a),
+            'fg3_pct': scale_percentage(safe_float(row.get('FG3_PCT'))),  # x1000 -> smallint
+            'fta': to_smallint(safe_int(row.get('FTA'))),
+            'ft_pct': scale_percentage(safe_float(row.get('FT_PCT'))),  # x1000 -> smallint
             
-            # Rebounding
-            'off_rebs': safe_int(row.get('OREB')),
-            'def_rebs': safe_int(row.get('DREB')),
+            # Rebounding - SCALED
+            'off_rebs': to_smallint(safe_int(row.get('OREB'))),
+            'def_rebs': to_smallint(safe_int(row.get('DREB'))),
             
-            # Playmaking
-            'assists': safe_int(row.get('AST')),
-            'turnovers': safe_int(row.get('TO')),
+            # Playmaking - SCALED
+            'assists': to_smallint(safe_int(row.get('AST'))),
+            'turnovers': to_smallint(safe_int(row.get('TO'))),
             
-            # Defense
-            'steals': safe_int(row.get('STL')),
-            'blocks': safe_int(row.get('BLK')),
+            # Defense - SCALED
+            'steals': to_smallint(safe_int(row.get('STL'))),
+            'blocks': to_smallint(safe_int(row.get('BLK'))),
             
-            # Impact
-            'plus_minus': safe_int(row.get('PLUS_MINUS')),
-            'on_off': safe_float(row.get('NET_RATING')),  # Approximation
-            'off_rtg': safe_float(row.get('OFF_RATING')),
-            'def_rtg': safe_float(row.get('DEF_RATING')),
+            # Impact - SCALED
+            'plus_minus': to_smallint(safe_int(row.get('PLUS_MINUS'))),
+            'on_off': scale_rating(safe_float(row.get('NET_RATING'))),  # x100 -> smallint
+            'off_rtg': scale_rating(safe_float(row.get('OFF_RATING'))),  # x100 -> smallint
+            'def_rtg': scale_rating(safe_float(row.get('DEF_RATING'))),  # x100 -> smallint
             'possessions': safe_int(row.get('POSS')),
             
-            # Advanced Shooting
-            'ts_pct': safe_float(row.get('TS_PCT')),
+            # Advanced Shooting - SCALED PERCENTAGES
+            'ts_pct': scale_percentage(safe_float(row.get('TS_PCT'))),  # x1000 -> smallint
             
-            # Shot location (from shot chart aggregation)
-            'rim_fga': shot_stats.get('rim_fga'),
-            'rim_fg_pct': shot_stats.get('rim_fg_pct'),
-            'uast_rim_fga': shot_stats.get('uast_rim_fga'),
-            'mr_fga': shot_stats.get('mr_fga'),
-            'mr_fg_pct': shot_stats.get('mr_fg_pct'),
-            'uast_mr_fga': shot_stats.get('uast_mr_fga'),
-            'uast_3fga': uast_3fga,
-            'cont_3pa': matchup_stats.get('cont_3pa'),
-            'cont_3p_pct': matchup_stats.get('cont_3p_pct'),
-            'open_3pa': shot_stats.get('open_3pa'),
-            'open_3p_pct': shot_stats.get('open_3p_pct'),
+            # Shot location (from shot chart aggregation) - SCALED
+            'rim_fga': to_smallint(shot_stats.get('rim_fga')),
+            'rim_fg_pct': scale_percentage(shot_stats.get('rim_fg_pct')),  # x1000 -> smallint
+            'uast_rim_fga': to_smallint(shot_stats.get('uast_rim_fga')),
+            'mr_fga': to_smallint(shot_stats.get('mr_fga')),
+            'mr_fg_pct': scale_percentage(shot_stats.get('mr_fg_pct')),  # x1000 -> smallint
+
+            'uast_mr_fga': to_smallint(shot_stats.get('uast_mr_fga')),
+            'uast_3fga': to_smallint(uast_3fga),
+            'cont_3pa': to_smallint(matchup_stats.get('cont_3pa')),
+            'cont_3p_pct': scale_percentage(matchup_stats.get('cont_3p_pct')),  # x1000 -> smallint
+            'open_3pa': to_smallint(shot_stats.get('open_3pa')),
+            'open_3p_pct': scale_percentage(shot_stats.get('open_3p_pct')),  # x1000 -> smallint
             
             # Playmaking Advanced (tracking not available - dropped)
             'pot_assists': None,
-            'on_ball_pct': None,
+            'on_ball_pct': scale_percentage(None),  # x1000 -> smallint (NULL)
             'avg_sec_touch': None,
             
-            # Rebounding Advanced
-            'oreb_pct': safe_float(row.get('OREB_PCT')),
-            'dreb_pct': safe_float(row.get('DREB_PCT')),
+            # Rebounding Advanced - SCALED PERCENTAGES
+            'oreb_pct': scale_percentage(safe_float(row.get('OREB_PCT'))),  # x1000 -> smallint
+            'dreb_pct': scale_percentage(safe_float(row.get('DREB_PCT'))),  # x1000 -> smallint
             
-            # Hustle
+            # Hustle - SCALED
             'off_distance': None,  # Tracking not available - dropped
-            'charges_drawn': safe_int(row.get('chargesDrawn')),
-            'deflections': safe_int(row.get('deflections')),
-            'contests': safe_int(row.get('contestedShots')),
-            'def_efg_pct': matchup_stats.get('def_efg_pct'),
+            'charges_drawn': to_smallint(safe_int(row.get('chargesDrawn'))),
+            'deflections': to_smallint(safe_int(row.get('deflections'))),
+            'contests': to_smallint(safe_int(row.get('contestedShots'))),
+            'def_efg_pct': scale_percentage(matchup_stats.get('def_efg_pct')),  # x1000 -> smallint
             'def_distance': None,  # Tracking not available - dropped
         }
         
@@ -902,84 +938,84 @@ def transform_team_game_stats(
             'team_id': team_id,
             'opponent_team_id': opponent_team_id,
             'is_home': is_home,
-            'minutes': parse_minutes(row.get('MIN')),
+            'minutes': scale_minutes(parse_minutes(row.get('MIN'))),  # x10 -> smallint
             'points': safe_int(row.get('PTS')),
-            'fg2a': fg2a,
-            'fg2_pct': fg2_pct,
-            'fg3a': fg3a,
-            'fg3_pct': safe_float(row.get('FG3_PCT')),
-            'fta': safe_int(row.get('FTA')),
-            'ft_pct': safe_float(row.get('FT_PCT')),
-            'off_rebs': safe_int(row.get('OREB')),
-            'def_rebs': safe_int(row.get('DREB')),
-            'assists': safe_int(row.get('AST')),
-            'turnovers': safe_int(row.get('TO')),
-            'steals': safe_int(row.get('STL')),
-            'blocks': safe_int(row.get('BLK')),
-            'plus_minus': safe_int(row.get('PLUS_MINUS')),
-            'off_rtg': safe_float(row.get('OFF_RATING')),
-            'def_rtg': safe_float(row.get('DEF_RATING')),
+            'fg2a': to_smallint(fg2a),
+            'fg2_pct': scale_percentage(fg2_pct),  # x1000 -> smallint
+            'fg3a': to_smallint(fg3a),
+            'fg3_pct': scale_percentage(safe_float(row.get('FG3_PCT'))),  # x1000 -> smallint
+            'fta': to_smallint(safe_int(row.get('FTA'))),
+            'ft_pct': scale_percentage(safe_float(row.get('FT_PCT'))),  # x1000 -> smallint
+            'off_rebs': to_smallint(safe_int(row.get('OREB'))),
+            'def_rebs': to_smallint(safe_int(row.get('DREB'))),
+            'assists': to_smallint(safe_int(row.get('AST'))),
+            'turnovers': to_smallint(safe_int(row.get('TO'))),
+            'steals': to_smallint(safe_int(row.get('STL'))),
+            'blocks': to_smallint(safe_int(row.get('BLK'))),
+            'plus_minus': to_smallint(safe_int(row.get('PLUS_MINUS'))),
+            'off_rtg': scale_rating(safe_float(row.get('OFF_RATING'))),  # x100 -> smallint
+            'def_rtg': scale_rating(safe_float(row.get('DEF_RATING'))),  # x100 -> smallint
             'possessions': safe_int(row.get('POSS')),
-            'ts_pct': safe_float(row.get('TS_PCT')),
-            'rim_fga': shot_stats.get('rim_fga'),
-            'rim_fg_pct': shot_stats.get('rim_fg_pct'),
-            'uast_rim_fga': shot_stats.get('uast_rim_fga'),
-            'mr_fga': shot_stats.get('mr_fga'),
-            'mr_fg_pct': shot_stats.get('mr_fg_pct'),
-            'uast_mr_fga': shot_stats.get('uast_mr_fga'),
-            'uast_3fga': uast_3fga,
-            'cont_3pa': matchup_stats.get('cont_3pa'),
-            'cont_3p_pct': matchup_stats.get('cont_3p_pct'),
-            'open_3pa': shot_stats.get('open_3pa'),
-            'open_3p_pct': shot_stats.get('open_3p_pct'),
+            'ts_pct': scale_percentage(safe_float(row.get('TS_PCT'))),  # x1000 -> smallint
+            'rim_fga': to_smallint(shot_stats.get('rim_fga')),
+            'rim_fg_pct': scale_percentage(shot_stats.get('rim_fg_pct')),  # x1000 -> smallint
+            'uast_rim_fga': to_smallint(shot_stats.get('uast_rim_fga')),
+            'mr_fga': to_smallint(shot_stats.get('mr_fga')),
+            'mr_fg_pct': scale_percentage(shot_stats.get('mr_fg_pct')),  # x1000 -> smallint
+            'uast_mr_fga': to_smallint(shot_stats.get('uast_mr_fga')),
+            'uast_3fga': to_smallint(uast_3fga),
+            'cont_3pa': to_smallint(matchup_stats.get('cont_3pa')),
+            'cont_3p_pct': scale_percentage(matchup_stats.get('cont_3p_pct')),  # x1000 -> smallint
+            'open_3pa': to_smallint(shot_stats.get('open_3pa')),
+            'open_3p_pct': scale_percentage(shot_stats.get('open_3p_pct')),  # x1000 -> smallint
             'pot_assists': None,
             'avg_sec_touch': None,
-            'oreb_pct': safe_float(row.get('OREB_PCT')),
+            'oreb_pct': scale_percentage(safe_float(row.get('OREB_PCT'))),  # x1000 -> smallint
             'off_distance': None,
-            'charges_drawn': safe_int(row.get('chargesDrawn')),
-            'deflections': safe_int(row.get('deflections')),
-            'contests': safe_int(row.get('contestedShots')),
-            'def_efg_pct': matchup_stats.get('def_efg_pct'),
-            'dreb_pct': safe_float(row.get('DREB_PCT')),
+            'charges_drawn': to_smallint(safe_int(row.get('chargesDrawn'))),
+            'deflections': to_smallint(safe_int(row.get('deflections'))),
+            'contests': to_smallint(safe_int(row.get('contestedShots'))),
+            'def_efg_pct': scale_percentage(matchup_stats.get('def_efg_pct')),  # x1000 -> smallint
+            'dreb_pct': scale_percentage(safe_float(row.get('DREB_PCT'))),  # x1000 -> smallint
             'def_distance': None,
-            # Opponent stats
+            # Opponent stats - ALL SCALED
             'opp_points': safe_int(opponent_row.get('PTS')),
-            'opp_fg2a': opp_fg2a,
-            'opp_fg2_pct': opp_fg2_pct,
-            'opp_fg3a': opp_fg3a,
-            'opp_fg3_pct': safe_float(opponent_row.get('FG3_PCT')),
-            'opp_fta': safe_int(opponent_row.get('FTA')),
-            'opp_ft_pct': safe_float(opponent_row.get('FT_PCT')),
-            'opp_off_rebs': safe_int(opponent_row.get('OREB')),
-            'opp_def_rebs': safe_int(opponent_row.get('DREB')),
-            'opp_assists': safe_int(opponent_row.get('AST')),
-            'opp_turnovers': safe_int(opponent_row.get('TO')),
-            'opp_steals': safe_int(opponent_row.get('STL')),
-            'opp_blocks': safe_int(opponent_row.get('BLK')),
-            'opp_off_rtg': safe_float(opponent_row.get('OFF_RATING')),
-            'opp_def_rtg': safe_float(opponent_row.get('DEF_RATING')),
+            'opp_fg2a': to_smallint(opp_fg2a),
+            'opp_fg2_pct': scale_percentage(opp_fg2_pct),  # x1000 -> smallint
+            'opp_fg3a': to_smallint(opp_fg3a),
+            'opp_fg3_pct': scale_percentage(safe_float(opponent_row.get('FG3_PCT'))),  # x1000 -> smallint
+            'opp_fta': to_smallint(safe_int(opponent_row.get('FTA'))),
+            'opp_ft_pct': scale_percentage(safe_float(opponent_row.get('FT_PCT'))),  # x1000 -> smallint
+            'opp_off_rebs': to_smallint(safe_int(opponent_row.get('OREB'))),
+            'opp_def_rebs': to_smallint(safe_int(opponent_row.get('DREB'))),
+            'opp_assists': to_smallint(safe_int(opponent_row.get('AST'))),
+            'opp_turnovers': to_smallint(safe_int(opponent_row.get('TO'))),
+            'opp_steals': to_smallint(safe_int(opponent_row.get('STL'))),
+            'opp_blocks': to_smallint(safe_int(opponent_row.get('BLK'))),
+            'opp_off_rtg': scale_rating(safe_float(opponent_row.get('OFF_RATING'))),  # x100 -> smallint
+            'opp_def_rtg': scale_rating(safe_float(opponent_row.get('DEF_RATING'))),  # x100 -> smallint
             'opp_possessions': safe_int(opponent_row.get('POSS')),
-            'opp_ts_pct': safe_float(opponent_row.get('TS_PCT')),
-            'opp_rim_fga': opp_shot_stats.get('rim_fga'),
-            'opp_rim_fg_pct': opp_shot_stats.get('rim_fg_pct'),
-            'opp_uast_rim_fga': opp_shot_stats.get('uast_rim_fga'),
-            'opp_mr_fga': opp_shot_stats.get('mr_fga'),
-            'opp_mr_fg_pct': opp_shot_stats.get('mr_fg_pct'),
-            'opp_uast_mr_fga': opp_shot_stats.get('uast_mr_fga'),
-            'opp_uast_3fga': opp_uast_3fga,
-            'opp_cont_3pa': opp_matchup_stats.get('cont_3pa'),
-            'opp_cont_3p_pct': opp_matchup_stats.get('cont_3p_pct'),
-            'opp_open_3pa': opp_shot_stats.get('open_3pa'),
-            'opp_open_3p_pct': opp_shot_stats.get('open_3p_pct'),
+            'opp_ts_pct': scale_percentage(safe_float(opponent_row.get('TS_PCT'))),  # x1000 -> smallint
+            'opp_rim_fga': to_smallint(opp_shot_stats.get('rim_fga')),
+            'opp_rim_fg_pct': scale_percentage(opp_shot_stats.get('rim_fg_pct')),  # x1000 -> smallint
+            'opp_uast_rim_fga': to_smallint(opp_shot_stats.get('uast_rim_fga')),
+            'opp_mr_fga': to_smallint(opp_shot_stats.get('mr_fga')),
+            'opp_mr_fg_pct': scale_percentage(opp_shot_stats.get('mr_fg_pct')),  # x1000 -> smallint
+            'opp_uast_mr_fga': to_smallint(opp_shot_stats.get('uast_mr_fga')),
+            'opp_uast_3fga': to_smallint(opp_uast_3fga),
+            'opp_cont_3pa': to_smallint(opp_matchup_stats.get('cont_3pa')),
+            'opp_cont_3p_pct': scale_percentage(opp_matchup_stats.get('cont_3p_pct')),  # x1000 -> smallint
+            'opp_open_3pa': to_smallint(opp_shot_stats.get('open_3pa')),
+            'opp_open_3p_pct': scale_percentage(opp_shot_stats.get('open_3p_pct')),  # x1000 -> smallint
             'opp_pot_assists': None,
             'opp_avg_sec_touch': None,
-            'opp_oreb_pct': safe_float(opponent_row.get('OREB_PCT')),
+            'opp_oreb_pct': scale_percentage(safe_float(opponent_row.get('OREB_PCT'))),  # x1000 -> smallint
             'opp_off_distance': None,
-            'opp_charges_drawn': safe_int(opponent_row.get('chargesDrawn')),
-            'opp_deflections': safe_int(opponent_row.get('deflections')),
-            'opp_contests': safe_int(opponent_row.get('contestedShots')),
-            'opp_def_efg_pct': opp_matchup_stats.get('def_efg_pct'),
-            'opp_dreb_pct': safe_float(opponent_row.get('DREB_PCT')),
+            'opp_charges_drawn': to_smallint(safe_int(opponent_row.get('chargesDrawn'))),
+            'opp_deflections': to_smallint(safe_int(opponent_row.get('deflections'))),
+            'opp_contests': to_smallint(safe_int(opponent_row.get('contestedShots'))),
+            'opp_def_efg_pct': scale_percentage(opp_matchup_stats.get('def_efg_pct')),  # x1000 -> smallint
+            'opp_dreb_pct': scale_percentage(safe_float(opponent_row.get('DREB_PCT'))),  # x1000 -> smallint
             'opp_def_distance': None,
         }
         
@@ -991,6 +1027,36 @@ def transform_team_game_stats(
 # ============================================
 # DATA LOADING
 # ============================================
+
+def calculate_age_decimal(birth_date_str):
+    """Calculate age as decimal (e.g., 24.5 years old)"""
+    if not birth_date_str:
+        return None
+    
+    try:
+        birth_date = datetime.strptime(birth_date_str, "%Y-%m-%dT%H:%M:%S")
+        today = datetime.now()
+        
+        age_years = today.year - birth_date.year
+        days_in_year = 366 if ((today.year % 4 == 0 and today.year % 100 != 0) or (today.year % 400 == 0)) else 365
+        
+        # Adjust if birthday hasn't occurred this year
+        birth_this_year = birth_date.replace(year=today.year)
+        if today < birth_this_year:
+            age_years -= 1
+            # Days from birthday last year to today
+            birth_last_year = birth_date.replace(year=today.year - 1)
+            days_diff = (today - birth_last_year).days
+        else:
+            # Days from birthday this year to today
+            days_diff = (today - birth_this_year).days
+        
+        # Convert days to fraction of year
+        age_decimal = age_years + (days_diff / days_in_year)
+        return round(age_decimal, 1)
+        
+    except (ValueError, TypeError):
+        return None
 
 def ensure_players_exist(conn, player_ids: List[int]):
     """Ensure all players exist in the database, add minimal records if missing"""
@@ -1042,6 +1108,10 @@ def ensure_players_exist(conn, player_ids: List[int]):
                     if team_id == 0:
                         team_id = None
                     
+                    # Calculate age from birthdate
+                    birth_date = safe_str(row.get('BIRTHDATE'))
+                    age_decimal = calculate_age_decimal(birth_date)
+                    
                     players_to_insert.append((
                         player_id,
                         team_id,
@@ -1050,7 +1120,7 @@ def ensure_players_exist(conn, player_ids: List[int]):
                         safe_str(row.get('DISPLAY_FIRST_LAST')),
                         height_inches,
                         weight_lbs,
-                        None,  # age_decimal - will be updated by daily script
+                        age_decimal,
                         safe_int(row.get('SEASON_EXP')),
                         safe_str(row.get('JERSEY')),
                         safe_str(row.get('SCHOOL')),
@@ -1108,7 +1178,7 @@ def upsert_player_game_stats(conn, records: List[Dict]):
     log_info(f"Upserting {len(records)} player game stats...")
     
     columns = [
-        'game_id', 'player_id', 'team_id', 'game_date',
+        'game_id', 'player_id', 'team_id', 'opponent_team_id', 'is_home', 'game_date',
         'minutes', 'points',
         'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct', 'fta', 'ft_pct',
         'off_rebs', 'def_rebs',
@@ -1131,7 +1201,6 @@ def upsert_player_game_stats(conn, records: List[Dict]):
     
     # Build upsert query
     columns_str = ', '.join(columns)
-    placeholders = ', '.join(['%s'] * len(columns))
     
     # Update clause (all columns except keys)
     update_cols = [col for col in columns if col not in ['game_id', 'player_id']]
@@ -1352,6 +1421,11 @@ def calculate_player_season_stats(conn, season: str = None):
     log_info(f"Calculating player season stats for {season}...")
     
     # Query to aggregate player stats by season and season_type
+    # NOTE: Season stats now store TOTALS (not averages) with scaled values
+    # - Minutes: already scaled x10 in player_game_stats, SUM for total
+    # - Counts (points, rebounds, etc.): SUM for totals
+    # - Percentages: already scaled x1000 in player_game_stats, AVG for season avg
+    # - Ratings: already scaled x100 in player_game_stats, AVG for season avg
     query = """
         WITH game_data AS (
             SELECT 
@@ -1359,51 +1433,56 @@ def calculate_player_season_stats(conn, season: str = None):
                 pgs.team_id,
                 g.season,
                 g.season_type,
-                COUNT(DISTINCT pgs.game_id) as games_played,
-                -- Assume games_started if minutes >= 24
-                COUNT(DISTINCT CASE WHEN pgs.minutes >= 24 THEN pgs.game_id END) as games_started,
-                AVG(pgs.minutes) as minutes,
-                AVG(pgs.points) as points,
-                AVG(pgs.fg2a) as fg2a,
-                AVG(CASE WHEN pgs.fg2a > 0 THEN pgs.fg2_pct END) as fg2_pct,
-                AVG(pgs.fg3a) as fg3a,
-                AVG(CASE WHEN pgs.fg3a > 0 THEN pgs.fg3_pct END) as fg3_pct,
-                AVG(pgs.fta) as fta,
-                AVG(CASE WHEN pgs.fta > 0 THEN pgs.ft_pct END) as ft_pct,
-                AVG(pgs.off_rebs) as off_rebs,
-                AVG(pgs.def_rebs) as def_rebs,
-                AVG(pgs.assists) as assists,
-                AVG(pgs.turnovers) as turnovers,
-                AVG(pgs.steals) as steals,
-                AVG(pgs.blocks) as blocks,
-                AVG(pgs.plus_minus) as plus_minus,
-                AVG(pgs.on_off) as on_off,
-                AVG(pgs.off_rtg) as off_rtg,
-                AVG(pgs.def_rtg) as def_rtg,
-                AVG(pgs.possessions) as possessions,
-                AVG(pgs.ts_pct) as ts_pct,
-                AVG(pgs.rim_fga) as rim_fga,
-                AVG(CASE WHEN pgs.rim_fga > 0 THEN pgs.rim_fg_pct END) as rim_fg_pct,
-                AVG(pgs.uast_rim_fga) as uast_rim_fga,
-                AVG(pgs.mr_fga) as mr_fga,
-                AVG(CASE WHEN pgs.mr_fga > 0 THEN pgs.mr_fg_pct END) as mr_fg_pct,
-                AVG(pgs.uast_mr_fga) as uast_mr_fga,
-                AVG(pgs.uast_3fga) as uast_3fga,
-                AVG(pgs.cont_3pa) as cont_3pa,
-                AVG(CASE WHEN pgs.cont_3pa > 0 THEN pgs.cont_3p_pct END) as cont_3p_pct,
-                AVG(pgs.open_3pa) as open_3pa,
-                AVG(CASE WHEN pgs.open_3pa > 0 THEN pgs.open_3p_pct END) as open_3p_pct,
-                AVG(pgs.pot_assists) as pot_assists,
-                AVG(pgs.on_ball_pct) as on_ball_pct,
-                AVG(pgs.avg_sec_touch) as avg_sec_touch,
-                AVG(pgs.oreb_pct) as oreb_pct,
-                AVG(pgs.off_distance) as off_distance,
-                AVG(pgs.charges_drawn) as charges_drawn,
-                AVG(pgs.deflections) as deflections,
-                AVG(pgs.contests) as contests,
-                AVG(pgs.def_efg_pct) as def_efg_pct,
-                AVG(pgs.dreb_pct) as dreb_pct,
-                AVG(pgs.def_distance) as def_distance
+                -- Only count games where player actually played (minutes > 0)
+                COUNT(DISTINCT CASE WHEN pgs.minutes > 0 THEN pgs.game_id END) as games_played,
+                -- Assume games_started if minutes >= 240 (24.0 minutes * 10)
+                COUNT(DISTINCT CASE WHEN pgs.minutes >= 240 THEN pgs.game_id END) as games_started,
+                -- TOTALS (already scaled in player_game_stats)
+                SUM(pgs.minutes) as minutes,  -- Total minutes (x10)
+                SUM(pgs.points) as points,  -- Total points
+                SUM(pgs.fg2a) as fg2a,  -- Total 2PA
+                SUM(pgs.fg3a) as fg3a,  # Total 3PA
+                SUM(pgs.fta) as fta,  -- Total FTA
+                SUM(pgs.off_rebs) as off_rebs,  -- Total offensive rebounds
+                SUM(pgs.def_rebs) as def_rebs,  -- Total defensive rebounds
+                SUM(pgs.assists) as assists,  -- Total assists
+                SUM(pgs.turnovers) as turnovers,  -- Total turnovers
+                SUM(pgs.steals) as steals,  -- Total steals
+                SUM(pgs.blocks) as blocks,  -- Total blocks
+                SUM(pgs.possessions) as possessions,  -- Total possessions
+                SUM(pgs.charges_drawn) as charges_drawn,  -- Total charges drawn
+                SUM(pgs.deflections) as deflections,  -- Total deflections
+                SUM(pgs.contests) as contests,  -- Total contests
+                -- AVERAGES (percentages and ratings, already scaled)
+                ROUND(AVG(pgs.fg2_pct))::smallint as fg2_pct,  -- x1000
+                ROUND(AVG(pgs.fg3_pct))::smallint as fg3_pct,  -- x1000
+                ROUND(AVG(pgs.ft_pct))::smallint as ft_pct,  -- x1000
+                ROUND(AVG(pgs.ts_pct))::smallint as ts_pct,  -- x1000
+                ROUND(AVG(pgs.rim_fg_pct))::smallint as rim_fg_pct,  -- x1000
+                ROUND(AVG(pgs.mr_fg_pct))::smallint as mr_fg_pct,  -- x1000
+                ROUND(AVG(pgs.cont_3p_pct))::smallint as cont_3p_pct,  -- x1000
+                ROUND(AVG(pgs.open_3p_pct))::smallint as open_3p_pct,  -- x1000
+                ROUND(AVG(pgs.oreb_pct))::smallint as oreb_pct,  -- x1000
+                ROUND(AVG(pgs.def_efg_pct))::smallint as def_efg_pct,  -- x1000
+                ROUND(AVG(pgs.dreb_pct))::smallint as dreb_pct,  -- x1000
+                ROUND(AVG(pgs.on_ball_pct))::smallint as on_ball_pct,  -- x1000
+                ROUND(AVG(pgs.on_off))::smallint as on_off,  -- x100
+                ROUND(AVG(pgs.off_rtg))::smallint as off_rtg,  -- x100
+                ROUND(AVG(pgs.def_rtg))::smallint as def_rtg,  -- x100
+                -- PLUS/MINUS as total (x100 for storage)
+                (ROUND(SUM(pgs.plus_minus) * 100))::smallint as plus_minus,  -- x100
+                -- Nulls
+                NULL::smallint as rim_fga,
+                NULL::smallint as uast_rim_fga,
+                NULL::smallint as mr_fga,
+                NULL::smallint as uast_mr_fga,
+                NULL::smallint as uast_3fga,
+                NULL::smallint as cont_3pa,
+                NULL::smallint as open_3pa,
+                NULL as pot_assists,
+                NULL as avg_sec_touch,
+                NULL as off_distance,
+                NULL as def_distance
             FROM player_game_stats pgs
             JOIN games g ON pgs.game_id = g.game_id
             WHERE g.season = %s AND g.game_status = 'Final'
@@ -1507,6 +1586,11 @@ def calculate_team_season_stats(conn, season: str = None):
     log_info(f"Calculating team season stats for {season}...")
     
     # Query to aggregate team stats by season and season_type
+    # NOTE: Season stats now store TOTALS (not averages) with scaled values
+    # - Minutes: already scaled x10 in team_game_stats, SUM for total
+    # - Counts (points, rebounds, etc.): SUM for totals
+    # - Percentages: already scaled x1000 in team_game_stats, AVG for season avg
+    # - Ratings: already scaled x100 in team_game_stats, AVG for season avg
     query = """
         WITH game_data AS (
             SELECT 
@@ -1517,85 +1601,91 @@ def calculate_team_season_stats(conn, season: str = None):
                 -- Count wins (when team scored more than opponent)
                 COUNT(DISTINCT CASE WHEN tgs.points > tgs.opp_points THEN tgs.game_id END) as wins,
                 COUNT(DISTINCT CASE WHEN tgs.points < tgs.opp_points THEN tgs.game_id END) as losses,
-                AVG(tgs.minutes) as minutes,
-                AVG(tgs.points) as points,
-                AVG(tgs.fg2a) as fg2a,
-                AVG(CASE WHEN tgs.fg2a > 0 THEN tgs.fg2_pct END) as fg2_pct,
-                AVG(tgs.fg3a) as fg3a,
-                AVG(CASE WHEN tgs.fg3a > 0 THEN tgs.fg3_pct END) as fg3_pct,
-                AVG(tgs.fta) as fta,
-                AVG(CASE WHEN tgs.fta > 0 THEN tgs.ft_pct END) as ft_pct,
-                AVG(tgs.off_rebs) as off_rebs,
-                AVG(tgs.def_rebs) as def_rebs,
-                AVG(tgs.assists) as assists,
-                AVG(tgs.turnovers) as turnovers,
-                AVG(tgs.steals) as steals,
-                AVG(tgs.blocks) as blocks,
-                AVG(tgs.plus_minus) as plus_minus,
-                AVG(tgs.off_rtg) as off_rtg,
-                AVG(tgs.def_rtg) as def_rtg,
-                AVG(tgs.possessions) as possessions,
-                AVG(tgs.ts_pct) as ts_pct,
-                AVG(tgs.rim_fga) as rim_fga,
-                AVG(CASE WHEN tgs.rim_fga > 0 THEN tgs.rim_fg_pct END) as rim_fg_pct,
-                AVG(tgs.uast_rim_fga) as uast_rim_fga,
-                AVG(tgs.mr_fga) as mr_fga,
-                AVG(CASE WHEN tgs.mr_fga > 0 THEN tgs.mr_fg_pct END) as mr_fg_pct,
-                AVG(tgs.uast_mr_fga) as uast_mr_fga,
-                AVG(tgs.uast_3fga) as uast_3fga,
-                AVG(tgs.cont_3pa) as cont_3pa,
-                AVG(CASE WHEN tgs.cont_3pa > 0 THEN tgs.cont_3p_pct END) as cont_3p_pct,
-                AVG(tgs.open_3pa) as open_3pa,
-                AVG(CASE WHEN tgs.open_3pa > 0 THEN tgs.open_3p_pct END) as open_3p_pct,
-                AVG(tgs.pot_assists) as pot_assists,
-                AVG(tgs.avg_sec_touch) as avg_sec_touch,
-                AVG(tgs.oreb_pct) as oreb_pct,
-                AVG(tgs.off_distance) as off_distance,
-                AVG(tgs.charges_drawn) as charges_drawn,
-                AVG(tgs.deflections) as deflections,
-                AVG(tgs.contests) as contests,
-                AVG(tgs.def_efg_pct) as def_efg_pct,
-                AVG(tgs.dreb_pct) as dreb_pct,
-                AVG(tgs.def_distance) as def_distance,
-                -- Opponent stats
-                AVG(tgs.opp_points) as opp_points,
-                AVG(tgs.opp_fg2a) as opp_fg2a,
-                AVG(CASE WHEN tgs.opp_fg2a > 0 THEN tgs.opp_fg2_pct END) as opp_fg2_pct,
-                AVG(tgs.opp_fg3a) as opp_fg3a,
-                AVG(CASE WHEN tgs.opp_fg3a > 0 THEN tgs.opp_fg3_pct END) as opp_fg3_pct,
-                AVG(tgs.opp_fta) as opp_fta,
-                AVG(CASE WHEN tgs.opp_fta > 0 THEN tgs.opp_ft_pct END) as opp_ft_pct,
-                AVG(tgs.opp_off_rebs) as opp_off_rebs,
-                AVG(tgs.opp_def_rebs) as opp_def_rebs,
-                AVG(tgs.opp_assists) as opp_assists,
-                AVG(tgs.opp_turnovers) as opp_turnovers,
-                AVG(tgs.opp_steals) as opp_steals,
-                AVG(tgs.opp_blocks) as opp_blocks,
-                AVG(tgs.opp_off_rtg) as opp_off_rtg,
-                AVG(tgs.opp_def_rtg) as opp_def_rtg,
-                AVG(tgs.opp_possessions) as opp_possessions,
-                AVG(tgs.opp_ts_pct) as opp_ts_pct,
-                AVG(tgs.opp_rim_fga) as opp_rim_fga,
-                AVG(CASE WHEN tgs.opp_rim_fga > 0 THEN tgs.opp_rim_fg_pct END) as opp_rim_fg_pct,
-                AVG(tgs.opp_uast_rim_fga) as opp_uast_rim_fga,
-                AVG(tgs.opp_mr_fga) as opp_mr_fga,
-                AVG(CASE WHEN tgs.opp_mr_fga > 0 THEN tgs.opp_mr_fg_pct END) as opp_mr_fg_pct,
-                AVG(tgs.opp_uast_mr_fga) as opp_uast_mr_fga,
-                AVG(tgs.opp_uast_3fga) as opp_uast_3fga,
-                AVG(tgs.opp_cont_3pa) as opp_cont_3pa,
-                AVG(CASE WHEN tgs.opp_cont_3pa > 0 THEN tgs.opp_cont_3p_pct END) as opp_cont_3p_pct,
-                AVG(tgs.opp_open_3pa) as opp_open_3pa,
-                AVG(CASE WHEN tgs.opp_open_3pa > 0 THEN tgs.opp_open_3p_pct END) as opp_open_3p_pct,
-                AVG(tgs.opp_pot_assists) as opp_pot_assists,
-                AVG(tgs.opp_avg_sec_touch) as opp_avg_sec_touch,
-                AVG(tgs.opp_oreb_pct) as opp_oreb_pct,
-                AVG(tgs.opp_off_distance) as opp_off_distance,
-                AVG(tgs.opp_charges_drawn) as opp_charges_drawn,
-                AVG(tgs.opp_deflections) as opp_deflections,
-                AVG(tgs.opp_contests) as opp_contests,
-                AVG(tgs.opp_def_efg_pct) as opp_def_efg_pct,
-                AVG(tgs.opp_dreb_pct) as opp_dreb_pct,
-                AVG(tgs.opp_def_distance) as opp_def_distance
+                -- TOTALS (already scaled in team_game_stats)
+                SUM(tgs.minutes) as minutes,  -- Total minutes (x10)
+                SUM(tgs.points) as points,  -- Total points
+                SUM(tgs.fg2a) as fg2a,  -- Total 2PA
+                SUM(tgs.fg3a) as fg3a,  -- Total 3PA
+                SUM(tgs.fta) as fta,  -- Total FTA
+                SUM(tgs.off_rebs) as off_rebs,  -- Total offensive rebounds
+                SUM(tgs.def_rebs) as def_rebs,  -- Total defensive rebounds
+                SUM(tgs.assists) as assists,  -- Total assists
+                SUM(tgs.turnovers) as turnovers,  -- Total turnovers
+                SUM(tgs.steals) as steals,  -- Total steals
+                SUM(tgs.blocks) as blocks,  -- Total blocks
+                SUM(tgs.possessions) as possessions,  -- Total possessions
+                -- AVERAGES (percentages and ratings, already scaled)
+                ROUND(AVG(tgs.fg2_pct))::smallint as fg2_pct,  -- x1000
+                ROUND(AVG(tgs.fg3_pct))::smallint as fg3_pct,  -- x1000
+                ROUND(AVG(tgs.ft_pct))::smallint as ft_pct,  -- x1000
+                ROUND(AVG(tgs.ts_pct))::smallint as ts_pct,  -- x1000
+                ROUND(AVG(tgs.rim_fg_pct))::smallint as rim_fg_pct,  -- x1000
+                ROUND(AVG(tgs.mr_fg_pct))::smallint as mr_fg_pct,  -- x1000
+                ROUND(AVG(tgs.cont_3p_pct))::smallint as cont_3p_pct,  -- x1000
+                ROUND(AVG(tgs.open_3p_pct))::smallint as open_3p_pct,  -- x1000
+                ROUND(AVG(tgs.oreb_pct))::smallint as oreb_pct,  -- x1000
+                ROUND(AVG(tgs.def_efg_pct))::smallint as def_efg_pct,  -- x1000
+                ROUND(AVG(tgs.dreb_pct))::smallint as dreb_pct,  -- x1000
+                ROUND(AVG(tgs.off_rtg))::smallint as off_rtg,  -- x100
+                ROUND(AVG(tgs.def_rtg))::smallint as def_rtg,  -- x100
+                -- PLUS/MINUS as total
+                SUM(tgs.plus_minus) as plus_minus,  -- Total plus/minus
+                -- Nulls for unused fields
+                NULL::smallint as rim_fga,
+                NULL::smallint as uast_rim_fga,
+                NULL::smallint as mr_fga,
+                NULL::smallint as uast_mr_fga,
+                NULL::smallint as uast_3fga,
+                NULL::smallint as cont_3pa,
+                NULL::smallint as open_3pa,
+                NULL as pot_assists,
+                NULL as avg_sec_touch,
+                NULL as off_distance,
+                NULL as charges_drawn,
+                NULL as deflections,
+                NULL as contests,
+                NULL as def_distance,
+                -- OPPONENT TOTALS
+                SUM(tgs.opp_points) as opp_points,
+                SUM(tgs.opp_fg2a) as opp_fg2a,
+                SUM(tgs.opp_fg3a) as opp_fg3a,
+                SUM(tgs.opp_fta) as opp_fta,
+                SUM(tgs.opp_off_rebs) as opp_off_rebs,
+                SUM(tgs.opp_def_rebs) as opp_def_rebs,
+                SUM(tgs.opp_assists) as opp_assists,
+                SUM(tgs.opp_turnovers) as opp_turnovers,
+                SUM(tgs.opp_steals) as opp_steals,
+                SUM(tgs.opp_blocks) as opp_blocks,
+                SUM(tgs.opp_possessions) as opp_possessions,
+                -- OPPONENT AVERAGES (percentages and ratings, already scaled)
+                ROUND(AVG(tgs.opp_fg2_pct))::smallint as opp_fg2_pct,  -- x1000
+                ROUND(AVG(tgs.opp_fg3_pct))::smallint as opp_fg3_pct,  -- x1000
+                ROUND(AVG(tgs.opp_ft_pct))::smallint as opp_ft_pct,  -- x1000
+                ROUND(AVG(tgs.opp_ts_pct))::smallint as opp_ts_pct,  -- x1000
+                ROUND(AVG(tgs.opp_rim_fg_pct))::smallint as opp_rim_fg_pct,  -- x1000
+                ROUND(AVG(tgs.opp_mr_fg_pct))::smallint as opp_mr_fg_pct,  -- x1000
+                ROUND(AVG(tgs.opp_cont_3p_pct))::smallint as opp_cont_3p_pct,  -- x1000
+                ROUND(AVG(tgs.opp_open_3p_pct))::smallint as opp_open_3p_pct,  -- x1000
+                ROUND(AVG(tgs.opp_oreb_pct))::smallint as opp_oreb_pct,  -- x1000
+                ROUND(AVG(tgs.opp_def_efg_pct))::smallint as opp_def_efg_pct,  -- x1000
+                ROUND(AVG(tgs.opp_dreb_pct))::smallint as opp_dreb_pct,  -- x1000
+                ROUND(AVG(tgs.opp_off_rtg))::smallint as opp_off_rtg,  -- x100
+                ROUND(AVG(tgs.opp_def_rtg))::smallint as opp_def_rtg,  -- x100
+                -- OPPONENT Nulls for unused fields
+                NULL::smallint as opp_rim_fga,
+                NULL::smallint as opp_uast_rim_fga,
+                NULL::smallint as opp_mr_fga,
+                NULL::smallint as opp_uast_mr_fga,
+                NULL::smallint as opp_uast_3fga,
+                NULL::smallint as opp_cont_3pa,
+                NULL::smallint as opp_open_3pa,
+                NULL as opp_pot_assists,
+                NULL as opp_avg_sec_touch,
+                NULL as opp_off_distance,
+                NULL as opp_charges_drawn,
+                NULL as opp_deflections,
+                NULL as opp_contests,
+                NULL as opp_def_distance
             FROM team_game_stats tgs
             JOIN games g ON tgs.game_id = g.game_id
             WHERE g.season = %s AND g.game_status = 'Final'
