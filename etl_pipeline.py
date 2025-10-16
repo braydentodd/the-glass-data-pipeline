@@ -2198,19 +2198,26 @@ def run_etl_pipeline():
         dates = [(start + timedelta(days=x)).strftime("%Y-%m-%d") 
                  for x in range((end - start).days + 1)]
         log_info(f"Backfill mode: {len(dates)} dates")
+        is_backfill = True
     else:
         # Yesterday only (games finish late, so we process previous day)
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         dates = [yesterday]
         log_info(f"Daily mode: {yesterday} (yesterday's games)")
+        is_backfill = False
     
     # Process each date
     total_success = 0
     total_failed = 0
     
-    for date_str in dates:
+    for i, date_str in enumerate(dates):
         try:
-            run_etl_for_date(date_str)
+            # Only check upcoming games:
+            # - In daily mode (always)
+            # - In backfill mode (only on first date)
+            check_upcoming = not is_backfill or i == 0
+            
+            run_etl_for_date(date_str, check_upcoming=check_upcoming)
             total_success += 1
         except Exception as e:
             total_failed += 1
