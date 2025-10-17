@@ -1200,7 +1200,6 @@ def ensure_players_exist(conn, player_ids: List[int]):
                         team_id,
                         safe_str(row.get('FIRST_NAME')),
                         safe_str(row.get('LAST_NAME')),
-                        safe_str(row.get('DISPLAY_FIRST_LAST')),
                         height_inches,
                         weight_lbs,
                         age_decimal,
@@ -1208,9 +1207,7 @@ def ensure_players_exist(conn, player_ids: List[int]):
                         safe_str(row.get('JERSEY')),
                         safe_str(row.get('SCHOOL')),
                         safe_str(row.get('COUNTRY')),
-                        safe_str(row.get('POSITION')),
-                        player_id,
-                        f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+                        safe_str(row.get('POSITION'))
                     ))
                     
                     log_info(f"  ✓ Fetched info for player {player_id}: {row.get('DISPLAY_FIRST_LAST')}")
@@ -1222,10 +1219,8 @@ def ensure_players_exist(conn, player_ids: List[int]):
                 # Insert minimal record so we don't fail on foreign key
                 players_to_insert.append((
                     player_id,
-                    None, None, None, f"Unknown Player {player_id}",
-                    None, None, None, None, None, None, None, None,
-                    player_id,
-                    f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
+                    None, None, None,
+                    None, None, None, None, None, None, None, None
                 ))
         
         if players_to_insert:
@@ -1233,8 +1228,7 @@ def ensure_players_exist(conn, player_ids: List[int]):
                 INSERT INTO players (
                     player_id, team_id, first_name, last_name, 
                     height_inches, weight_lbs, age_decimal, years_experience,
-                    jersey_number, pre_nba_team, birthplace, position,
-                    nba_api_id, headshot_url
+                    jersey_number, pre_nba_team, birthplace, position
                 )
                 VALUES %s
                 ON CONFLICT (player_id) DO NOTHING
@@ -2203,8 +2197,10 @@ def run_etl_for_date(date_str: str, check_upcoming: bool = True):
         if games_processed > 0:
             log_info("\nUpdating season statistics...")
             try:
-                calculate_player_season_stats(conn, Config.CURRENT_SEASON)
-                calculate_team_season_stats(conn, Config.CURRENT_SEASON)
+                # Calculate stats for the season of the date being processed, not always current season
+                season = get_season_from_date(date_str)
+                calculate_player_season_stats(conn, season)
+                calculate_team_season_stats(conn, season)
                 log_success("✓ Season statistics updated")
             except Exception as e:
                 log_error(f"Failed to update season statistics: {e}")

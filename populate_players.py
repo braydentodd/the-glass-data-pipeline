@@ -184,23 +184,18 @@ def populate_players():
         if details:
             # Combine static data with detailed data
             record = (
-                player_id,  # player_id (nba_api_id becomes player_id)
+                player_id,  # player_id
                 details['team_id'],
                 details['first_name'],
                 details['last_name'],
                 details['height_inches'],
                 details['weight_lbs'],
-                None,  # wingspan_inches (not available via API)
                 details['age_decimal'],
                 details['years_experience'],
                 details['jersey_number'],
                 details['pre_nba_team'],
                 details['birthplace'],
-                None,  # contract_summary (would need separate scraping)
-                details['is_active'],
                 details['position'],
-                player_id,  # nba_api_id
-                details['headshot_url'],
             )
             player_records.append(record)
             successful += 1
@@ -220,9 +215,8 @@ def populate_players():
     query = """
         INSERT INTO players (
             player_id, team_id, first_name, last_name,
-            height_inches, weight_lbs, wingspan_inches, age_decimal,
-            years_experience, jersey_number, pre_nba_team, birthplace,
-            contract_summary, is_active, position, nba_api_id, headshot_url
+            height_inches, weight_lbs, age_decimal, years_experience,
+            jersey_number, pre_nba_team, birthplace, position
         )
         VALUES %s
         ON CONFLICT (player_id) DO UPDATE SET
@@ -236,11 +230,7 @@ def populate_players():
             jersey_number = EXCLUDED.jersey_number,
             pre_nba_team = EXCLUDED.pre_nba_team,
             birthplace = EXCLUDED.birthplace,
-            is_active = EXCLUDED.is_active,
-            position = EXCLUDED.position,
-            nba_api_id = EXCLUDED.nba_api_id,
-            headshot_url = EXCLUDED.headshot_url,
-            updated_at = CURRENT_TIMESTAMP
+            position = EXCLUDED.position
     """
     
     try:
