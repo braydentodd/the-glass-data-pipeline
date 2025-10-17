@@ -174,6 +174,35 @@ def safe_int(value, default=None):
     except:
         return default
 
+def get_season_from_date(game_date: str) -> str:
+    """
+    Determine the NBA season from a game date
+    NBA seasons span two calendar years (e.g., 2003-04 season runs Oct 2003 - June 2004)
+    Season starts in October of the first year
+    
+    Args:
+        game_date: Date string in format 'YYYY-MM-DD'
+    
+    Returns:
+        Season string in format 'YYYY-YY' (e.g., '2003-04')
+    """
+    date_obj = datetime.strptime(game_date, "%Y-%m-%d")
+    year = date_obj.year
+    month = date_obj.month
+    
+    # NBA season starts in October
+    # Oct-Dec = current year is first year of season (e.g., Oct 2003 = 2003-04)
+    # Jan-Sep = current year is second year of season (e.g., Jan 2004 = 2003-04)
+    if month >= 10:
+        # October-December: start of season
+        season_start_year = year
+    else:
+        # January-September: end of previous season
+        season_start_year = year - 1
+    
+    season_end_year = (season_start_year + 1) % 100  # Get last 2 digits
+    return f"{season_start_year}-{season_end_year:02d}"
+
 def safe_str(value):
     """Safely convert value to str, handling None and numpy types"""
     if value is None or value == '' or (hasattr(value, '__len__') and len(value) == 0):
@@ -372,6 +401,9 @@ def fetch_games_for_date(game_date: str) -> List[Tuple[str, str]]:
     """
     log_info(f"Fetching games for {game_date}")
     
+    # Determine the season from the date
+    season = get_season_from_date(game_date)
+    
     all_games = []
     
     # Try each season type
@@ -379,7 +411,7 @@ def fetch_games_for_date(game_date: str) -> List[Tuple[str, str]]:
         try:
             # Fetch games (API returns KeyError 'resultSet' when no games exist - not a real error)
             gf = leaguegamefinder.LeagueGameFinder(
-                season_nullable=Config.CURRENT_SEASON,
+                season_nullable=season,  # Use season derived from date, not CURRENT_SEASON!
                 season_type_nullable=season_type,
                 date_from_nullable=game_date,
                 date_to_nullable=game_date
