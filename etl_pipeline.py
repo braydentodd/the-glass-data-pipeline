@@ -1160,10 +1160,12 @@ def ensure_players_exist(conn, player_ids: List[int]):
             return  # All players exist
         
         log_info(f"Found {len(missing_ids)} players not in database, fetching details...")
+        log_info(f"  Missing player IDs: {sorted(missing_ids)}")
         
         # Fetch basic info for missing players
         from nba_api.stats.endpoints import commonplayerinfo
         
+        log_info(f"  Starting fetch loop for {len(missing_ids)} players...")
         players_to_insert = []
         for player_id in missing_ids:
             try:
@@ -1211,6 +1213,14 @@ def ensure_players_exist(conn, player_ids: List[int]):
                     ))
                     
                     log_info(f"  ✓ Fetched info for player {player_id}: {row.get('DISPLAY_FIRST_LAST')}")
+                else:
+                    # Player not found in API - insert minimal record
+                    log_info(f"  ⚠ Player {player_id} not found in API, inserting minimal record")
+                    players_to_insert.append((
+                        player_id,
+                        None, None, None,
+                        None, None, None, None, None, None, None, None
+                    ))
                 
                 rate_limit()
                 
@@ -1237,7 +1247,18 @@ def ensure_players_exist(conn, player_ids: List[int]):
             with conn.cursor() as cur:
                 execute_values(cur, insert_query, players_to_insert)
             conn.commit()
-            log_success(f"✓ Added {len(players_to_insert)} missing players to database")
+            
+            # Verify all players were added
+            with conn.cursor() as cur:
+                cur.execute("SELECT player_id FROM players WHERE player_id = ANY(%s)", (list(missing_ids),))
+                added_ids = set(row[0] for row in cur.fetchall())
+            
+            still_missing = missing_ids - added_ids
+            if still_missing:
+                log_error(f"⚠ Failed to add {len(still_missing)} players: {still_missing}")
+                raise Exception(f"Failed to add players: {still_missing}")
+            
+            log_success(f"✓ Added {len(added_ids)} missing players to database")
     
     except Exception as e:
         log_error(f"Failed to ensure players exist: {e}")
