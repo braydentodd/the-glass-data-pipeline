@@ -1231,7 +1231,7 @@ def ensure_players_exist(conn, player_ids: List[int]):
         if players_to_insert:
             insert_query = """
                 INSERT INTO players (
-                    player_id, team_id, first_name, last_name, full_name,
+                    player_id, team_id, first_name, last_name, 
                     height_inches, weight_lbs, age_decimal, years_experience,
                     jersey_number, pre_nba_team, birthplace, position,
                     nba_api_id, headshot_url

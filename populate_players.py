@@ -136,7 +136,6 @@ def fetch_player_details(player_id):
             'team_id': team_id,
             'first_name': safe_str(row.get('FIRST_NAME')),
             'last_name': safe_str(row.get('LAST_NAME')),
-            'full_name': safe_str(row.get('DISPLAY_FIRST_LAST')),
             'height_inches': height_inches,
             'weight_lbs': weight_lbs,
             'age_decimal': age_decimal,
@@ -189,7 +188,6 @@ def populate_players():
                 details['team_id'],
                 details['first_name'],
                 details['last_name'],
-                details['full_name'],
                 details['height_inches'],
                 details['weight_lbs'],
                 None,  # wingspan_inches (not available via API)
@@ -221,7 +219,7 @@ def populate_players():
     # Insert into database
     query = """
         INSERT INTO players (
-            player_id, team_id, first_name, last_name, full_name,
+            player_id, team_id, first_name, last_name,
             height_inches, weight_lbs, wingspan_inches, age_decimal,
             years_experience, jersey_number, pre_nba_team, birthplace,
             contract_summary, is_active, position, nba_api_id, headshot_url
@@ -231,7 +229,6 @@ def populate_players():
             team_id = EXCLUDED.team_id,
             first_name = EXCLUDED.first_name,
             last_name = EXCLUDED.last_name,
-            full_name = EXCLUDED.full_name,
             height_inches = EXCLUDED.height_inches,
             weight_lbs = EXCLUDED.weight_lbs,
             age_decimal = EXCLUDED.age_decimal,
@@ -304,7 +301,7 @@ def cleanup_inactive_players(conn):
         )
         DELETE FROM players
         WHERE player_id NOT IN (SELECT player_id FROM active_player_ids)
-        RETURNING player_id, full_name
+        RETURNING player_id
     """
     
     try:
@@ -316,8 +313,8 @@ def cleanup_inactive_players(conn):
         
         if removed_players:
             log(f"\n✓ Removed {len(removed_players)} inactive players:")
-            for player_id, full_name in removed_players[:10]:  # Show first 10
-                log(f"  - {full_name} ({player_id})")
+            for player_id in removed_players[:10]:  # Show first 10
+                log(f"  - ({player_id})")
             if len(removed_players) > 10:
                 log(f"  ... and {len(removed_players) - 10} more")
         else:
