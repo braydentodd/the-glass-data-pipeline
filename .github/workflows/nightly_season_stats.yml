@@ -1,0 +1,55 @@
+name: Nightly Season Stats Updates
+
+on:
+  schedule:
+    # Run daily at 5 AM EST (10 AM UTC during EST, 9 AM UTC during EDT)
+    # Using 10 AM UTC to cover EST (winter)
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'Season to update (e.g., 24-25) - leave empty for current season'
+        required: false
+        default: ''
+      reason:
+        description: 'Reason for manual run'
+        required: false
+        default: 'Manual trigger'
+
+jobs:
+  update-season-stats:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Update season statistics
+      env:
+        DB_HOST: ${{ secrets.DB_HOST }}
+        DB_NAME: ${{ secrets.DB_NAME }}
+        DB_USER: ${{ secrets.DB_USER }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        SEASON_OVERRIDE: ${{ github.event.inputs.season }}
+      run: |
+        python nightly_etl_job.py
+    
+    - name: Upload logs as artifact
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: season-stats-logs-${{ github.run_number }}
+        path: |
+          *.log
+        retention-days: 7
