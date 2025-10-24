@@ -42,7 +42,7 @@ jobs:
     
     - name: Upload logs as artifact
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: monthly-player-update-logs-${{ github.run_number }}
         path: |
