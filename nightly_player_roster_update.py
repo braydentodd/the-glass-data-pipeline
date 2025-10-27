@@ -141,6 +141,18 @@ def parse_jersey_number(jersey_str):
         # Handle special cases like 'R' for Rookie
         return None
 
+def parse_years_experience(exp_str):
+    """Convert years of experience to integer, handling 'R' for Rookie"""
+    if not exp_str or exp_str == '':
+        return None
+    # 'R' means Rookie (0 years)
+    if str(exp_str).strip().upper() == 'R':
+        return 0
+    try:
+        return int(str(exp_str).strip())
+    except:
+        return None
+
 def update_player_rosters():
     """Main function to update player rosters"""
     
@@ -211,7 +223,7 @@ def update_player_rosters():
                         parse_height(player['height']),
                         parse_weight(player['weight']),
                         parse_jersey_number(player['jersey']),
-                        player['exp'],
+                        parse_years_experience(player['exp']),
                         player['school']
                     ))
                     log(f"  + Added: {player['name']} (ID: {player['player_id']})")
