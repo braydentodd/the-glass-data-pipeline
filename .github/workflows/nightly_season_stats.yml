@@ -32,7 +32,8 @@ jobs:
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         SEASON_OVERRIDE: ${{ github.event.inputs.season }}
       run: |
-        # Use system Python with pre-installed dependencies
+        # Use virtual environment with pre-installed dependencies
+        source ~/the_glass_env/bin/activate
         python3 nightly_etl_job.py
     
     - name: Upload logs as artifact
