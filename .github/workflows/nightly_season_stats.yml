@@ -24,6 +24,18 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
     
+    - name: Set up Python environment and install dependencies
+      run: |
+        # Create virtual environment in workspace
+        python3 -m venv venv
+        
+        # Activate environment
+        source venv/bin/activate
+        
+        # Install dependencies
+        pip install --upgrade pip
+        pip install nba_api pandas requests psycopg2-binary
+    
     - name: Update season statistics
       env:
         DB_HOST: ${{ secrets.DB_HOST }}
@@ -32,8 +44,10 @@ jobs:
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         SEASON_OVERRIDE: ${{ github.event.inputs.season }}
       run: |
-        # Use virtual environment with pre-installed dependencies
-        source /home/ubuntu/the_glass_env/bin/activate
+        # Activate virtual environment
+        source venv/bin/activate
+        
+        # Run ETL job
         python3 nightly_etl_job.py
     
     - name: Upload logs as artifact
