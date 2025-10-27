@@ -130,6 +130,17 @@ def parse_weight(weight_str):
     except:
         return None
 
+def parse_jersey_number(jersey_str):
+    """Convert jersey number to integer, handling special cases like 'R' (Rookie)"""
+    if not jersey_str or jersey_str == '':
+        return None
+    try:
+        # Try to convert to integer
+        return int(str(jersey_str).strip())
+    except:
+        # Handle special cases like 'R' for Rookie
+        return None
+
 def update_player_rosters():
     """Main function to update player rosters"""
     
@@ -199,7 +210,7 @@ def update_player_rosters():
                         player['name'],
                         parse_height(player['height']),
                         parse_weight(player['weight']),
-                        player['jersey'],
+                        parse_jersey_number(player['jersey']),
                         player['exp'],
                         player['school']
                     ))
