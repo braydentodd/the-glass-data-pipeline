@@ -14,22 +14,11 @@ on:
 
 jobs:
   update-players:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64]
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-        cache: 'pip'
-    
-    - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install -r requirements.txt
     
     - name: Update player details
       env:
@@ -38,7 +27,8 @@ jobs:
         DB_USER: ${{ secrets.DB_USER }}
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       run: |
-        python monthly_player_update.py
+        # Use system Python with pre-installed dependencies
+        python3 monthly_player_update.py
     
     - name: Upload logs as artifact
       if: always()

@@ -25,9 +25,24 @@ DB_NAME = os.getenv('DB_NAME', 'the_glass_db')
 DB_USER = os.getenv('DB_USER', 'the_glass_user')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
 
-# Current season configuration
-CURRENT_SEASON = '2024-25'
-CURRENT_YEAR = 2025
+# Automatically determine current NBA season based on date
+# NBA season starts in October, so:
+# - Oct-Dec: use current year as start (e.g., Oct 2025 → 2025-26)
+# - Jan-Sep: use previous year as start (e.g., Jan 2026 → 2025-26)
+def get_current_season():
+    now = datetime.now()
+    if now.month >= 10:  # October or later
+        start_year = now.year
+    else:  # January-September
+        start_year = now.year - 1
+    
+    end_year = start_year + 1
+    season_str = f"{start_year}-{str(end_year)[2:]}"  # e.g., "2025-26"
+    year_int = end_year  # Database uses end year (2026 for 2025-26 season)
+    
+    return season_str, year_int
+
+CURRENT_SEASON, CURRENT_YEAR = get_current_season()
 
 def log(message):
     """Log with timestamp"""

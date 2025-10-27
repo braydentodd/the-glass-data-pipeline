@@ -18,22 +18,11 @@ on:
 
 jobs:
   update-season-stats:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64]
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-        cache: 'pip'
-    
-    - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install -r requirements.txt
     
     - name: Update season statistics
       env:
@@ -43,7 +32,8 @@ jobs:
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         SEASON_OVERRIDE: ${{ github.event.inputs.season }}
       run: |
-        python nightly_etl_job.py
+        # Use system Python with pre-installed dependencies
+        python3 nightly_etl_job.py
     
     - name: Upload logs as artifact
       if: always()
