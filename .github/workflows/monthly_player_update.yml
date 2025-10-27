@@ -28,7 +28,7 @@ jobs:
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       run: |
         # Use virtual environment with pre-installed dependencies
-        source ~/the_glass_env/bin/activate
+        source /home/ubuntu/the_glass_env/bin/activate
         python3 monthly_player_update.py
     
     - name: Upload logs as artifact
