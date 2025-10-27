@@ -20,6 +20,18 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
     
+    - name: Set up Python environment and install dependencies
+      run: |
+        # Create virtual environment in workspace
+        python3 -m venv venv
+        
+        # Activate environment
+        source venv/bin/activate
+        
+        # Install dependencies
+        pip install --upgrade pip
+        pip install nba_api pandas requests psycopg2-binary
+    
     - name: Update player details
       env:
         DB_HOST: ${{ secrets.DB_HOST }}
@@ -27,8 +39,10 @@ jobs:
         DB_USER: ${{ secrets.DB_USER }}
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       run: |
-        # Use virtual environment with pre-installed dependencies
-        source /home/ubuntu/the_glass_env/bin/activate
+        # Activate virtual environment
+        source venv/bin/activate
+        
+        # Run monthly player update
         python3 monthly_player_update.py
     
     - name: Upload logs as artifact
