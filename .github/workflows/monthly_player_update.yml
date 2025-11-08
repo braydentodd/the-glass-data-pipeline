@@ -43,7 +43,7 @@ jobs:
         source venv/bin/activate
         
         # Run monthly player update
-        python3 monthly_player_update.py
+        python3 scripts/monthly_player_update.py
     
     - name: Upload logs as artifact
       if: always()
