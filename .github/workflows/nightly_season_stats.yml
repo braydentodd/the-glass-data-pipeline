@@ -48,7 +48,7 @@ jobs:
         source venv/bin/activate
         
         # Run ETL job
-        python3 nightly_etl_job.py
+        python3 scripts/nightly_etl_job.py
     
     - name: Upload logs as artifact
       if: always()

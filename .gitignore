@@ -10,10 +10,8 @@ ENV/
 
 # Environment variables
 .env
-
-# Output files
-test_output/
-*.log
+*.env
+!.env.example
 
 # IDE
 .vscode/
@@ -21,6 +19,20 @@ test_output/
 *.swp
 *.swo
 
+# Logs
+*.log
+/tmp/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Data
+*.csv
+*.json
+!package.json
+
+# Test outputs
+.pytest_cache/
+htmlcov/
+.coverage
