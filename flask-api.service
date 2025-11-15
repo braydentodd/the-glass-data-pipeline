@@ -1,0 +1,20 @@
+[Unit]
+Description=The Glass Flask API
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/the-glass-api
+Environment="DB_PASSWORD=blCH12..CHEESE"
+Environment="API_PORT=5001"
+Environment="DB_HOST=localhost"
+Environment="DB_PORT=5432"
+Environment="DB_NAME=the_glass_db"
+Environment="DB_USER=the_glass_user"
+ExecStart=/home/ubuntu/the-glass-api/venv/bin/python -m src.api
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

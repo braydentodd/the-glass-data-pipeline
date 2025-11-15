@@ -193,7 +193,8 @@ class StatCalculator:
         for stat in counting_stats:
             per_x[stat] = round(totals[stat] * scale_factor, 1)
         
-        per_x['minutes'] = minutes
+        # Keep minutes as per-game, not the scaled value
+        per_x['minutes'] = round(self.minutes / self.games, 1) if self.games > 0 else 0
         per_x['games'] = self.games
         per_x['ts_pct'] = totals['ts_pct']
         per_x['fg2_pct'] = totals['fg2_pct']

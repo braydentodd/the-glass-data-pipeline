@@ -56,9 +56,10 @@ API_CONFIG = {
 # ============================================================================
 
 def get_current_season_year():
-    """Calculate current NBA season year (e.g., 2025-26 season = 2026)"""
+    """Calculate current NBA season year (e.g., 2025-26 season = 2026)
+    Season flips in September (month 9)"""
     now = datetime.now()
-    return now.year + 1 if now.month >= 10 else now.year
+    return now.year + 1 if now.month >= 9 else now.year
 
 NBA_CONFIG = {
     'current_season_year': get_current_season_year(),
@@ -143,7 +144,7 @@ NBA_TEAMS_BY_ID = {
 
 # Column indices for stats (0-indexed for Google Sheets API)
 STAT_COLUMNS = {
-    'games': 8,        # Column I (GM)
+    'games': 8,        # Column I (GMS)
     'minutes': 9,      # Column J (Min)
     'points': 10,      # Column K (Pts)
     'ts_pct': 11,      # Column L (TS%)
@@ -162,8 +163,39 @@ STAT_COLUMNS = {
     'fouls': 24,       # Column Y (Fls) - reversed (lower is better)
 }
 
+# Historical stats section - starts after current stats
+HISTORICAL_STAT_COLUMNS = {
+    'years': 25,       # Column Z (YRS) - count of seasons played
+    'games': 26,       # Column AA (GMS)
+    'minutes': 27,     # Column AB (Min)
+    'points': 28,      # Column AC (Pts)
+    'ts_pct': 29,      # Column AD (TS%)
+    'fg2a': 30,        # Column AE (2PA)
+    'fg2_pct': 31,     # Column AF (2P%)
+    'fg3a': 32,        # Column AG (3PA)
+    'fg3_pct': 33,     # Column AH (3P%)
+    'fta': 34,         # Column AI (FTA)
+    'ft_pct': 35,      # Column AJ (FT%)
+    'assists': 36,     # Column AK (Ast)
+    'turnovers': 37,   # Column AL (Tov) - reversed (lower is better)
+    'oreb_pct': 38,    # Column AM (OR%)
+    'dreb_pct': 39,    # Column AN (DR%)
+    'steals': 40,      # Column AO (Stl)
+    'blocks': 41,      # Column AP (Blk)
+    'fouls': 42,       # Column AQ (Fls) - reversed (lower is better)
+}
+
+# Player ID column - hidden at end after all stats
+PLAYER_ID_COLUMN = 43  # Column AR - hidden player_id for onEdit lookups
+
 # Stats where lower values are better (will use reversed color scale)
 REVERSE_STATS = {'turnovers', 'fouls'}
+
+# For totals mode, use raw counts instead of percentages
+TOTALS_MODE_REPLACEMENTS = {
+    'oreb_pct': 'ORS',  # Offensive rebounds (raw count)
+    'dreb_pct': 'DRS',  # Defensive rebounds (raw count)
+}
 
 # Percentile calculation settings
 PERCENTILE_CONFIG = {
@@ -215,6 +247,9 @@ COLOR_THRESHOLDS = {
 
 SHEET_FORMAT = {
     'fonts': {
+        'header_primary': {'family': 'Staatliches', 'size': 12, 'bold': True},
+        'header_secondary': {'family': 'Staatliches', 'size': 10, 'bold': True},
+        'team_name': {'family': 'Staatliches', 'size': 15, 'bold': True},
         'header_large': {'family': 'Staatliches', 'size': 15, 'bold': True},
         'header_medium': {'family': 'Staatliches', 'size': 12, 'bold': True},
         'header_small': {'family': 'Staatliches', 'size': 10, 'bold': True},
@@ -222,28 +257,40 @@ SHEET_FORMAT = {
     },
     'column_widths': {
         'jersey_number': 22,   # Column B (J#)
-        'games': 25,    # Column I (GM)
+        'games': 25,    # Column I (GMS)
+        'years': 25,    # Column AA (YRS) for historical section
     },
     'frozen': {
         'rows': 3,      # Freeze first 3 rows (headers + filter)
         'columns': 1,   # Freeze first column (Name)
     },
-    'total_columns': 25,  # A through Y
+    'total_columns': 44,  # A through AR (AR is hidden player_id)
+}
+
+# Default settings for historical stats
+HISTORICAL_STATS_CONFIG = {
+    'default_past_years': 3,  # Default number of past seasons to show
+    'display_mode': 'values',  # 'values' or 'percentiles'
 }
 
 # Column headers
 HEADERS = {
     'row_1': [
         '{team_name}', 'Player Info', '', '', '', '', '', 'Notes',
-        '24-25 Stats per 100 poss', '', '', '', '', '', '', '', '', '',
-        '', '', '', '', '', '', ''
+        '{season}', '', '', '', '', '', '', '', '',
+        '', '', '', '', '', '', '', '',
+        '{past_years}', '', '', '', '', '', '', '', '',
+        '', '', '', '', '', '', '', '', '', ''
     ],
     'row_2': [
         'Name', 'J#', 'Exp', 'Age', 'Ht', 'W/S', 'Wt',
-        '*Double click cells to view more detailed analysis*',
-        'GM', 'Min', 'Pts', 'TS%',
+        '*Double click cells to expand*',
+        'GMS', 'Min', 'Pts', 'TS%',
         '2PA', '2P%', '3PA', '3P%', 'FTA', 'FT%',
-        'Ast', 'Tov', 'OR%', 'DR%', 'Stl', 'Blk', 'Fls'
+        'Ast', 'Tov', 'OR%', 'DR%', 'Stl', 'Blk', 'Fls',
+        'YRS', 'GMS', 'Min', 'Pts', 'TS%',
+        '2PA', '2P%', '3PA', '3P%', 'FTA', 'FT%',
+        'Ast', 'Tov', 'OR%', 'DR%', 'Stl', 'Blk', 'Fls', 'Player ID'
     ],
 }
 

@@ -254,6 +254,39 @@ def update_player_rosters():
         else:
             log("No team changes detected")
         
+        # Set team_id to NULL for players not on any current roster
+        current_roster_ids = set(current_roster.keys())
+        players_without_team = []
+        
+        for player_id, team_id in existing_players.items():
+            if player_id not in current_roster_ids and team_id is not None:
+                players_without_team.append(player_id)
+        
+        if players_without_team:
+            log(f"\nSetting team_id to NULL for {len(players_without_team)} players no longer on rosters...")
+            
+            update_query = """
+                UPDATE players 
+                SET team_id = NULL, updated_at = CURRENT_TIMESTAMP 
+                WHERE player_id = %s
+            """
+            
+            # Get player names for logging
+            cursor.execute(
+                f"SELECT player_id, name FROM players WHERE player_id IN ({','.join(['%s'] * len(players_without_team))})",
+                players_without_team
+            )
+            player_names = {row[0]: row[1] for row in cursor.fetchall()}
+            
+            for player_id in players_without_team:
+                cursor.execute(update_query, (player_id,))
+                log(f"  ∅ {player_names.get(player_id, 'Unknown')}: No longer on a roster")
+            
+            conn.commit()
+            log(f"✓ Cleared team assignments for {len(players_without_team)} players")
+        else:
+            log("No players to remove from rosters")
+        
         cursor.close()
         conn.close()
         
@@ -262,6 +295,7 @@ def update_player_rosters():
         log("ROSTER UPDATE COMPLETE")
         log(f"New players added: {len(new_players)}")
         log(f"Team changes: {len(team_changes)}")
+        log(f"Players removed from rosters: {len(players_without_team)}")
         log("=" * 80)
         return True
         

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+        margin: 0;
+      }
+      
+      h2 {
+        margin-top: 0;
+        margin-bottom: 10px;
+        color: #333;
+        font-size: 18px;
+      }
+      
+      .description {
+        color: #666;
+        font-size: 13px;
+        margin-bottom: 20px;
+        line-height: 1.5;
+      }
+      
+      .examples {
+        background-color: #f8f9fa;
+        padding: 12px;
+        border-radius: 4px;
+        margin-bottom: 20px;
+        font-size: 12px;
+      }
+      
+      .examples strong {
+        display: block;
+        margin-bottom: 5px;
+        color: #333;
+      }
+      
+      .examples div {
+        color: #666;
+        margin-left: 10px;
+        line-height: 1.8;
+      }
+      
+      .input-group {
+        margin-bottom: 15px;
+      }
+      
+      .input-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 500;
+        font-size: 13px;
+        color: #333;
+      }
+      
+      .input-group input {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        box-sizing: border-box;
+        transition: border-color 0.2s;
+      }
+      
+      .input-group input:focus {
+        outline: none;
+        border-color: #4285f4;
+      }
+      
+      .error {
+        color: #d93025;
+        font-size: 12px;
+        margin-top: 5px;
+        display: none;
+      }
+      
+      .checkbox-group {
+        margin-bottom: 15px;
+        padding: 12px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+      }
+      
+      .checkbox-group label {
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        font-size: 13px;
+        color: #333;
+      }
+      
+      .checkbox-group input[type="checkbox"] {
+        margin-right: 8px;
+        cursor: pointer;
+        width: 16px;
+        height: 16px;
+      }
+      
+      .button-container {
+        margin-top: 20px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      
+      button {
+        padding: 8px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      
+      .btn-cancel {
+        background-color: #f1f3f4;
+        color: #333;
+      }
+      
+      .btn-cancel:hover {
+        background-color: #e0e0e0;
+      }
+      
+      .btn-apply {
+        background-color: #4285f4;
+        color: white;
+      }
+      
+      .btn-apply:hover {
+        background-color: #3367d6;
+      }
+      
+      .btn-apply:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body>
+    
+    <form id="configForm">
+      <div class="input-group">
+        <label for="stats-input">Years to display (number of previous years, starting year, or career):</label>
+        <input 
+          type="text" 
+          id="stats-input" 
+          placeholder="ex: 3, 2021-22, Career"
+          value=""
+          autofocus>
+        <div class="error" id="input-error"></div>
+      </div>
+      
+      <div class="checkbox-group">
+        <label>
+          <input type="checkbox" id="include-current" <?= includeCurrentYear === 'true' ? 'checked' : '' ?>>
+          <span>Include current season (2025-26)</span>
+        </label>
+      </div>
+      
+      <div class="button-container">
+        <button type="button" class="btn-cancel" onclick="google.script.host.close()">Cancel</button>
+        <button type="button" class="btn-apply" id="apply-btn" onclick="applyConfig()">Apply</button>
+      </div>
+    </form>
+    
+    <script>
+      // Auto-focus input field when dialog opens
+      document.getElementById('stats-input').focus();
+      
+      // Allow Enter key to submit
+      document.getElementById('stats-input').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          applyConfig();
+        }
+      });
+      
+      // Clear error on input
+      document.getElementById('stats-input').addEventListener('input', function() {
+        document.getElementById('input-error').style.display = 'none';
+      });
+      
+      function validateInput(input) {
+        // Check if empty
+        if (!input || input.trim() === '') {
+          return { valid: false, error: 'Please enter a value' };
+        }
+        
+        const trimmed = input.trim();
+        
+        // Check for "Career" or "C" (case insensitive)
+        if (trimmed.toLowerCase() === 'career' || trimmed.toLowerCase() === 'c') {
+          return { valid: true };
+        }
+        
+        // For everything else, only allow numbers and specific special characters (- or /)
+        // Valid patterns: 3, 5, 2024-25, 2024/25, 98-99, 98/99, 2024, 1998
+        
+        // Check for invalid characters (anything other than digits, dash, or slash)
+        if (!/^[\d\-\/]+$/.test(trimmed)) {
+          return { valid: false, error: 'Invalid characters. Only numbers, "-", or "/" allowed (or "Career"/"C")' };
+        }
+        
+        // Count total number of digits
+        const digitCount = (trimmed.match(/\d/g) || []).length;
+        if (digitCount > 8) {
+          return { valid: false, error: 'Too many digits. Maximum 8 digits allowed (e.g., 2025-2026)' };
+        }
+        
+        // Must have at least one digit
+        if (digitCount === 0) {
+          return { valid: false, error: 'Must contain at least one number' };
+        }
+        
+        // Check for valid patterns
+        // Single number: 1-25 or 4-digit year
+        if (/^\d+$/.test(trimmed)) {
+          const num = parseInt(trimmed);
+          if (trimmed.length <= 2) {
+            // Number of years (1-25)
+            if (num < 1 || num > 25) {
+              return { valid: false, error: 'Number of years must be between 1 and 25' };
+            }
+          } else if (trimmed.length === 4) {
+            // Year format (e.g., 2024)
+            if (num < 1900 || num > 2100) {
+              return { valid: false, error: 'Year must be between 1900 and 2100' };
+            }
+          } else {
+            return { valid: false, error: 'Invalid format. Use: 1-25, 2024, or 2024-25' };
+          }
+          return { valid: true };
+        }
+        
+        // Season format with dash or slash: 2024-25, 98-99, 2024/25, etc.
+        if (/^\d{2,4}[\-\/]\d{2,4}$/.test(trimmed)) {
+          const parts = trimmed.split(/[\-\/]/);
+          const first = parseInt(parts[0]);
+          const second = parseInt(parts[1]);
+          
+          // Both parts should be reasonable years
+          if (parts[0].length === 2 && parts[1].length === 2) {
+            // Two-digit format: 98-99
+            if (first < 0 || first > 99 || second < 0 || second > 99) {
+              return { valid: false, error: 'Invalid two-digit year format' };
+            }
+          } else if (parts[0].length === 4 && parts[1].length === 2) {
+            // Four-two format: 2024-25
+            if (first < 1900 || first > 2100 || second < 0 || second > 99) {
+              return { valid: false, error: 'Invalid season format' };
+            }
+          } else if (parts[0].length === 4 && parts[1].length === 4) {
+            // Four-four format: 2024-2025
+            if (first < 1900 || first > 2100 || second < 1900 || second > 2100) {
+              return { valid: false, error: 'Years must be between 1900 and 2100' };
+            }
+            // Second year should be one more than first
+            if (second !== first + 1) {
+              return { valid: false, error: 'Second year must be one year after first (e.g., 2024-2025)' };
+            }
+          } else {
+            return { valid: false, error: 'Invalid season format. Use: 2024-25, 98-99, or 2024-2025' };
+          }
+          return { valid: true };
+        }
+        
+        return { valid: false, error: 'Invalid format. Use: number (1-25), season (2024-25), or "Career"' };
+      }
+      
+      function applyConfig() {
+        const input = document.getElementById('stats-input').value.trim();
+        const includeCurrentYear = document.getElementById('include-current').checked;
+        const errorDiv = document.getElementById('input-error');
+        const applyBtn = document.getElementById('apply-btn');
+        
+        // Validate input before sending to server
+        const validation = validateInput(input);
+        if (!validation.valid) {
+          errorDiv.textContent = validation.error;
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        // Disable button and show loading
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Applying...';
+        errorDiv.style.display = 'none';
+        
+        // Call the server-side function with both input and checkbox state
+        google.script.run
+          .withSuccessHandler(function(response) {
+            if (response.success) {
+              // Close dialog immediately - sync is running in background
+              google.script.host.close();
+              // Note: The success toast will be shown by the Apps Script after closing
+            } else {
+              // Show error
+              errorDiv.textContent = response.error;
+              errorDiv.style.display = 'block';
+              applyBtn.disabled = false;
+              applyBtn.textContent = 'Apply';
+            }
+          })
+          .withFailureHandler(function(error) {
+            errorDiv.textContent = 'Error: ' + error.message;
+            errorDiv.style.display = 'block';
+            applyBtn.disabled = false;
+            applyBtn.textContent = 'Apply';
+          })
+          .saveHistoricalStatsConfig(input, includeCurrentYear);
+      }
+    </script>
+  </body>
+</html>

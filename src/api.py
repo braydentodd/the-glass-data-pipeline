@@ -83,6 +83,99 @@ def health_check():
     return jsonify({'status': 'healthy', 'service': 'nba-stats-api'})
 
 
+@app.route('/api/sync-historical-stats', methods=['POST'])
+def sync_historical_stats():
+    """
+    Trigger historical stats sync with configuration from Apps Script.
+    
+    Request body:
+    {
+        "mode": "years"|"seasons"|"career",
+        "years": 3,  // for years mode
+        "seasons": ["2024-25", "2023-24"],  // for seasons mode
+        "include_current": true|false
+    }
+    """
+    import subprocess
+    import os
+    
+    try:
+        data = request.json
+        mode = data.get('mode', 'years')
+        years = data.get('years', 3)
+        seasons = data.get('seasons', [])
+        include_current = data.get('include_current', False)
+        stats_mode = data.get('stats_mode', 'per_36')  # Get stats mode from request
+        stats_custom_value = data.get('stats_custom_value')  # Get custom value if present
+        priority_team = data.get('priority_team')  # Optional: team to process first
+        
+        # Build environment variables for sync script
+        env = os.environ.copy()
+        env['HISTORICAL_MODE'] = mode
+        env['INCLUDE_CURRENT_YEAR'] = 'true' if include_current else 'false'
+        env['STATS_MODE'] = stats_mode  # Pass stats mode to sync script
+        
+        if stats_custom_value:
+            env['STATS_CUSTOM_VALUE'] = str(stats_custom_value)
+        
+        if priority_team:
+            env['PRIORITY_TEAM_ABBR'] = priority_team.upper()
+        
+        if mode == 'seasons':
+            env['HISTORICAL_SEASONS'] = ','.join(seasons)
+        else:
+            env['HISTORICAL_YEARS'] = str(years)
+        
+        # Get the project root directory
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        # Path to sync_sheets.sh script (should be in project root)
+        sync_script = os.path.join(project_root, 'sync_sheets.sh')
+        
+        # Ensure DB_PASSWORD is in environment (required by sync script)
+        if 'DB_PASSWORD' not in env:
+            env['DB_PASSWORD'] = os.environ.get('DB_PASSWORD', '')
+        
+        # Run the sync_sheets.sh script with bash
+        result = subprocess.run(
+            ['bash', sync_script],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            env=env,
+            timeout=300  # 5 minute timeout
+        )
+        
+        if result.returncode == 0:
+            return jsonify({
+                'success': True,
+                'message': 'Historical stats synced successfully'
+            })
+        else:
+            # Get detailed error information
+            error_msg = f"Sync failed (exit code {result.returncode})"
+            if result.stderr:
+                error_msg += f": {result.stderr[:500]}"  # First 500 chars
+            
+            return jsonify({
+                'success': False,
+                'error': error_msg,
+                'stderr': result.stderr[:1000] if result.stderr else '',
+                'stdout': result.stdout[:1000] if result.stdout else ''
+            }), 500
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'error': 'Sync timed out after 5 minutes'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/teams', methods=['GET'])
 def get_teams():
     """Get list of all NBA teams."""
@@ -169,36 +262,49 @@ def calculate_stats():
                 s.blocks,
                 s.fouls
             FROM players p
-            INNER JOIN player_season_stats s 
+            LEFT JOIN player_season_stats s 
                 ON s.player_id = p.player_id
-            WHERE p.team_id = %s 
-              AND s.year = %s
-              AND s.season_type = 1
-              AND s.games_played > 0
-            ORDER BY s.minutes_x10 DESC
+                AND s.year = %s
+                AND s.season_type = 1
+            WHERE p.team_id = %s
+              AND p.team_id IS NOT NULL
+            ORDER BY COALESCE(s.minutes_x10, 0) DESC, p.name
         """
         
-        cursor.execute(query, (team_id, season_year))
+        cursor.execute(query, (season_year, team_id))
         players = cursor.fetchall()
         
         cursor.close()
         conn.close()
         
-        if not players:
-            return jsonify({
-                'error': f'No players found for team {NBA_TEAMS_BY_ID[team_id]} in {season} season'
-            }), 404
+        # Convert to list of dicts
+        players_list = [dict(player) for player in players]
         
-        # Calculate stats in requested mode
-        calculated_players = calculate_stats_for_team(
-            [dict(player) for player in players],
-            mode=mode,
-            custom_value=custom_value
-        )
+        # Separate players with stats from those without
+        players_with_stats = [p for p in players_list if p.get('games')]
+        players_without_stats = [p for p in players_list if not p.get('games')]
         
-        # Calculate percentiles
-        stat_cols = [col for col in STAT_COLUMNS if col not in ['games']]
-        players_with_percentiles = calculate_percentiles(calculated_players, stat_cols)
+        # Calculate stats for players with data
+        calculated_players = []
+        if players_with_stats:
+            calculated_players = calculate_stats_for_team(
+                players_with_stats,
+                mode=mode,
+                custom_value=custom_value
+            )
+        
+        # Add players without stats with empty calculated_stats
+        for player in players_without_stats:
+            calculated_players.append({
+                'player_name': player['player_name'],
+                'calculated_stats': {},
+                'percentiles': {}
+            })
+        
+        # Calculate percentiles only for players with stats
+        if calculated_players:
+            stat_cols = [col for col in STAT_COLUMNS if col not in ['games']]
+            players_with_percentiles = calculate_percentiles(calculated_players, stat_cols)
         
         # Format response
         response = {
@@ -213,6 +319,55 @@ def calculate_stats():
             response['custom_value'] = custom_value
         
         return jsonify(response)
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/team/<int:team_id>/players', methods=['GET'])
+def get_team_players(team_id):
+    """
+    Get list of players for a team.
+    
+    Response:
+    {
+        "team_id": 1610612738,
+        "team_name": "Boston Celtics",
+        "players": [
+            {
+                "player_id": 1627759,
+                "name": "Jayson Tatum"
+            },
+            ...
+        ]
+    }
+    """
+    if team_id not in NBA_TEAMS_BY_ID:
+        return jsonify({'error': 'Invalid team_id'}), 400
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT player_id, name
+            FROM players
+            WHERE team_id = %s
+              AND team_id IS NOT NULL
+            ORDER BY name
+        """
+        
+        cursor.execute(query, (team_id,))
+        players = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'team_id': team_id,
+            'team_name': NBA_TEAMS_BY_ID[team_id],
+            'players': [dict(p) for p in players]
+        })
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -268,6 +423,76 @@ def get_player_stats(player_id):
             'team_name': NBA_TEAMS_BY_ID.get(player_dict['team_id'], 'Unknown'),
             'season': season,
             'modes': modes
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/player/<int:player_id>', methods=['PATCH'])
+def update_player(player_id):
+    """
+    Update player information (wingspan, notes, etc.)
+    
+    Request body:
+    {
+        "wingspan_inches": 84,  // Optional
+        "notes": "Great defender"  // Optional
+    }
+    """
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+    
+    # Build dynamic update query based on provided fields
+    allowed_fields = ['wingspan_inches', 'notes']
+    updates = []
+    values = []
+    
+    for field in allowed_fields:
+        if field in data:
+            updates.append(f"{field} = %s")
+            values.append(data[field])
+    
+    if not updates:
+        return jsonify({'error': 'No valid fields to update'}), 400
+    
+    # Add updated_at timestamp
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    
+    # Add player_id for WHERE clause
+    values.append(player_id)
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        query = f"""
+            UPDATE players 
+            SET {', '.join(updates)}
+            WHERE player_id = %s
+            RETURNING player_id, name, wingspan_inches, notes
+        """
+        
+        cursor.execute(query, values)
+        updated_player = cursor.fetchone()
+        
+        if not updated_player:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Player not found'}), 404
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'player_id': updated_player[0],
+            'name': updated_player[1],
+            'wingspan_inches': updated_player[2],
+            'notes': updated_player[3]
         })
     
     except Exception as e:
