@@ -163,8 +163,8 @@ DB_SCHEMA = {
         fg3a INTEGER DEFAULT 0,
         ftm INTEGER DEFAULT 0,
         fta INTEGER DEFAULT 0,
-        oreb INTEGER DEFAULT 0,
-        dreb INTEGER DEFAULT 0,
+        off_rebounds INTEGER DEFAULT 0,
+        def_rebounds INTEGER DEFAULT 0,
         off_reb_pct_x1000 INTEGER,
         def_reb_pct_x1000 INTEGER,
         assists INTEGER DEFAULT 0,
@@ -183,20 +183,20 @@ DB_SCHEMA = {
     DO $$ 
     BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='player_season_stats' AND column_name='oreb') THEN
-            ALTER TABLE player_season_stats ADD COLUMN oreb INTEGER DEFAULT 0;
+                      WHERE table_name='player_season_stats' AND column_name='off_rebounds') THEN
+            ALTER TABLE player_season_stats ADD COLUMN off_rebounds INTEGER DEFAULT 0;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='player_season_stats' AND column_name='dreb') THEN
-            ALTER TABLE player_season_stats ADD COLUMN dreb INTEGER DEFAULT 0;
+                      WHERE table_name='player_season_stats' AND column_name='def_rebounds') THEN
+            ALTER TABLE player_season_stats ADD COLUMN def_rebounds INTEGER DEFAULT 0;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='team_season_stats' AND column_name='oreb') THEN
-            ALTER TABLE team_season_stats ADD COLUMN oreb INTEGER DEFAULT 0;
+                      WHERE table_name='team_season_stats' AND column_name='off_rebounds') THEN
+            ALTER TABLE team_season_stats ADD COLUMN off_rebounds INTEGER DEFAULT 0;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='team_season_stats' AND column_name='dreb') THEN
-            ALTER TABLE team_season_stats ADD COLUMN dreb INTEGER DEFAULT 0;
+                      WHERE table_name='team_season_stats' AND column_name='def_rebounds') THEN
+            ALTER TABLE team_season_stats ADD COLUMN def_rebounds INTEGER DEFAULT 0;
         END IF;
     END $$;
     
@@ -433,14 +433,14 @@ REVERSE_STATS = {'turnovers', 'fouls'}
 # For totals mode, use raw rebound counts instead of percentages
 # Maps the percentage key to the raw count key
 TOTALS_MODE_REPLACEMENTS = {
-    'oreb_pct': 'oreb',  # Use raw offensive rebound count
-    'dreb_pct': 'dreb',  # Use raw defensive rebound count  
+    'oreb_pct': 'off_rebounds',  # Use raw offensive rebound count
+    'dreb_pct': 'def_rebounds',  # Use raw defensive rebound count  
 }
 
 # Column headers for totals mode
 TOTALS_MODE_HEADERS = {
-    'oreb': 'ORS',  # Offensive Rebounds
-    'dreb': 'DRS',  # Defensive Rebounds
+    'off_rebounds': 'ORS',  # Offensive Rebounds
+    'def_rebounds': 'DRS',  # Defensive Rebounds
 }
 
 # Percentile calculation settings

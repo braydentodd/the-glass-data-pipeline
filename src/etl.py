@@ -415,7 +415,7 @@ def update_player_stats():
                         player_id, year, team_id, season_type,
                         games_played, minutes_x10, possessions,
                         fg2m, fg2a, fg3m, fg3a, ftm, fta,
-                        oreb, dreb, off_reb_pct_x1000, def_reb_pct_x1000,
+                        off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
                         assists, turnovers, steals, blocks, fouls,
                         off_rating_x10, def_rating_x10
                     ) VALUES %s
@@ -430,8 +430,8 @@ def update_player_stats():
                         fg3a = EXCLUDED.fg3a,
                         ftm = EXCLUDED.ftm,
                         fta = EXCLUDED.fta,
-                        oreb = EXCLUDED.oreb,
-                        dreb = EXCLUDED.dreb,
+                        off_rebounds = EXCLUDED.off_rebounds,
+                        def_rebounds = EXCLUDED.def_rebounds,
                         off_reb_pct_x1000 = EXCLUDED.off_reb_pct_x1000,
                         def_reb_pct_x1000 = EXCLUDED.def_reb_pct_x1000,
                         assists = EXCLUDED.assists,
@@ -575,7 +575,7 @@ def update_team_stats():
                         team_id, year, season_type,
                         games_played, minutes_x10, possessions,
                         fg2m, fg2a, fg3m, fg3a, ftm, fta,
-                        oreb, dreb, off_reb_pct_x1000, def_reb_pct_x1000,
+                        off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
                         assists, turnovers, steals, blocks, fouls,
                         off_rating_x10, def_rating_x10
                     ) VALUES %s
@@ -589,8 +589,8 @@ def update_team_stats():
                         fg3a = EXCLUDED.fg3a,
                         ftm = EXCLUDED.ftm,
                         fta = EXCLUDED.fta,
-                        oreb = EXCLUDED.oreb,
-                        dreb = EXCLUDED.dreb,
+                        off_rebounds = EXCLUDED.off_rebounds,
+                        def_rebounds = EXCLUDED.def_rebounds,
                         off_reb_pct_x1000 = EXCLUDED.off_reb_pct_x1000,
                         def_reb_pct_x1000 = EXCLUDED.def_reb_pct_x1000,
                         assists = EXCLUDED.assists,
@@ -775,7 +775,7 @@ def backfill_historical_stats(start_year, end_year=None):
                                 player_id, year, team_id, season_type,
                                 games_played, minutes_x10, possessions,
                                 fg2m, fg2a, fg3m, fg3a, ftm, fta,
-                                oreb, dreb, off_reb_pct_x1000, def_reb_pct_x1000,
+                                off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
                                 assists, turnovers, steals, blocks, fouls,
                                 off_rating_x10, def_rating_x10
                             ) VALUES %s
@@ -864,7 +864,7 @@ def backfill_historical_stats(start_year, end_year=None):
                                 team_id, year, season_type,
                                 games_played, minutes_x10, possessions,
                                 fg2m, fg2a, fg3m, fg3a, ftm, fta,
-                                oreb, dreb, off_reb_pct_x1000, def_reb_pct_x1000,
+                                off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
                                 assists, turnovers, steals, blocks, fouls,
                                 off_rating_x10, def_rating_x10
                             ) VALUES %s

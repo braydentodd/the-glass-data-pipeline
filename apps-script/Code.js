@@ -900,6 +900,9 @@ function updateSheetWithStats(sheet, statsData, mode, customValue) {
       col++;
     }
   }
+  
+  // Auto-resize column A (player names) to fit content
+  sheet.autoResizeColumn(1);
 }
 
 /**
