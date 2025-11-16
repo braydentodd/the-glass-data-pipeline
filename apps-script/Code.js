@@ -1,51 +1,123 @@
+/**
+ * Configuration Management for The Glass Apps Script
+ * 
+ * Configuration is loaded dynamically from the Flask API at runtime.
+ * The API serves configuration from src/config.py (single source of truth).
+ * 
+ * IMPORTANT: All configuration values come from Python config.py via API.
+ * To change configuration, update src/config.py and redeploy the API.
+ */
 
-// Configuration
-const API_BASE_URL = 'http://150.136.255.23:5001';
-const SHEET_ID = '1kqVNHu8cs4lFAEAflI4Ow77oEZEusX7_VpQ6xt8CgB4';
+// Global configuration object - loaded on first use
+let CONFIG = null;
 
-// NBA Team IDs mapping by abbreviation
-const NBA_TEAMS = {
-  'ATL': 1610612737,  // Atlanta Hawks
-  'BOS': 1610612738,  // Boston Celtics
-  'BKN': 1610612751,  // Brooklyn Nets
-  'CHA': 1610612766,  // Charlotte Hornets
-  'CHI': 1610612741,  // Chicago Bulls
-  'CLE': 1610612739,  // Cleveland Cavaliers
-  'DAL': 1610612742,  // Dallas Mavericks
-  'DEN': 1610612743,  // Denver Nuggets
-  'DET': 1610612765,  // Detroit Pistons
-  'GSW': 1610612744,  // Golden State Warriors
-  'HOU': 1610612745,  // Houston Rockets
-  'IND': 1610612754,  // Indiana Pacers
-  'LAC': 1610612746,  // LA Clippers
-  'LAL': 1610612747,  // Los Angeles Lakers
-  'MEM': 1610612763,  // Memphis Grizzlies
-  'MIA': 1610612748,  // Miami Heat
-  'MIL': 1610612749,  // Milwaukee Bucks
-  'MIN': 1610612750,  // Minnesota Timberwolves
-  'NOP': 1610612740,  // New Orleans Pelicans
-  'NYK': 1610612752,  // New York Knicks
-  'OKC': 1610612760,  // Oklahoma City Thunder
-  'ORL': 1610612753,  // Orlando Magic
-  'PHI': 1610612755,  // Philadelphia 76ers
-  'PHX': 1610612756,  // Phoenix Suns
-  'POR': 1610612757,  // Portland Trail Blazers
-  'SAC': 1610612758,  // Sacramento Kings
-  'SAS': 1610612759,  // San Antonio Spurs
-  'TOR': 1610612761,  // Toronto Raptors
-  'UTA': 1610612762,  // Utah Jazz
-  'WAS': 1610612764   // Washington Wizards
-};
+/**
+ * Load configuration from API endpoint
+ * Configuration comes from Python's src/config.py
+ */
+function loadConfig() {
+  if (CONFIG !== null) {
+    return CONFIG;  // Return cached config
+  }
+  
+  try {
+    // Bootstrap: use this hardcoded URL ONLY to fetch the real config
+    // After this initial fetch, all values come from the API
+    const bootstrapUrl = 'http://150.136.255.23:5001/api/config';
+    
+    const response = UrlFetchApp.fetch(bootstrapUrl, { muteHttpExceptions: true });
+    
+    if (response.getResponseCode() !== 200) {
+      throw new Error(`Config API returned ${response.getResponseCode()}`);
+    }
+    
+    CONFIG = JSON.parse(response.getContentText());
+    Logger.log('Configuration loaded from API successfully');
+    return CONFIG;
+    
+  } catch (error) {
+    Logger.log(`Error loading config from API: ${error}`);
+    
+    // FALLBACK ONLY - if API is unreachable, use these emergency defaults
+    // These should match src/config.py values
+    Logger.log('WARNING: Using fallback configuration - API unreachable');
+    CONFIG = {
+      api_base_url: 'http://150.136.255.23:5001',
+      sheet_id: '1kqVNHu8cs4lFAEAflI4Ow77oEZEusX7_VpQ6xt8CgB4',
+      nba_teams: {
+        'ATL': 1610612737, 'BOS': 1610612738, 'BKN': 1610612751, 'CHA': 1610612766,
+        'CHI': 1610612741, 'CLE': 1610612739, 'DAL': 1610612742, 'DEN': 1610612743,
+        'DET': 1610612765, 'GSW': 1610612744, 'HOU': 1610612745, 'IND': 1610612754,
+        'LAC': 1610612746, 'LAL': 1610612747, 'MEM': 1610612763, 'MIA': 1610612748,
+        'MIL': 1610612749, 'MIN': 1610612750, 'NOP': 1610612740, 'NYK': 1610612752,
+        'OKC': 1610612760, 'ORL': 1610612753, 'PHI': 1610612755, 'PHX': 1610612756,
+        'POR': 1610612757, 'SAC': 1610612758, 'SAS': 1610612759, 'TOR': 1610612761,
+        'UTA': 1610612762, 'WAS': 1610612764
+      },
+      stat_columns: [
+        'games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+        'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 
+        'blocks', 'fouls'
+      ],
+      reverse_stats: ['turnovers', 'fouls'],
+      column_indices: {
+        wingspan: 6,
+        notes: 8,
+        player_id: 44,
+        stats_start: 9
+      },
+      colors: {
+        red: { r: 238, g: 75, b: 43 },
+        yellow: { r: 252, g: 245, b: 95 },
+        green: { r: 76, g: 187, b: 23 }
+      }
+    };
+    return CONFIG;
+  }
+}
 
-// Stat columns in order
-const STAT_COLUMNS = [
-  'games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
-  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 
-  'blocks', 'fouls'
-];
+// Legacy constant accessors - these now fetch from loaded config
+function getApiBaseUrl() {
+  const config = loadConfig();
+  return config.api_base_url;
+}
 
-// Reverse stats (lower is better)
-const REVERSE_STATS = ['turnovers', 'fouls'];
+function getSheetId() {
+  const config = loadConfig();
+  return config.sheet_id;
+}
+
+function getNbaTeams() {
+  const config = loadConfig();
+  return config.nba_teams;
+}
+
+function getStatColumns() {
+  const config = loadConfig();
+  return config.stat_columns;
+}
+
+function getReverseStats() {
+  const config = loadConfig();
+  return config.reverse_stats;
+}
+
+function getColumnIndices() {
+  const config = loadConfig();
+  return config.column_indices;
+}
+
+function getColors() {
+  const config = loadConfig();
+  return config.colors;
+}
+
+// Backward compatibility - these constants now load from config
+const API_BASE_URL = getApiBaseUrl();
+const SHEET_ID = getSheetId();
+const NBA_TEAMS = getNbaTeams();
+const STAT_COLUMNS = getStatColumns();
+const REVERSE_STATS = getReverseStats();
 
 /**
  * Get current NBA season based on date
@@ -101,14 +173,16 @@ function onEditInstallable(e) {
     return;
   }
   
-  // Column F = Wingspan (column 6), Column H = Notes (column 8)
+  // Get column indices from config
+  const colIndices = getColumnIndices();
+  
   // Check if edited cell is in wingspan or notes column
-  if (col !== 6 && col !== 8) {
+  if (col !== colIndices.wingspan && col !== colIndices.notes) {
     return;
   }
   
-  // Get player ID from hidden column AR (column 44)
-  const playerId = sheet.getRange(row, 44).getValue();
+  // Get player ID from hidden column
+  const playerId = sheet.getRange(row, colIndices.player_id).getValue();
   
   if (!playerId) {
     const playerName = sheet.getRange(row, 1).getValue();
@@ -121,7 +195,7 @@ function onEditInstallable(e) {
   
   // Determine which field was edited
   let fieldName, fieldValue, displayFieldName;
-  if (col === 6) {
+  if (col === colIndices.wingspan) {
     // Wingspan column
     fieldName = 'wingspan_inches';
     displayFieldName = 'wingspan';
@@ -136,7 +210,7 @@ function onEditInstallable(e) {
         return;
       }
     }
-  } else if (col === 8) {
+  } else if (col === colIndices.notes) {
     // Notes column
     fieldName = 'notes';
     displayFieldName = 'notes';
@@ -706,19 +780,22 @@ function updateSheetWithStats(sheet, statsData, mode, customValue) {
     modeText = `Per ${customValue} Minutes`;
   }
   
+  // Get column indices from config
+  const colIndices = getColumnIndices();
+  
   // Update header with season and mode
   const headerText = `${season} Stats ${modeText}`;
   Logger.log(`Setting header to: ${headerText}`);
-  sheet.getRange(1, 9).setValue(headerText);
+  sheet.getRange(1, colIndices.stats_start).setValue(headerText);
   
-  // Start from row 4, column 1 (A4) for player names, column 9 (I4) for stats
+  // Start from row 4 for data
   const startRow = 4;
-  const statsStartColumn = 9;  // Column I
+  const statsStartColumn = colIndices.stats_start;
   
   // Set row 3 height to 15 pixels
   sheet.setRowHeight(3, 15);
   
-  // Clear ONLY stat columns (Column I onwards), not player info columns (A-G)
+  // Clear ONLY stat columns (stats_start onwards), not player info columns (A-G)
   const lastRow = sheet.getLastRow();
   if (lastRow >= startRow) {
     const numStatCols = STAT_COLUMNS.length;
@@ -829,10 +906,10 @@ function updateSheetWithStats(sheet, statsData, mode, customValue) {
  * Get RGB color based on percentile
  */
 function getPercentileColor(percentile) {
-  // Red at 0%, Yellow at 50%, Green at 100%
-  const red = { r: 238, g: 75, b: 43 };    // #EE4B2B
-  const yellow = { r: 252, g: 245, b: 95 }; // #FCF55F
-  const green = { r: 76, g: 187, b: 23 };   // #4CBB17
+  const colors = getColors();
+  const red = colors.red;
+  const yellow = colors.yellow;
+  const green = colors.green;
   
   let r, g, b;
   
