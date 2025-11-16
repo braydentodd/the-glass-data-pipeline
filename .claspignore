@@ -1,4 +1,6 @@
-# Ignore everything except specific files
+# Ignore everything outside apps-script folder
+# (Since rootDir is set to "apps-script" in .clasp.json, this isn't strictly necessary,
+# but it's good practice to be explicit)
 **/**
 !appsscript.json
 !Code.js
