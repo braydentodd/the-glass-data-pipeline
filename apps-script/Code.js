@@ -644,13 +644,13 @@ function updateAllSheets(mode, customValue) {
     // Show appropriate message based on whether user is on a team sheet
     if (NBA_TEAMS.hasOwnProperty(activeSheetName)) {
       SpreadsheetApp.getActiveSpreadsheet().toast(
-        `Updating all teams (current + historical) starting with ${activeSheetName}...`,
+        `Updating stats view...`,
         modeDisplay,
         5
       );
     } else {
       SpreadsheetApp.getActiveSpreadsheet().toast(
-        `Updating all teams (current + historical)...`,
+        `Updating stats view...`,
         modeDisplay,
         5
       );
