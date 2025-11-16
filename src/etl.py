@@ -910,7 +910,8 @@ def run_nightly_etl(backfill_start=None, backfill_end=None, check_missing=True):
             backfill_historical_stats(backfill_start, backfill_end)
         else:
             # Normal nightly update (current season only)
-            update_player_rosters(include_deep_details=True)
+            # Skip deep player details for speed - only update when explicitly needed
+            update_player_rosters(include_deep_details=False)
             update_player_stats()
             update_team_stats()
         
