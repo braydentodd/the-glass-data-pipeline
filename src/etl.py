@@ -194,8 +194,13 @@ def update_player_rosters(include_deep_details=True):
     
     # Fetch deep details for all players
     if include_deep_details:
-        log("Fetching deep player details for all players...")
+        total_players = len(all_players)
+        log(f"Fetching deep player details for {total_players} players...")
+        log(f"This will take approximately {int(total_players * RATE_LIMIT_DELAY / 60)} minutes")
+        
         for idx, player_id in enumerate(all_players.keys()):
+            player_name = all_players[player_id].get('name', 'Unknown')
+            
             try:
                 info = commonplayerinfo.CommonPlayerInfo(player_id=player_id, timeout=30)
                 time.sleep(RATE_LIMIT_DELAY)
@@ -213,11 +218,12 @@ def update_player_rosters(include_deep_details=True):
                         'school': safe_str(pd.get('SCHOOL'))
                     })
                 
-                if (idx + 1) % 50 == 0:
-                    log(f"Progress: {idx + 1}/{len(all_players)} players fetched")
+                # Log every 10 players to show progress
+                if (idx + 1) % 10 == 0:
+                    log(f"Progress: {idx + 1}/{total_players} players - Last: {player_name}")
                     
             except Exception as e:
-                log(f"✗ Error fetching details for {player_id}: {e}", "ERROR")
+                log(f"✗ Error fetching details for {player_name} (ID {player_id}): {e}", "ERROR")
     
     # Update database
     for player_id, player_data in all_players.items():
@@ -910,8 +916,7 @@ def run_nightly_etl(backfill_start=None, backfill_end=None, check_missing=True):
             backfill_historical_stats(backfill_start, backfill_end)
         else:
             # Normal nightly update (current season only)
-            # Skip deep player details for speed - only update when explicitly needed
-            update_player_rosters(include_deep_details=False)
+            update_player_rosters(include_deep_details=True)
             update_player_stats()
             update_team_stats()
         
