@@ -180,7 +180,6 @@ def update_player_rosters(include_deep_details=True):
                     'team_id': team_id,
                     'name': row.get('PLAYER', ''),
                     'jersey': safe_str(row.get('NUM', '')),
-                    'position': safe_str(row.get('POSITION', '')),
                     'weight': safe_int(row.get('WEIGHT', ''))
                 }
             
@@ -236,13 +235,13 @@ def update_player_rosters(include_deep_details=True):
                 if include_deep_details and 'birthdate' in player_data:
                     cursor.execute("""
                         UPDATE players SET
-                            team_id = %s, jersey_number = %s, position = %s, weight_pounds = %s,
+                            team_id = %s, jersey_number = %s, weight_pounds = %s,
                             birthdate = %s, country = %s, draft_year = %s,
                             draft_round = %s, draft_number = %s, school = %s,
                             updated_at = NOW()
                         WHERE player_id = %s
                     """, (
-                        player_data['team_id'], player_data['jersey'], player_data['position'],
+                        player_data['team_id'], player_data['jersey'],
                         player_data.get('weight'),
                         player_data.get('birthdate'), player_data.get('country'),
                         player_data.get('draft_year'), player_data.get('draft_round'),
@@ -252,9 +251,9 @@ def update_player_rosters(include_deep_details=True):
                 else:
                     cursor.execute("""
                         UPDATE players SET
-                            team_id = %s, jersey_number = %s, position = %s, updated_at = NOW()
+                            team_id = %s, jersey_number = %s, updated_at = NOW()
                         WHERE player_id = %s
-                    """, (player_data['team_id'], player_data['jersey'], player_data['position'], player_id))
+                    """, (player_data['team_id'], player_data['jersey'], player_id))
                 
                 if existing[0] != player_data['team_id']:
                     players_updated += 1
@@ -265,22 +264,22 @@ def update_player_rosters(include_deep_details=True):
                     cursor.execute("""
                         INSERT INTO players (
                             player_id, name, team_id, team_abbreviation, jersey_number,
-                            position, weight_pounds, birthdate, country,
+                            weight_pounds, birthdate, country,
                             draft_year, draft_round, draft_number, school
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         player_id, player_data['name'], player_data['team_id'], None,
-                        player_data['jersey'], player_data['position'], player_data.get('weight'),
+                        player_data['jersey'], player_data.get('weight'),
                         player_data.get('birthdate'), player_data.get('country'),
                         player_data.get('draft_year'), player_data.get('draft_round'),
                         player_data.get('draft_number'), player_data.get('school')
                     ))
                 else:
                     cursor.execute("""
-                        INSERT INTO players (player_id, name, team_id, position, jersey_number)
-                        VALUES (%s, %s, %s, %s, %s)
+                        INSERT INTO players (player_id, name, team_id, jersey_number)
+                        VALUES (%s, %s, %s, %s)
                     """, (player_id, player_data['name'], player_data['team_id'],
-                          player_data['position'], player_data['jersey']))
+                          player_data['jersey']))
                 
                 players_added += 1
                 log(f"Added: {player_data['name']}")
