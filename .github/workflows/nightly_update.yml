@@ -36,7 +36,7 @@ jobs:
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       run: |
         source venv/bin/activate
-        python3 src/etl/nightly.py
+        python3 -m src.etl
     
     - name: Upload logs
       if: always()
@@ -70,7 +70,7 @@ jobs:
           GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
         run: |
           source venv/bin/activate
-          python3 src/sheets/sync.py
+          python3 -m src.sheets_sync
       
       - name: Upload logs
         if: always()
