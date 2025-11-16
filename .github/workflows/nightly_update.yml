@@ -34,9 +34,10 @@ jobs:
         DB_NAME: ${{ secrets.DB_NAME }}
         DB_USER: ${{ secrets.DB_USER }}
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        PYTHONUNBUFFERED: "1"
       run: |
         source venv/bin/activate
-        python3 -m src.etl
+        python3 -u -m src.etl
     
     - name: Upload logs
       if: always()
@@ -68,9 +69,10 @@ jobs:
         env:
           GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_FILE }}
           GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+          PYTHONUNBUFFERED: "1"
         run: |
           source venv/bin/activate
-          python3 -m src.sheets_sync
+          python3 -u -m src.sheets_sync
       
       - name: Upload logs
         if: always()
