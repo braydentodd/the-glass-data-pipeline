@@ -121,7 +121,9 @@ def sync_historical_stats():
         if priority_team:
             env['PRIORITY_TEAM_ABBR'] = priority_team.upper()
         
-        if mode == 'seasons':
+        # Handle both 'season' (singular) and 'seasons' (plural) for compatibility
+        if mode == 'season' or mode == 'seasons':
+            env['HISTORICAL_MODE'] = 'seasons'  # Normalize to plural
             env['HISTORICAL_SEASONS'] = ','.join(seasons)
         else:
             env['HISTORICAL_YEARS'] = str(years)

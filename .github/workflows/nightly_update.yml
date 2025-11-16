@@ -1,0 +1,82 @@
+name: Nightly Data Update
+
+on:
+  schedule:
+    # Run daily at 5 AM EST (10 AM UTC)
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual run'
+        required: false
+        default: 'Manual trigger'
+
+jobs:
+  # Job 1: Update database with latest NBA data
+  etl:
+    name: ETL - Update Database
+    runs-on: [self-hosted, Linux, X64]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python environment
+      run: |
+        python3 -m venv venv
+        source venv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run nightly ETL
+      env:
+        DB_HOST: ${{ secrets.DB_HOST }}
+        DB_NAME: ${{ secrets.DB_NAME }}
+        DB_USER: ${{ secrets.DB_USER }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      run: |
+        source venv/bin/activate
+        python3 src/etl/nightly.py
+    
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: etl-logs-${{ github.run_number }}
+        path: |
+          *.log
+        retention-days: 7
+
+  # Job 2: Sync database to Google Sheets (depends on ETL completion)
+  sync:
+    name: Sync - Database to Sheets
+    runs-on: [self-hosted, Linux, X64]
+    needs: etl
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python environment
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Sync to Google Sheets
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          source venv/bin/activate
+          python src/sync_all_teams.py
+      
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-logs-${{ github.run_number }}
+          path: |
+            *.log
+          retention-days: 7

@@ -133,14 +133,17 @@ def fetch_historical_players_data(conn, past_years=3, include_current=False, spe
         # Use specific seasons provided
         season_filter = "AND s.year IN %s"
         season_params = (tuple(specific_seasons),)
+        print(f"[HISTORICAL] Using specific seasons: {specific_seasons}")
     else:
         # Use year range
         if include_current:
             start_year = current_year - past_years + 1
             end_year = current_year + 1  # Include current
+            print(f"[HISTORICAL] Including current year: {start_year} to {end_year} (current={current_year})")
         else:
             start_year = current_year - past_years
             end_year = current_year  # Exclude current
+            print(f"[HISTORICAL] Excluding current year: {start_year} to {end_year-1} (current={current_year})")
         
         season_filter = "AND s.year >= %s AND s.year < %s"
         season_params = (start_year, end_year)
@@ -578,7 +581,7 @@ def format_height(inches):
     remaining_inches = inches % 12
     return f'{feet}\'{remaining_inches}"'
 
-def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, past_years=3, stats_mode='per_36', stats_custom_value=None):
+def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, past_years=3, stats_mode='per_36', stats_custom_value=None, specific_seasons=None, include_current=False):
     """Create/update a team sheet with formatting and color coding (including historical stats)"""
     log(f"Creating {team_name} sheet with stats mode: {stats_mode}...")
     
@@ -602,11 +605,31 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             # Update header to reflect the stats mode
             header_row_1.append(h.replace('{season}', f'{current_season} Stats {mode_text}'))
         elif '{past_years}' in h:
-            # Show "Career stats" for career mode (25 years), otherwise show "prev X years stats"
-            if past_years >= 25:
-                historical_text = f'Career stats {mode_text.lower()}'
+            # Build header text based on configuration
+            if specific_seasons:
+                # Specific season(s) - show season followed by "stats" with mode
+                seasons_text = ', '.join([f"{year-1}-{str(year)[2:]}" for year in specific_seasons])
+                
+                if include_current:
+                    # Include current year - no "prev" prefix
+                    historical_text = f'{seasons_text} stats {mode_text.lower()}'
+                else:
+                    # Don't include current - add "prev season" prefix
+                    historical_text = f'prev season stats {mode_text.lower()} since {seasons_text}'
+                    
+            elif past_years >= 25:
+                # Career mode
+                if include_current:
+                    historical_text = f'Career season stats {mode_text.lower()}'
+                else:
+                    historical_text = f'Career prev season stats {mode_text.lower()}'
             else:
-                historical_text = f'prev {past_years} years stats {mode_text.lower()}'
+                # Number of years mode
+                if include_current:
+                    historical_text = f'last {past_years} season stats {mode_text.lower()}'
+                else:
+                    historical_text = f'prev {past_years} season stats {mode_text.lower()}'
+                    
             header_row_1.append(h.replace('{past_years}', historical_text))
         else:
             header_row_1.append(h)
@@ -892,7 +915,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 'startRowIndex': 0,
                 'endRowIndex': 1,
                 'startColumnIndex': 25,  # Z (YRS column)
-                'endColumnIndex': 42,    # AQ (last historical stat)
+                'endColumnIndex': 43,    # AQ + 1 (endColumnIndex is exclusive)
             },
             'mergeType': 'MERGE_ALL'
         }
@@ -1634,7 +1657,7 @@ def main():
             worksheet = spreadsheet.add_worksheet(title=team_abbr, rows=100, cols=30)
         
         log(f"Updating {team_name} ({team_abbr}) - both current and historical stats...")
-        create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, past_years, stats_mode, stats_custom_value)
+        create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, past_years, stats_mode, stats_custom_value, specific_seasons, include_current)
         log(f"✅ {team_name} complete")
         
         # Add a 5-second delay after each team to avoid rate limits
