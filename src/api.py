@@ -9,8 +9,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import numpy as np
 
-from src.config import DB_CONFIG, NBA_TEAMS_BY_ID, STAT_COLUMNS, REVERSE_STATS, API_CONFIG
-from src.stat_calculator import calculate_stats_for_team
+from src.config import DB_CONFIG, NBA_TEAMS_BY_ID, STAT_COLUMNS, REVERSE_STATS, API_CONFIG, DB_SCHEMA
+from src.utils.calculator import calculate_stats_for_team
 
 app = Flask(__name__)
 
@@ -409,7 +409,7 @@ def get_player_stats(player_id):
         player_dict = dict(player)
         
         # Calculate stats in all modes
-        from src.stat_calculator import StatCalculator
+        from src.utils.calculator import StatCalculator
         calc = StatCalculator(player_dict)
         
         modes = {
@@ -448,7 +448,7 @@ def update_player(player_id):
         return jsonify({'error': 'No data provided'}), 400
     
     # Build dynamic update query based on provided fields
-    allowed_fields = ['wingspan_inches', 'notes']
+    allowed_fields = DB_SCHEMA['editable_fields']
     updates = []
     values = []
     
@@ -499,6 +499,52 @@ def update_player(player_id):
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    """
+    Provide client configuration for Apps Script.
+    Returns configuration values from centralized config.py
+    """
+    from src.config import (
+        SERVER_CONFIG, 
+        GOOGLE_SHEETS_CONFIG, 
+        STAT_COLUMNS,
+        REVERSE_STATS,
+        SHEET_FORMAT
+    )
+    
+    # Team abbreviation to ID mapping for Apps Script
+    team_abbr_to_id = {
+        'ATL': 1610612737, 'BOS': 1610612738, 'BKN': 1610612751, 'CHA': 1610612766,
+        'CHI': 1610612741, 'CLE': 1610612739, 'DAL': 1610612742, 'DEN': 1610612743,
+        'DET': 1610612765, 'GSW': 1610612744, 'HOU': 1610612745, 'IND': 1610612754,
+        'LAC': 1610612746, 'LAL': 1610612747, 'MEM': 1610612763, 'MIA': 1610612748,
+        'MIL': 1610612749, 'MIN': 1610612750, 'NOP': 1610612740, 'NYK': 1610612752,
+        'OKC': 1610612760, 'ORL': 1610612753, 'PHI': 1610612755, 'PHX': 1610612756,
+        'POR': 1610612757, 'SAC': 1610612758, 'SAS': 1610612759, 'TOR': 1610612761,
+        'UTA': 1610612762, 'WAS': 1610612764
+    }
+    
+    return jsonify({
+        'api_base_url': f"http://{SERVER_CONFIG['production_host']}:{SERVER_CONFIG['production_port']}",
+        'sheet_id': GOOGLE_SHEETS_CONFIG['spreadsheet_id'],
+        'nba_teams': team_abbr_to_id,
+        'stat_columns': STAT_COLUMNS,
+        'reverse_stats': list(REVERSE_STATS),
+        'column_indices': {
+            'wingspan': 6,  # Column F
+            'notes': 8,     # Column H
+            'player_id': SHEET_FORMAT['total_columns'],  # Column AR (44)
+            'stats_start': 9  # Column I
+        },
+        'colors': {
+            'red': {'r': 238, 'g': 75, 'b': 43},
+            'yellow': {'r': 252, 'g': 245, 'b': 95},
+            'green': {'r': 76, 'g': 187, 'b': 23}
+        }
+    })
 
 
 if __name__ == '__main__':

@@ -18,6 +18,173 @@ DB_CONFIG = {
     'password': os.getenv('DB_PASSWORD', ''),
 }
 
+# Database schema configuration
+DB_SCHEMA = {
+    # Table names
+    'tables': {
+        'teams': 'teams',
+        'players': 'players',
+        'player_season_stats': 'player_season_stats',
+        'team_season_stats': 'team_season_stats',
+    },
+    
+    # Player table columns
+    'player_columns': {
+        'player_id': 'player_id',
+        'name': 'name',
+        'team_id': 'team_id',
+        'team_abbreviation': 'team_abbreviation',
+        'jersey_number': 'jersey_number',
+        'position': 'position',
+        'height_inches': 'height_inches',
+        'weight_pounds': 'weight_pounds',
+        'wingspan_inches': 'wingspan_inches',
+        'birthdate': 'birthdate',
+        'country': 'country',
+        'draft_year': 'draft_year',
+        'draft_round': 'draft_round',
+        'draft_number': 'draft_number',
+        'school': 'school',
+        'notes': 'notes',
+        'created_at': 'created_at',
+        'updated_at': 'updated_at',
+    },
+    
+    # Player season stats columns
+    'player_stats_columns': {
+        'id': 'id',
+        'player_id': 'player_id',
+        'year': 'year',
+        'team_id': 'team_id',
+        'season_type': 'season_type',
+        'games_played': 'games_played',
+        'minutes_x10': 'minutes_x10',
+        'possessions': 'possessions',
+        'fg2m': 'fg2m',
+        'fg2a': 'fg2a',
+        'fg3m': 'fg3m',
+        'fg3a': 'fg3a',
+        'ftm': 'ftm',
+        'fta': 'fta',
+        'off_reb_pct_x1000': 'off_reb_pct_x1000',
+        'def_reb_pct_x1000': 'def_reb_pct_x1000',
+        'assists': 'assists',
+        'turnovers': 'turnovers',
+        'steals': 'steals',
+        'blocks': 'blocks',
+        'fouls': 'fouls',
+        'off_rating_x10': 'off_rating_x10',
+        'def_rating_x10': 'def_rating_x10',
+        'created_at': 'created_at',
+        'updated_at': 'updated_at',
+    },
+    
+    # Editable player fields (for API updates)
+    'editable_fields': ['wingspan_inches', 'notes'],
+    
+    # Database schema DDL (for auto-creation)
+    'create_schema_sql': """
+    -- Teams table
+    CREATE TABLE IF NOT EXISTS teams (
+        team_id INTEGER PRIMARY KEY,
+        full_name VARCHAR(100),
+        abbreviation VARCHAR(10),
+        city VARCHAR(100),
+        state VARCHAR(50),
+        year_founded INTEGER,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+    
+    -- Players table
+    CREATE TABLE IF NOT EXISTS players (
+        player_id INTEGER PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        team_id INTEGER REFERENCES teams(team_id),
+        team_abbreviation VARCHAR(10),
+        jersey_number VARCHAR(10),
+        position VARCHAR(10),
+        height_inches INTEGER,
+        weight_pounds INTEGER,
+        wingspan_inches INTEGER,
+        birthdate DATE,
+        country VARCHAR(100),
+        draft_year INTEGER,
+        draft_round INTEGER,
+        draft_number INTEGER,
+        school VARCHAR(255),
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+    
+    -- Player season stats table
+    CREATE TABLE IF NOT EXISTS player_season_stats (
+        id SERIAL PRIMARY KEY,
+        player_id INTEGER REFERENCES players(player_id),
+        team_id INTEGER REFERENCES teams(team_id),
+        year INTEGER NOT NULL,
+        season_type INTEGER NOT NULL DEFAULT 1,
+        games_played INTEGER DEFAULT 0,
+        minutes_x10 INTEGER DEFAULT 0,
+        possessions INTEGER DEFAULT 0,
+        fg2m INTEGER DEFAULT 0,
+        fg2a INTEGER DEFAULT 0,
+        fg3m INTEGER DEFAULT 0,
+        fg3a INTEGER DEFAULT 0,
+        ftm INTEGER DEFAULT 0,
+        fta INTEGER DEFAULT 0,
+        off_reb_pct_x1000 INTEGER,
+        def_reb_pct_x1000 INTEGER,
+        assists INTEGER DEFAULT 0,
+        turnovers INTEGER DEFAULT 0,
+        steals INTEGER DEFAULT 0,
+        blocks INTEGER DEFAULT 0,
+        fouls INTEGER DEFAULT 0,
+        off_rating_x10 INTEGER,
+        def_rating_x10 INTEGER,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(player_id, year, season_type)
+    );
+    
+    -- Team season stats table
+    CREATE TABLE IF NOT EXISTS team_season_stats (
+        id SERIAL PRIMARY KEY,
+        team_id INTEGER REFERENCES teams(team_id),
+        year INTEGER NOT NULL,
+        season_type INTEGER NOT NULL DEFAULT 1,
+        games_played INTEGER DEFAULT 0,
+        minutes_x10 INTEGER DEFAULT 0,
+        possessions INTEGER DEFAULT 0,
+        fg2m INTEGER DEFAULT 0,
+        fg2a INTEGER DEFAULT 0,
+        fg3m INTEGER DEFAULT 0,
+        fg3a INTEGER DEFAULT 0,
+        ftm INTEGER DEFAULT 0,
+        fta INTEGER DEFAULT 0,
+        off_reb_pct_x1000 INTEGER,
+        def_reb_pct_x1000 INTEGER,
+        assists INTEGER DEFAULT 0,
+        turnovers INTEGER DEFAULT 0,
+        steals INTEGER DEFAULT 0,
+        blocks INTEGER DEFAULT 0,
+        fouls INTEGER DEFAULT 0,
+        off_rating_x10 INTEGER,
+        def_rating_x10 INTEGER,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(team_id, year, season_type)
+    );
+    
+    -- Create indexes
+    CREATE INDEX IF NOT EXISTS idx_player_stats_year ON player_season_stats(year);
+    CREATE INDEX IF NOT EXISTS idx_player_stats_player ON player_season_stats(player_id);
+    CREATE INDEX IF NOT EXISTS idx_team_stats_year ON team_season_stats(year);
+    CREATE INDEX IF NOT EXISTS idx_team_stats_team ON team_season_stats(team_id);
+    """,
+}
+
 # ============================================================================
 # GOOGLE SHEETS CONFIGURATION
 # ============================================================================
@@ -49,6 +216,15 @@ API_CONFIG = {
         'per_minutes',
         'per_possessions'
     ],
+}
+
+# Server/deployment configuration
+SERVER_CONFIG = {
+    'production_host': '150.136.255.23',
+    'production_port': 5001,
+    'ssh_user': 'ubuntu',
+    'remote_dir': '/home/ubuntu/the-glass-data-pipeline',
+    'systemd_service': 'flask-api',
 }
 
 # ============================================================================

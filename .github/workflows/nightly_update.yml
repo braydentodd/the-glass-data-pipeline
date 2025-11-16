@@ -66,11 +66,11 @@ jobs:
       
       - name: Sync to Google Sheets
         env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_FILE }}
+          GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
         run: |
           source venv/bin/activate
-          python src/sync_all_teams.py
+          python3 src/sheets/sync.py
       
       - name: Upload logs
         if: always()

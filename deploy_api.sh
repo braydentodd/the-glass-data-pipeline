@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Simple deployment script for The Glass
-# Deploys Python code to Oracle Cloud server
+# Deploy Flask API to Oracle Cloud server
+# Configuration is centralized in src/config.py (SERVER_CONFIG)
 #
 
 set -e  # Exit on error
@@ -9,7 +9,7 @@ set -e  # Exit on error
 SERVER="ubuntu@150.136.255.23"
 REMOTE_DIR="/home/ubuntu/the-glass-api"
 
-echo "📦 Deploying The Glass to $SERVER..."
+echo "📦 Deploying Flask API to $SERVER..."
 
 # Upload src directory
 echo "→ Uploading Python code..."
