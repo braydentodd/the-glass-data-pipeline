@@ -350,27 +350,99 @@ function saveHistoricalStatsConfig(input, includeCurrentYear) {
     props.deleteProperty('HISTORICAL_YEARS');
   }
   
-  // Trigger the sync via API in background
+  // Get the active sheet to set as priority team
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const activeSheet = ss.getActiveSheet();
+  const activeSheetName = activeSheet.getName().toUpperCase();
+  const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
+  
+  // Trigger the sync via API in background using a time-driven trigger
+  // This allows the dialog to close immediately without waiting for sync to complete
   try {
-    syncHistoricalStats(parsed.mode, parsed.value, includeCurrentYear, null);
+    // Store sync parameters in script properties for the trigger to use
+    const scriptProps = PropertiesService.getScriptProperties();
     
-    // Show toast notification immediately (dialog will close first)
+    Logger.log(`Storing pending sync: mode=${parsed.mode}, value=${parsed.value}, includeCurrent=${includeCurrentYear}, priority=${priorityTeam}`);
+    
+    scriptProps.setProperty('PENDING_SYNC_MODE', parsed.mode);
+    scriptProps.setProperty('PENDING_SYNC_VALUE', parsed.value.toString());
+    scriptProps.setProperty('PENDING_SYNC_INCLUDE_CURRENT', includeCurrentYear ? 'true' : 'false');
+    scriptProps.setProperty('PENDING_SYNC_PRIORITY_TEAM', priorityTeam || '');
+    
+    // Create a one-time trigger to run the sync in 1 second
+    ScriptApp.newTrigger('executePendingSync')
+      .timeBased()
+      .after(1000)  // 1 second
+      .create();
+    
+    // Show immediate feedback
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      'Sync will start in 1 second. You can continue working.',
+      'Historical Stats Sync Scheduled',
+      5
+    );
+    
+    return { success: true };
+  } catch (error) {
+    Logger.log(`Error setting up sync: ${error}`);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Execute the pending sync (called by time-driven trigger)
+ */
+function executePendingSync() {
+  const scriptProps = PropertiesService.getScriptProperties();
+  
+  try {
+    Logger.log('executePendingSync triggered');
+    
+    const mode = scriptProps.getProperty('PENDING_SYNC_MODE');
+    const value = scriptProps.getProperty('PENDING_SYNC_VALUE');
+    const includeCurrentStr = scriptProps.getProperty('PENDING_SYNC_INCLUDE_CURRENT');
+    const priorityTeam = scriptProps.getProperty('PENDING_SYNC_PRIORITY_TEAM');
+    
+    Logger.log(`Retrieved: mode=${mode}, value=${value}, includeCurrent=${includeCurrentStr}, priority=${priorityTeam}`);
+    
+    // Clear the pending sync properties
+    scriptProps.deleteProperty('PENDING_SYNC_MODE');
+    scriptProps.deleteProperty('PENDING_SYNC_VALUE');
+    scriptProps.deleteProperty('PENDING_SYNC_INCLUDE_CURRENT');
+    scriptProps.deleteProperty('PENDING_SYNC_PRIORITY_TEAM');
+    
+    if (!mode || !value) {
+      throw new Error('No pending sync found');
+    }
+    
+    const includeCurrentBool = includeCurrentStr === 'true';
+    const priority = priorityTeam && priorityTeam !== '' ? priorityTeam : null;
+    
+    // Show toast at the start
     SpreadsheetApp.getActiveSpreadsheet().toast(
       'Syncing previous years stats in the background. Sheets will update in a few minutes.',
       'Background Sync Started',
       3
     );
     
-    return { success: true };
+    // Execute the sync
+    syncHistoricalStats(mode, value, includeCurrentBool, priority);
+    
   } catch (error) {
-    // Configuration saved but sync failed
-    Logger.log(`Sync error: ${error}`);
+    Logger.log(`Sync execution error: ${error}`);
     SpreadsheetApp.getActiveSpreadsheet().toast(
       `Sync failed: ${error.message}`,
       'Error',
       5
     );
-    return { success: false, error: error.message };
+  } finally {
+    // Clean up the trigger
+    const triggers = ScriptApp.getProjectTriggers();
+    for (const trigger of triggers) {
+      if (trigger.getHandlerFunction() === 'executePendingSync') {
+        ScriptApp.deleteTrigger(trigger);
+      }
+    }
   }
 }
 
@@ -484,18 +556,28 @@ function updateAllSheets(mode, customValue) {
     } else {
       value = parseInt(historicalYears) || 3;
     }
+
+       // Format mode text for display
+    let modeDisplay = mode;
+    if (mode === 'per_minutes' && customValue) {
+      modeDisplay = `Per ${customValue} Minutes`;
+    } else if (mode === 'per_game') {
+      modeDisplay = 'Per Game';
+    } else if (mode === 'totals') {
+      modeDisplay = 'Totals';
+    }
     
     // Show appropriate message based on whether user is on a team sheet
     if (NBA_TEAMS.hasOwnProperty(activeSheetName)) {
       SpreadsheetApp.getActiveSpreadsheet().toast(
-        `Updating all teams (current + historical) starting with ${activeSheetName}...\nThis will take a few minutes.`,
-        'Full Sync Running',
+        `Updating all teams (current + historical) starting with ${activeSheetName}...`,
+        modeDisplay,
         5
       );
     } else {
       SpreadsheetApp.getActiveSpreadsheet().toast(
-        'Updating all teams (current + historical)...\nThis will take a few minutes.',
-        'Full Sync Running',
+        `Updating all teams (current + historical)...`,
+        modeDisplay,
         5
       );
     }
