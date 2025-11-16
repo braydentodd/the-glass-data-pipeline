@@ -103,7 +103,6 @@ DB_SCHEMA = {
         team_id INTEGER REFERENCES teams(team_id),
         team_abbreviation VARCHAR(10),
         jersey_number VARCHAR(10),
-        position VARCHAR(10),
         height_inches INTEGER,
         weight_pounds INTEGER,
         wingspan_inches INTEGER,
