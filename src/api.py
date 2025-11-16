@@ -256,6 +256,8 @@ def calculate_stats():
                 s.fg3a,
                 s.ftm,
                 s.fta,
+                s.oreb,
+                s.dreb,
                 s.off_reb_pct_x1000::float / 1000 AS oreb_pct,
                 s.def_reb_pct_x1000::float / 1000 AS dreb_pct,
                 s.assists,

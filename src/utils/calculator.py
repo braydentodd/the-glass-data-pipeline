@@ -73,6 +73,8 @@ class StatCalculator:
             'ft_pct': self.ft_pct,
             'assists': self.stats.get('assists', 0),
             'turnovers': self.stats.get('turnovers', 0),
+            'oreb': self.stats.get('oreb', 0),
+            'dreb': self.stats.get('dreb', 0),
             'oreb_pct': self.stats.get('oreb_pct', 0),
             'dreb_pct': self.stats.get('dreb_pct', 0),
             'steals': self.stats.get('steals', 0),
@@ -91,7 +93,7 @@ class StatCalculator:
         # Divide counting stats by games
         counting_stats = ['minutes', 'points', 'fg2a', 'fg2m', 'fg3a', 'fg3m', 
                          'fta', 'ftm', 'assists', 'turnovers', 
-                         'steals', 'blocks', 'fouls']
+                         'oreb', 'dreb', 'steals', 'blocks', 'fouls']
         
         for stat in counting_stats:
             per_game[stat] = round(totals[stat] / self.games, 1)
@@ -118,7 +120,7 @@ class StatCalculator:
         # Scale counting stats to per 100 possessions
         counting_stats = ['points', 'fg2a', 'fg2m', 'fg3a', 'fg3m', 
                          'fta', 'ftm', 'assists', 'turnovers', 
-                         'steals', 'blocks', 'fouls']
+                         'oreb', 'dreb', 'steals', 'blocks', 'fouls']
         
         scale_factor = 100.0 / self.possessions
         
@@ -150,7 +152,7 @@ class StatCalculator:
         # Scale counting stats to per 36 minutes
         counting_stats = ['points', 'fg2a', 'fg2m', 'fg3a', 'fg3m', 
                          'fta', 'ftm', 'assists', 'turnovers', 
-                         'steals', 'blocks', 'fouls']
+                         'oreb', 'dreb', 'steals', 'blocks', 'fouls']
         
         scale_factor = 36.0 / self.minutes
         
@@ -186,7 +188,7 @@ class StatCalculator:
         
         counting_stats = ['points', 'fg2a', 'fg2m', 'fg3a', 'fg3m', 
                          'fta', 'ftm', 'assists', 'turnovers', 
-                         'steals', 'blocks', 'fouls']
+                         'oreb', 'dreb', 'steals', 'blocks', 'fouls']
         
         scale_factor = minutes / self.minutes
         
@@ -220,7 +222,7 @@ class StatCalculator:
         
         counting_stats = ['points', 'fg2a', 'fg2m', 'fg3a', 'fg3m', 
                          'fta', 'ftm', 'assists', 'turnovers', 
-                         'steals', 'blocks', 'fouls']
+                         'oreb', 'dreb', 'steals', 'blocks', 'fouls']
         
         scale_factor = possessions / self.possessions
         
