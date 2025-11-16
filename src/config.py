@@ -269,7 +269,7 @@ NBA_CONFIG = {
     'current_season_year': get_current_season_year(),
     'current_season': get_current_season(),
     'season_type': int(os.getenv('SEASON_TYPE', '1')),  # 1 = Regular Season, 2 = Playoffs
-    'api_rate_limit_delay': float(os.getenv('API_RATE_LIMIT_DELAY', '3.0')),  # seconds between API calls
+    'api_rate_limit_delay': float(os.getenv('API_RATE_LIMIT_DELAY', '0.6')),  # seconds between API calls
 }
 
 # Team IDs for API calls
