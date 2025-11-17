@@ -92,6 +92,8 @@ def fetch_all_players_data(conn):
         s.fg2m, s.fg2a,
         s.fg3m, s.fg3a,
         s.ftm, s.fta,
+        s.off_rebounds,
+        s.def_rebounds,
         s.off_reb_pct_x1000::float / 1000 AS oreb_pct,
         s.def_reb_pct_x1000::float / 1000 AS dreb_pct,
         s.assists,
@@ -164,6 +166,8 @@ def fetch_historical_players_data(conn, past_years=3, include_current=False, spe
         SUM(s.fg3a) AS fg3a,
         SUM(s.ftm) AS ftm, 
         SUM(s.fta) AS fta,
+        SUM(s.off_rebounds) AS off_rebounds,
+        SUM(s.def_rebounds) AS def_rebounds,
         -- Weighted average for rebounding percentages
         SUM(s.off_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS oreb_pct,
         SUM(s.def_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS dreb_pct,
@@ -290,10 +294,9 @@ def calculate_totals_stats(player):
     fg3_pct = ((player.get('fg3m', 0) or 0) / (player.get('fg3a', 0) or 1)) if player.get('fg3a', 0) else 0
     ft_pct = ((player.get('ftm', 0) or 0) / (player.get('fta', 0) or 1)) if player.get('fta', 0) else 0
     
-    # For totals, OR% and DR% become ORS and DRS (rating shares)
-    minutes_total = player.get('minutes_total', 0) or 1
-    ors = (player.get('oreb_pct', 0) or 0) * minutes_total
-    drs = (player.get('dreb_pct', 0) or 0) * minutes_total
+    # For totals, OR% and DR% become ORS and DRS (actual rebound counts)
+    ors = player.get('off_rebounds', 0) or 0
+    drs = player.get('def_rebounds', 0) or 0
     
     return {
         'games': player.get('games_played', 0),
@@ -580,6 +583,87 @@ def format_height(inches):
     feet = inches // 12
     remaining_inches = inches % 12
     return f'{feet}\'{remaining_inches}"'
+
+def parse_sheet_config(worksheet):
+    """
+    Parse existing sheet configuration from header row to preserve user settings.
+    Returns: (stats_mode, custom_value, historical_config)
+    
+    historical_config contains: (past_years, include_current, specific_seasons)
+    """
+    try:
+        # Get first row to check headers
+        header_row = worksheet.row_values(1)
+        if len(header_row) < 26:  # Not enough columns
+            return None, None, None
+        
+        # Parse stats mode from current stats header (column I, index 8)
+        current_stats_header = header_row[8] if len(header_row) > 8 else ""
+        
+        stats_mode = 'per_36'  # default
+        custom_value = None
+        
+        if 'Totals' in current_stats_header:
+            stats_mode = 'totals'
+        elif 'Per Game' in current_stats_header:
+            stats_mode = 'per_game'
+        elif 'Per' in current_stats_header and 'Mins' in current_stats_header:
+            # Extract number from "Per XX Mins"
+            import re
+            match = re.search(r'Per (\d+) Mins', current_stats_header)
+            if match:
+                custom_value = match.group(1)
+                if custom_value == '36':
+                    stats_mode = 'per_36'
+                else:
+                    stats_mode = 'per_minutes'
+        
+        # Parse historical config from historical stats header (column Z, index 25)
+        historical_header = header_row[25] if len(header_row) > 25 else ""
+        
+        past_years = 3  # default
+        include_current = False
+        specific_seasons = None
+        
+        if 'Career' in historical_header:
+            past_years = 25
+            include_current = 'prev' not in historical_header
+        elif 'prev' in historical_header:
+            # Try to extract number of years (e.g., "prev 3 season stats")
+            import re
+            match = re.search(r'prev (\d+) season', historical_header)
+            if match:
+                past_years = int(match.group(1))
+            include_current = False
+        elif 'last' in historical_header:
+            # e.g., "last 5 season stats"
+            import re
+            match = re.search(r'last (\d+) season', historical_header)
+            if match:
+                past_years = int(match.group(1))
+            include_current = True
+        elif 'since' in historical_header:
+            # Specific season format - e.g., "prev season stats per 36 mins since 22-23"
+            import re
+            # Match season format like "22-23" or "2022-23"
+            seasons_match = re.findall(r'(\d{2,4})-(\d{2})', historical_header)
+            if seasons_match:
+                specific_seasons = []
+                for start, end in seasons_match:
+                    # Convert to 4-digit year
+                    if len(start) == 2:
+                        year = 2000 + int(end)
+                    else:
+                        year = int(start) + 1
+                    specific_seasons.append(year)
+                include_current = 'prev' not in historical_header
+        
+        log(f"Parsed sheet config: mode={stats_mode}, custom={custom_value}, years={past_years}, include_current={include_current}, seasons={specific_seasons}")
+        return stats_mode, custom_value, (past_years, include_current, specific_seasons)
+        
+    except Exception as e:
+        log(f"Could not parse sheet config: {e}")
+        return None, None, None
 
 def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, past_years=3, stats_mode='per_36', stats_custom_value=None, specific_seasons=None, include_current=False):
     """Create/update a team sheet with formatting and color coding (including historical stats)"""
@@ -1577,41 +1661,7 @@ def main():
     
     log(f"✅ Fetched historical data for {len(historical_players)} players")
     
-    # Calculate percentiles for current season
-    log(f"Calculating percentiles across all players (current season) using mode: {stats_mode}...")
-    percentiles, players_with_stats = calculate_percentiles(all_players, stats_mode, stats_custom_value)
-    log("✅ Current season percentiles calculated")
-    
-    # Calculate percentiles for historical data
-    log(f"Calculating percentiles for historical data using mode: {stats_mode}...")
-    historical_percentiles, historical_players_with_stats = calculate_historical_percentiles(historical_players, stats_mode, stats_custom_value)
-    log("✅ Historical percentiles calculated")
-    
     conn.close()
-    
-    # Group ALL players by team (including those without stats)
-    teams_data = {}
-    for player in all_players:
-        team_abbr = player['team_abbr']
-        if team_abbr not in teams_data:
-            teams_data[team_abbr] = []
-        
-        # Add calculated stats to player if they have stats
-        for p_with_stats in players_with_stats:
-            if p_with_stats['player_id'] == player['player_id']:
-                player['calculated_stats'] = p_with_stats.get('calculated_stats', {})
-                player['per100'] = p_with_stats.get('per100', {})
-                break
-        
-        # Add historical stats to player if they exist
-        for hist_player in historical_players_with_stats:
-            if hist_player['player_id'] == player['player_id']:
-                player['historical_calculated_stats'] = hist_player.get('calculated_stats', {})
-                player['historical_per100'] = hist_player.get('per100', {})
-                player['seasons_played'] = hist_player.get('seasons_played', 0)
-                break
-        
-        teams_data[team_abbr].append(player)
     
     # Connect to Google Sheets
     spreadsheet_name = GOOGLE_SHEETS_CONFIG['spreadsheet_name']
@@ -1627,8 +1677,70 @@ def main():
         log(f"❌ Error connecting to Google Sheets: {e}")
         return False
     
+    # Read configuration from the first sheet (or use env vars/defaults)
+    # This ensures all sheets use the same configuration
+    first_sheet = spreadsheet.get_worksheet(0)
+    existing_mode, existing_custom, existing_historical = parse_sheet_config(first_sheet)
+    
+    # Use existing config if available, otherwise use environment/defaults
+    final_stats_mode = existing_mode if existing_mode else stats_mode
+    final_custom_value = existing_custom if existing_custom else stats_custom_value
+    
+    if existing_historical:
+        final_past_years, final_include_current, final_specific_seasons = existing_historical
+    else:
+        final_past_years = past_years
+        final_include_current = include_current
+        final_specific_seasons = specific_seasons
+    
+    log(f"Using configuration for all sheets: mode={final_stats_mode}, years={final_past_years}, include_current={final_include_current}")
+    
+    # Re-fetch historical data if needed based on first sheet's config
+    conn = psycopg2.connect(
+        host=DB_CONFIG['host'],
+        database=DB_CONFIG['database'],
+        user=DB_CONFIG['user'],
+        password=DB_CONFIG['password']
+    )
+    
+    if final_specific_seasons:
+        historical_players = fetch_historical_players_data(conn, specific_seasons=final_specific_seasons)
+    else:
+        historical_players = fetch_historical_players_data(conn, final_past_years, final_include_current)
+    
+    conn.close()
+    
+    # Calculate percentiles once for all sheets using the same configuration
+    log(f"Calculating percentiles using mode: {final_stats_mode}...")
+    percentiles, players_with_stats = calculate_percentiles(all_players, final_stats_mode, final_custom_value)
+    historical_percentiles, historical_players_with_stats = calculate_historical_percentiles(historical_players, final_stats_mode, final_custom_value)
+    log("✅ Percentiles calculated")
+    
+    # Group players by team and add calculated stats
+    teams_data = {}
+    for player in all_players:
+        team_abbr = player['team_abbr']
+        if team_abbr not in teams_data:
+            teams_data[team_abbr] = []
+        
+        # Add current season calculated stats
+        for p_with_stats in players_with_stats:
+            if p_with_stats['player_id'] == player['player_id']:
+                player['calculated_stats'] = p_with_stats.get('calculated_stats', {})
+                player['per100'] = p_with_stats.get('per100', {})
+                break
+        
+        # Add historical stats
+        for hist_player in historical_players_with_stats:
+            if hist_player['player_id'] == player['player_id']:
+                player['historical_calculated_stats'] = hist_player.get('calculated_stats', {})
+                player['historical_per100'] = hist_player.get('per100', {})
+                player['seasons_played'] = hist_player.get('seasons_played', 0)
+                break
+        
+        teams_data[team_abbr].append(player)
+    
     # Create/update sheets for each team
-    # Process each team completely (current + historical) before moving to next
     # Check if there's a priority team to process first
     priority_team = os.environ.get('PRIORITY_TEAM_ABBR')
     
@@ -1656,8 +1768,8 @@ def main():
         except gspread.WorksheetNotFound:
             worksheet = spreadsheet.add_worksheet(title=team_abbr, rows=100, cols=30)
         
-        log(f"Updating {team_name} ({team_abbr}) - both current and historical stats...")
-        create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, past_years, stats_mode, stats_custom_value, specific_seasons, include_current)
+        log(f"Updating {team_name} ({team_abbr})...")
+        create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, final_past_years, final_stats_mode, final_custom_value, final_specific_seasons, final_include_current)
         log(f"✅ {team_name} complete")
         
         # Add a 5-second delay after each team to avoid rate limits
