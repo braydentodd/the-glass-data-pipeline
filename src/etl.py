@@ -945,8 +945,24 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
+    # Check for environment variables if args not provided (for GitHub Actions)
+    backfill_start = args.backfill
+    backfill_end = args.end
+    
+    if not backfill_start and os.getenv('BACKFILL_START_YEAR'):
+        try:
+            backfill_start = int(os.getenv('BACKFILL_START_YEAR'))
+        except (ValueError, TypeError):
+            pass
+    
+    if not backfill_end and os.getenv('BACKFILL_END_YEAR'):
+        try:
+            backfill_end = int(os.getenv('BACKFILL_END_YEAR'))
+        except (ValueError, TypeError):
+            pass
+    
     run_nightly_etl(
-        backfill_start=args.backfill,
-        backfill_end=args.end,
+        backfill_start=backfill_start,
+        backfill_end=backfill_end,
         check_missing=not args.no_check
     )
