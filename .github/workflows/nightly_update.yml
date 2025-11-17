@@ -75,13 +75,17 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
       
+      - name: Create Google credentials file
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_FILE }}' > google-credentials.json
+      
       - name: Sync to Google Sheets
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_NAME: ${{ secrets.DB_NAME }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_FILE }}
+          GOOGLE_CREDENTIALS_FILE: google-credentials.json
           GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
           PYTHONUNBUFFERED: "1"
         run: |

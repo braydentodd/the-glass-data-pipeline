@@ -104,7 +104,7 @@ DB_SCHEMA = {
         team_abbreviation VARCHAR(10),
         jersey_number VARCHAR(10),
         height_inches INTEGER,
-        weight_pounds INTEGER,
+        weight_lbs INTEGER,
         wingspan_inches INTEGER,
         birthdate DATE,
         country VARCHAR(100),

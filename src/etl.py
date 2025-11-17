@@ -235,7 +235,7 @@ def update_player_rosters(include_deep_details=True):
                 if include_deep_details and 'birthdate' in player_data:
                     cursor.execute("""
                         UPDATE players SET
-                            team_id = %s, jersey_number = %s, weight_pounds = %s,
+                            team_id = %s, jersey_number = %s, weight_lbs = %s,
                             birthdate = %s, country = %s, draft_year = %s,
                             draft_round = %s, draft_number = %s, school = %s,
                             updated_at = NOW()
@@ -264,7 +264,7 @@ def update_player_rosters(include_deep_details=True):
                     cursor.execute("""
                         INSERT INTO players (
                             player_id, name, team_id, team_abbreviation, jersey_number,
-                            weight_pounds, birthdate, country,
+                            weight_lbs, birthdate, country,
                             draft_year, draft_round, draft_number, school
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
