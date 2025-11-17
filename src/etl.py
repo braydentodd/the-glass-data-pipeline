@@ -209,12 +209,9 @@ def update_player_rosters(include_deep_details=True):
                     pd = player_df.iloc[0]
                     all_players[player_id].update({
                         'birthdate': parse_birthdate(pd.get('BIRTHDATE')),
-                        'country': safe_str(pd.get('COUNTRY')),
-                        'height': safe_int(pd.get('HEIGHT')),
-                        'draft_year': safe_int(pd.get('DRAFT_YEAR')),
-                        'draft_round': safe_int(pd.get('DRAFT_ROUND')),
-                        'draft_number': safe_int(pd.get('DRAFT_NUMBER')),
-                        'school': safe_str(pd.get('SCHOOL'))
+                        'height': safe_int(pd.get('HEIGHT')),  # Height in inches
+                        'years_experience': safe_int(pd.get('SEASON_EXP')),  # Years of experience
+                        'pre_nba_team': safe_str(pd.get('SCHOOL'))  # College/pre-NBA team
                     })
                 
                 # Log every 10 players to show progress
@@ -235,17 +232,16 @@ def update_player_rosters(include_deep_details=True):
                 if include_deep_details and 'birthdate' in player_data:
                     cursor.execute("""
                         UPDATE players SET
-                            team_id = %s, jersey_number = %s, weight_lbs = %s,
-                            birthdate = %s, country = %s, draft_year = %s,
-                            draft_round = %s, draft_number = %s, school = %s,
+                            team_id = %s, jersey_number = %s, 
+                            weight_lbs = %s, height_inches = %s, wingspan_inches = %s,
+                            years_experience = %s, pre_nba_team = %s, birthdate = %s, 
                             updated_at = NOW()
                         WHERE player_id = %s
                     """, (
                         player_data['team_id'], player_data['jersey'],
-                        player_data.get('weight'),
-                        player_data.get('birthdate'), player_data.get('country'),
-                        player_data.get('draft_year'), player_data.get('draft_round'),
-                        player_data.get('draft_number'), player_data.get('school'),
+                        player_data.get('weight'), player_data.get('height'), player_data.get('wingspan'),
+                        player_data.get('years_experience'), player_data.get('pre_nba_team'),
+                        player_data.get('birthdate'),
                         player_id
                     ))
                 else:
@@ -263,16 +259,16 @@ def update_player_rosters(include_deep_details=True):
                 if include_deep_details and 'birthdate' in player_data:
                     cursor.execute("""
                         INSERT INTO players (
-                            player_id, name, team_id, team_abbreviation, jersey_number,
-                            weight_lbs, birthdate, country,
-                            draft_year, draft_round, draft_number, school
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            player_id, name, team_id, jersey_number,
+                            weight_lbs, height_inches, wingspan_inches,
+                            years_experience, pre_nba_team, birthdate
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        player_id, player_data['name'], player_data['team_id'], None,
+                        player_id, player_data['name'], player_data['team_id'],
                         player_data['jersey'], player_data.get('weight'),
-                        player_data.get('birthdate'), player_data.get('country'),
-                        player_data.get('draft_year'), player_data.get('draft_round'),
-                        player_data.get('draft_number'), player_data.get('school')
+                        player_data.get('height'), player_data.get('wingspan'),
+                        player_data.get('years_experience'), player_data.get('pre_nba_team'),
+                        player_data.get('birthdate')
                     ))
                 else:
                     cursor.execute("""

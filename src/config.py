@@ -99,22 +99,20 @@ DB_SCHEMA = {
     -- Players table
     CREATE TABLE IF NOT EXISTS players (
         player_id INTEGER PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
+        name VARCHAR(50),
         team_id INTEGER REFERENCES teams(team_id),
-        team_abbreviation VARCHAR(10),
-        jersey_number VARCHAR(10),
+        jersey_number VARCHAR(3),
         height_inches INTEGER,
         weight_lbs INTEGER,
         wingspan_inches INTEGER,
+        years_experience INTEGER,
+        pre_nba_team VARCHAR(100),
+        contract_summary TEXT,
         birthdate DATE,
-        country VARCHAR(100),
-        draft_year INTEGER,
-        draft_round INTEGER,
-        draft_number INTEGER,
-        school VARCHAR(255),
+        skin_color VARCHAR(15),
         notes TEXT,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     
     -- Player season stats table
