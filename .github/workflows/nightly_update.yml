@@ -10,6 +10,14 @@ on:
         description: 'Reason for manual run'
         required: false
         default: 'Manual trigger'
+      backfill_start_year:
+        description: 'Backfill start year (optional, e.g. 2020)'
+        required: false
+        default: ''
+      backfill_end_year:
+        description: 'Backfill end year (optional, e.g. 2024)'
+        required: false
+        default: ''
 
 jobs:
   # Job 1: Update database with latest NBA data
@@ -34,6 +42,8 @@ jobs:
         DB_NAME: ${{ secrets.DB_NAME }}
         DB_USER: ${{ secrets.DB_USER }}
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        BACKFILL_START_YEAR: ${{ github.event.inputs.backfill_start_year }}
+        BACKFILL_END_YEAR: ${{ github.event.inputs.backfill_end_year }}
         PYTHONUNBUFFERED: "1"
       run: |
         source venv/bin/activate
@@ -67,6 +77,10 @@ jobs:
       
       - name: Sync to Google Sheets
         env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_FILE }}
           GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
           PYTHONUNBUFFERED: "1"
