@@ -478,6 +478,7 @@ def update_team_stats():
     season_types = [
         ('Regular Season', 1),
         ('Playoffs', 2),
+        ('PlayIn', 3),
     ]
     
     total_updated = 0
@@ -685,6 +686,7 @@ def backfill_historical_stats(start_year, end_year=None):
     season_types = [
         ('Regular Season', 1),
         ('Playoffs', 2),
+        ('PlayIn', 3),
     ]
     
     for year in range(start_year, end_year + 1):
