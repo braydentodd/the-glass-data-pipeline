@@ -317,11 +317,6 @@ def update_player_stats():
     total_updated = 0
     
     for season_type_name, season_type_code in season_types:
-        # Check if data already exists
-        if season_exists(cursor, current_year, season_type_code):
-            log(f"⚠ {season_type_name} data already exists for {current_year}, skipping to avoid duplicates")
-            continue
-        
         try:
             # Fetch basic stats
             stats = leaguedashplayerstats.LeagueDashPlayerStats(
