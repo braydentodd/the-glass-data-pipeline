@@ -3,6 +3,9 @@ Flask API for interactive NBA stat calculations
 Provides endpoints for switching between stat modes (totals, per-game, per-100, etc.)
 """
 
+import sys
+import os
+import subprocess
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
@@ -96,9 +99,6 @@ def sync_historical_stats():
         "include_current": true|false
     }
     """
-    import subprocess
-    import os
-    
     try:
         data = request.json
         mode = data.get('mode', 'years')
@@ -107,13 +107,21 @@ def sync_historical_stats():
         include_current = data.get('include_current', False)
         stats_mode = data.get('stats_mode', 'per_36')  # Get stats mode from request
         stats_custom_value = data.get('stats_custom_value')  # Get custom value if present
+        show_percentiles = data.get('show_percentiles', False)  # Get percentile preference
         priority_team = data.get('priority_team')  # Optional: team to process first
+        sync_section = data.get('sync_section')  # Optional: 'historical', 'postseason', or None for full sync (default: None)
         
         # Build environment variables for sync script
         env = os.environ.copy()
         env['HISTORICAL_MODE'] = mode
         env['INCLUDE_CURRENT_YEAR'] = 'true' if include_current else 'false'
         env['STATS_MODE'] = stats_mode  # Pass stats mode to sync script
+        env['SHOW_PERCENTILES'] = 'true' if show_percentiles else 'false'
+        
+        # Only set SYNC_SECTION if explicitly requested (for partial syncs)
+        # If not set, Python script will do a FULL sync (current + historical + postseason)
+        if sync_section:
+            env['SYNC_SECTION'] = sync_section
         
         if stats_custom_value:
             env['STATS_CUSTOM_VALUE'] = str(stats_custom_value)
@@ -124,28 +132,32 @@ def sync_historical_stats():
         # Handle both 'season' (singular) and 'seasons' (plural) for compatibility
         if mode == 'season' or mode == 'seasons':
             env['HISTORICAL_MODE'] = 'seasons'  # Normalize to plural
-            env['HISTORICAL_SEASONS'] = ','.join(seasons)
+            env['HISTORICAL_SEASONS'] = ','.join(str(s) for s in seasons)  # Convert all to strings
         else:
             env['HISTORICAL_YEARS'] = str(years)
         
         # Get the project root directory
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        # Path to sync_sheets.sh script (should be in project root)
-        sync_script = os.path.join(project_root, 'sync_sheets.sh')
+        # Build command arguments - run as module to ensure imports work
+        cmd = [sys.executable, '-m', 'src.sheets_sync']
+        
+        # Add priority team as first argument if specified
+        if priority_team:
+            cmd.append(priority_team.upper())
         
         # Ensure DB_PASSWORD is in environment (required by sync script)
         if 'DB_PASSWORD' not in env:
             env['DB_PASSWORD'] = os.environ.get('DB_PASSWORD', '')
         
-        # Run the sync_sheets.sh script with bash
+        # Run the sheets_sync module
         result = subprocess.run(
-            ['bash', sync_script],
+            cmd,
             capture_output=True,
             text=True,
             cwd=project_root,
             env=env,
-            timeout=300  # 5 minute timeout
+            timeout=600  # Increased to 10 minutes for all 30 teams
         )
         
         if result.returncode == 0:
@@ -157,19 +169,119 @@ def sync_historical_stats():
             # Get detailed error information
             error_msg = f"Sync failed (exit code {result.returncode})"
             if result.stderr:
-                error_msg += f": {result.stderr[:500]}"  # First 500 chars
+                error_msg += f": {result.stderr[:1000]}"  # First 1000 chars
             
             return jsonify({
                 'success': False,
                 'error': error_msg,
-                'stderr': result.stderr[:1000] if result.stderr else '',
-                'stdout': result.stdout[:1000] if result.stdout else ''
+                'stderr': result.stderr[:3000] if result.stderr else '',
+                'stdout': result.stdout[:3000] if result.stdout else ''
             }), 500
             
     except subprocess.TimeoutExpired:
         return jsonify({
             'success': False,
             'error': 'Sync timed out after 5 minutes'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/sync-postseason-stats', methods=['POST'])
+@app.route('/api/sync-playoff-stats', methods=['POST'])  # Backward compatibility alias
+def sync_postseason_stats():
+    """
+    Trigger postseason stats sync (playoffs + play-in) with configuration from Apps Script.
+    
+    Request body:
+    {
+        "mode": "years"|"seasons"|"career",
+        "years": 3,  // for years mode
+        "seasons": ["2024-25", "2023-24"],  // for seasons mode
+        "stats_mode": "per_36",
+        "stats_custom_value": 75,  // optional
+        "show_percentiles": true|false
+    }
+    """
+    try:
+        data = request.json
+        mode = data.get('mode', 'career')
+        years = data.get('years', 25)
+        seasons = data.get('seasons', [])
+        stats_mode = data.get('stats_mode', 'per_36')
+        stats_custom_value = data.get('stats_custom_value')
+        show_percentiles = data.get('show_percentiles', False)
+        priority_team = data.get('priority_team')
+        
+        # Build environment variables for sync script
+        env = os.environ.copy()
+        env['HISTORICAL_MODE'] = mode
+        env['INCLUDE_CURRENT_YEAR'] = 'false'  # Postseason never includes current
+        env['STATS_MODE'] = stats_mode
+        env['SEASON_TYPE'] = '2,3'  # 2 = Playoffs, 3 = Play-in
+        env['SHOW_PERCENTILES'] = 'true' if show_percentiles else 'false'
+        env['SYNC_SECTION'] = 'postseason'  # Tell sync script to write to postseason columns
+        
+        if stats_custom_value:
+            env['STATS_CUSTOM_VALUE'] = str(stats_custom_value)
+        
+        if priority_team:
+            env['PRIORITY_TEAM_ABBR'] = priority_team.upper()
+        
+        # Handle both 'season' (singular) and 'seasons' (plural)
+        if mode == 'season' or mode == 'seasons':
+            env['HISTORICAL_MODE'] = 'seasons'
+            env['HISTORICAL_SEASONS'] = ','.join(str(s) for s in seasons)  # Convert all to strings
+        else:
+            env['HISTORICAL_YEARS'] = str(years)
+        
+        # Get the project root directory
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        # Build command arguments
+        cmd = [sys.executable, '-m', 'src.sheets_sync']
+        
+        if priority_team:
+            cmd.append(priority_team.upper())
+        
+        # Ensure DB_PASSWORD is in environment
+        if 'DB_PASSWORD' not in env:
+            env['DB_PASSWORD'] = os.environ.get('DB_PASSWORD', '')
+        
+        # Run the sheets_sync module
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            env=env,
+            timeout=600
+        )
+        
+        if result.returncode == 0:
+            return jsonify({
+                'success': True,
+                'message': 'Postseason stats synced successfully'
+            })
+        else:
+            error_msg = f"Sync failed (exit code {result.returncode})"
+            if result.stderr:
+                error_msg += f": {result.stderr[:1000]}"
+            
+            return jsonify({
+                'success': False,
+                'error': error_msg,
+                'stderr': result.stderr[:3000] if result.stderr else '',
+                'stdout': result.stdout[:3000] if result.stdout else ''
+            }), 500
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'error': 'Sync timed out after 10 minutes'
         }), 500
     except Exception as e:
         return jsonify({
@@ -509,44 +621,8 @@ def get_config():
     Provide client configuration for Apps Script.
     Returns configuration values from centralized config.py
     """
-    from src.config import (
-        SERVER_CONFIG, 
-        GOOGLE_SHEETS_CONFIG, 
-        STAT_COLUMNS,
-        REVERSE_STATS,
-        SHEET_FORMAT
-    )
-    
-    # Team abbreviation to ID mapping for Apps Script
-    team_abbr_to_id = {
-        'ATL': 1610612737, 'BOS': 1610612738, 'BKN': 1610612751, 'CHA': 1610612766,
-        'CHI': 1610612741, 'CLE': 1610612739, 'DAL': 1610612742, 'DEN': 1610612743,
-        'DET': 1610612765, 'GSW': 1610612744, 'HOU': 1610612745, 'IND': 1610612754,
-        'LAC': 1610612746, 'LAL': 1610612747, 'MEM': 1610612763, 'MIA': 1610612748,
-        'MIL': 1610612749, 'MIN': 1610612750, 'NOP': 1610612740, 'NYK': 1610612752,
-        'OKC': 1610612760, 'ORL': 1610612753, 'PHI': 1610612755, 'PHX': 1610612756,
-        'POR': 1610612757, 'SAC': 1610612758, 'SAS': 1610612759, 'TOR': 1610612761,
-        'UTA': 1610612762, 'WAS': 1610612764
-    }
-    
-    return jsonify({
-        'api_base_url': f"http://{SERVER_CONFIG['production_host']}:{SERVER_CONFIG['production_port']}",
-        'sheet_id': GOOGLE_SHEETS_CONFIG['spreadsheet_id'],
-        'nba_teams': team_abbr_to_id,
-        'stat_columns': STAT_COLUMNS,
-        'reverse_stats': list(REVERSE_STATS),
-        'column_indices': {
-            'wingspan': 6,  # Column F
-            'notes': 8,     # Column H
-            'player_id': SHEET_FORMAT['total_columns'],  # Column AR (44)
-            'stats_start': 9  # Column I
-        },
-        'colors': {
-            'red': {'r': 238, 'g': 75, 'b': 43},
-            'yellow': {'r': 252, 'g': 245, 'b': 95},
-            'green': {'r': 76, 'g': 187, 'b': 23}
-        }
-    })
+    from src.config import get_config_for_apps_script
+    return jsonify(get_config_for_apps_script())
 
 
 if __name__ == '__main__':
