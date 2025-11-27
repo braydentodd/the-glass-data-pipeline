@@ -284,33 +284,26 @@
           return;
         }
         
-        // Disable button and show loading
+        // Disable button to show we're processing
         applyBtn.disabled = true;
         applyBtn.textContent = 'Applying...';
-        errorDiv.style.display = 'none';
         
         // Call the server-side function with both input and checkbox state
         google.script.run
-          .withSuccessHandler(function(response) {
-            if (response.success) {
-              // Close dialog immediately - sync is running in background
-              google.script.host.close();
-              // Note: The success toast will be shown by the Apps Script after closing
-            } else {
-              // Show error
-              errorDiv.textContent = response.error;
-              errorDiv.style.display = 'block';
-              applyBtn.disabled = false;
-              applyBtn.textContent = 'Apply';
-            }
-          })
           .withFailureHandler(function(error) {
+            // Only show error if it happens before dialog closes
             errorDiv.textContent = 'Error: ' + error.message;
             errorDiv.style.display = 'block';
             applyBtn.disabled = false;
             applyBtn.textContent = 'Apply';
           })
           .saveHistoricalStatsConfig(input, includeCurrentYear);
+        
+        // Close dialog after brief delay to ensure request is sent
+        // User can continue working while sync runs in background
+        setTimeout(function() {
+          google.script.host.close();
+        }, 250);
       }
     </script>
   </body>

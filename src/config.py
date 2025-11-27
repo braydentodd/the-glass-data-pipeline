@@ -262,10 +262,17 @@ def get_current_season():
     year = get_current_season_year()
     return f"{year-1}-{str(year)[2:]}"
 
+def get_season_type_from_env():
+    """Parse SEASON_TYPE from environment - handles comma-separated values for postseason (2,3)"""
+    season_type_str = os.getenv('SEASON_TYPE', '1')
+    # If comma-separated (e.g., '2,3'), return the first value as int
+    # Otherwise just return the single value as int
+    return int(season_type_str.split(',')[0].strip())
+
 NBA_CONFIG = {
     'current_season_year': get_current_season_year(),
     'current_season': get_current_season(),
-    'season_type': int(os.getenv('SEASON_TYPE', '1')),  # 1 = Regular Season, 2 = Playoffs
+    'season_type': get_season_type_from_env(),  # 1 = Regular Season, 2 = Playoffs
     'api_rate_limit_delay': float(os.getenv('API_RATE_LIMIT_DELAY', '0.6')),  # seconds between API calls
 }
 
@@ -421,11 +428,237 @@ HISTORICAL_STAT_COLUMNS = {
     'fouls': 42,       # Column AQ (Fls) - reversed (lower is better)
 }
 
+# Postseason stat columns (same structure as historical, different column range)
+# Includes both playoffs (season_type=2) and play-in games (season_type=3)
+POSTSEASON_STAT_COLUMNS = {
+    'years': 43,       # Column AR (YRS) - count of postseason seasons played
+    'games': 44,       # Column AS (GMS)
+    'minutes': 45,     # Column AT (Min)
+    'points': 46,      # Column AU (Pts)
+    'ts_pct': 47,      # Column AV (TS%)
+    'fg2a': 48,        # Column AW (2PA)
+    'fg2_pct': 49,     # Column AX (2P%)
+    'fg3a': 50,        # Column AY (3PA)
+    'fg3_pct': 51,     # Column AZ (3P%)
+    'fta': 52,         # Column BA (FTA)
+    'ft_pct': 53,      # Column BB (FT%)
+    'assists': 54,     # Column BC (Ast)
+    'turnovers': 55,   # Column BD (Tov) - reversed (lower is better)
+    'oreb_pct': 56,    # Column BE (OR%)
+    'dreb_pct': 57,    # Column BF (DR%)
+    'steals': 58,      # Column BG (Stl)
+    'blocks': 59,      # Column BH (Blk)
+    'fouls': 60,       # Column BI (Fls) - reversed (lower is better)
+}
+
 # Player ID column - hidden at end after all stats
-PLAYER_ID_COLUMN = 43  # Column AR - hidden player_id for onEdit lookups
+PLAYER_ID_COLUMN = 61  # Column BJ - hidden player_id for onEdit lookups (moved to end after postseason section)
 
 # Stats where lower values are better (will use reversed color scale)
 REVERSE_STATS = {'turnovers', 'fouls'}
+
+# ============================================================================
+# SECTION-BASED CONFIGURATION (CENTRALIZED)
+# ============================================================================
+# This is the single source of truth for all stat sections in the sheets.
+# All column ranges, headers, and behaviors are defined here.
+
+SECTIONS = {
+    'player_info': {
+        'name': 'Player Info',
+        'columns': {
+            'start': 0,  # Column A
+            'end': 8,    # Column H (inclusive)
+            'count': 8
+        },
+        'fields': ['name', 'jersey_number', 'experience', 'age', 'height', 'wingspan', 'weight', 'notes'],
+        'merge_header': True,  # Merge B-G for "Player Info"
+        'merge_range': {'start': 1, 'end': 7},  # Columns B-G (0-indexed: 1-6)
+        'notes_header': True,  # Column H has separate "Notes" header
+        'header_placeholder': '{team_name}',  # Row 1 header (Column A)
+        'player_info_text': 'Player Info',  # Text for merged B-G header
+        'notes_text': 'Notes',  # Text for Column H header
+        'resize_rules': {
+            'name': {'width': 187, 'fixed': True},  # Column A always 187px
+            'jersey_number': {'width': 22, 'fixed': True},  # Column B always 22px
+        },
+        'auto_resize': True,  # Auto-resize other player info columns
+        'auto_resize_start': 2,  # Start from column C (experience)
+        'auto_resize_end': 8,    # End at column H (notes) - inclusive
+    },
+    
+    'current': {
+        'name': 'Current Season Stats',
+        'columns': {
+            'start': 8,   # Column I
+            'end': 24,    # Column Y (index 24, last current stat column)
+            'count': 17
+        },
+        'season_type': 1,  # Regular season
+        'include_current': True,
+        'stats': ['games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct', 
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls'],
+        'merge_header': True,
+        'header_placeholder': '{season}',  # Replaced with "2025-26 Stats Per 36 Mins" by default
+        'default_visible': True,
+        'default_stats_mode': 'per_36',  # Default to per 36 mins
+        'has_percentiles': True,
+        'has_border': True,  # Section has borders on first and last columns
+        'border_config': {
+            'first_column_left': True,   # Left border on first column only
+            'last_column_right': True,   # Right border on last column only
+            'weight': 2,
+            'header_color': 'white',  # Top 2 rows
+            'data_color': 'black',    # Data rows
+        },
+        'resize_rules': {
+            'games': {'width': 25, 'fixed': True},  # Column I (first stat column) - fixed 25px
+        },
+        'auto_resize': True,  # Auto-resize all other columns in this section
+        'auto_resize_start': 9,  # Start auto-resize from column J (after games)
+        'auto_resize_end': 25,   # End at column Y (last current stat)
+    },
+    
+    'historical': {
+        'name': 'Historical Stats',
+        'columns': {
+            'start': 25,  # Column Z
+            'end': 42,    # Column AQ (index 42, last historical stat column)
+            'count': 18   # Includes YRS column
+        },
+        'season_type': 1,  # Regular season
+        'include_current': True,  # Include current season by default
+        'stats': ['years', 'games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls'],
+        'merge_header': True,
+        'header_placeholder': '{historical_years}',  # Replaced with "Career Stats Per 36 Mins" by default
+        'default_visible': True,
+        'default_mode': 'career',  # 'years', 'seasons', or 'career'
+        'default_years': 25,  # For career mode
+        'default_include_current': True,  # Include current season by default
+        'default_stats_mode': 'per_36',  # Default to per 36 mins
+        'has_percentiles': True,
+        'has_border': True,  # Section has borders on first and last columns
+        'border_config': {
+            'first_column_left': True,   # Left border on first column only
+            'last_column_right': True,   # Right border on last column only
+            'weight': 2,
+            'header_color': 'white',  # Top 2 rows
+            'data_color': 'black',    # Data rows
+        },
+        'resize_rules': {
+            'years': {'width': 25, 'fixed': True},  # First column - fixed 25px
+            'games': {'width': 60, 'fixed': False},  # Auto-fit
+            'minutes': {'width': 60, 'fixed': False},
+            'points': {'width': 60, 'fixed': False},
+            'ts_pct': {'width': 60, 'fixed': False},
+            'fg2a': {'width': 60, 'fixed': False},
+            'fg2_pct': {'width': 60, 'fixed': False},
+            'fg3a': {'width': 60, 'fixed': False},
+            'fg3_pct': {'width': 60, 'fixed': False},
+            'fta': {'width': 60, 'fixed': False},
+            'ft_pct': {'width': 60, 'fixed': False},
+            'assists': {'width': 60, 'fixed': False},
+            'turnovers': {'width': 60, 'fixed': False},
+            'oreb_pct': {'width': 60, 'fixed': False},
+            'dreb_pct': {'width': 60, 'fixed': False},
+            'steals': {'width': 60, 'fixed': False},
+            'blocks': {'width': 60, 'fixed': False},
+            'fouls': {'width': 60, 'fixed': False},
+        },
+        'auto_resize': True,  # Auto-resize all columns except YRS
+        'auto_resize_start': 26,  # Start from column AA (first stat after YRS)
+        'auto_resize_end': 43,    # End at column AQ (last historical stat) - inclusive
+    },
+    
+    'postseason': {
+        'name': 'Postseason Stats',
+        'columns': {
+            'start': 43,  # Column AR
+            'end': 60,    # Column BI (index 60, last postseason stat column)
+            'count': 18   # Includes YRS column
+        },
+        'season_type': [2, 3],  # Playoffs (2) + Play-in (3)
+        'include_current': True,  # Include current season postseason by default
+        'stats': ['years', 'games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls'],
+        'merge_header': True,
+        'header_placeholder': '{postseason_years}',  # Replaced with "Postseason Stats Per 36 Mins" by default
+        'default_visible': True,
+        'default_mode': 'career',  # 'years', 'seasons', or 'career'
+        'default_years': 25,  # For career mode
+        'default_include_current': True,  # Include current season by default
+        'default_stats_mode': 'per_36',  # Default to per 36 mins
+        'has_percentiles': True,
+        'has_border': True,  # Section has borders on first and last columns
+        'border_config': {
+            'first_column_left': True,   # Left border on first column only
+            'last_column_right': True,   # Right border on last column only
+            'weight': 2,
+            'header_color': 'white',  # Top 2 rows
+            'data_color': 'black',    # Data rows
+        },
+        'resize_rules': {
+            'years': {'width': 25, 'fixed': True},  # Column AR (first column of postseason section, NOT HIDDEN)
+            'games': {'width': 60, 'fixed': False},  # Auto-fit all postseason columns
+            'minutes': {'width': 60, 'fixed': False},
+            'points': {'width': 60, 'fixed': False},
+            'ts_pct': {'width': 60, 'fixed': False},
+            'fg2a': {'width': 60, 'fixed': False},
+            'fg2_pct': {'width': 60, 'fixed': False},
+            'fg3a': {'width': 60, 'fixed': False},
+            'fg3_pct': {'width': 60, 'fixed': False},
+            'fta': {'width': 60, 'fixed': False},
+            'ft_pct': {'width': 60, 'fixed': False},
+            'assists': {'width': 60, 'fixed': False},
+            'turnovers': {'width': 60, 'fixed': False},
+            'oreb_pct': {'width': 60, 'fixed': False},
+            'dreb_pct': {'width': 60, 'fixed': False},
+            'steals': {'width': 60, 'fixed': False},
+            'blocks': {'width': 60, 'fixed': False},
+            'fouls': {'width': 60, 'fixed': False},
+        },
+        'auto_resize': True,  # Auto-resize all columns except YRS
+        'auto_resize_start': 44,  # Start from column AS (first stat after YRS)
+        'auto_resize_end': 61,    # End at column BI (last postseason stat) - inclusive
+    },
+    
+    'hidden': {
+        'name': 'Hidden Fields',
+        'columns': {
+            'start': 61,  # Column BJ
+            'end': 62,    # Column BJ (inclusive)
+            'count': 1
+        },
+        'fields': ['player_id'],
+        'merge_header': False,
+        'default_visible': False,  # Always hidden
+    }
+}
+
+# Helper function to get column letter from index
+def get_column_letter(index):
+    """Convert 0-based column index to Excel-style letter (0=A, 25=Z, 26=AA, etc.)"""
+    letter = ''
+    index += 1  # Convert to 1-based
+    while index > 0:
+        index -= 1
+        letter = chr(65 + (index % 26)) + letter
+        index //= 26
+    return letter
+
+# Generate column ranges for easy reference
+for section_name, section in SECTIONS.items():
+    if 'columns' in section:
+        cols = section['columns']
+        cols['start_letter'] = get_column_letter(cols['start'])
+        cols['end_letter'] = get_column_letter(cols['end'] - 1)  # end is exclusive
+        cols['range'] = f"{cols['start_letter']}-{cols['end_letter']}"
+
+# Player ID column - hidden at end after all stats
+# Legacy column mappings for backward compatibility
+PLAYOFF_STAT_COLUMNS = POSTSEASON_STAT_COLUMNS  # Alias for backward compatibility
+PLAYER_ID_COLUMN_OLD = 43  # OLD location - keep for migration reference
 
 # For totals mode, use raw rebound counts instead of percentages
 # Maps the percentage key to the raw count key
@@ -488,6 +721,19 @@ COLOR_THRESHOLDS = {
 # SHEET FORMATTING CONFIGURATION
 # ============================================================================
 
+# Default stats mode for all sections
+DEFAULT_STATS_MODE = 'per_36'
+
+# Stats mode display names
+STATS_MODE_DISPLAY = {
+    'totals': 'Totals',
+    'per_game': 'Per Game',
+    'per_36': 'Per 36 Mins',
+    'per_100_poss': 'Per 100 Poss',
+    'per_minutes': 'Per {value} Mins',  # {value} replaced with custom_value
+    'per_possessions': 'Per {value} Poss',  # {value} replaced with custom_value
+}
+
 SHEET_FORMAT = {
     'fonts': {
         'header_primary': {'family': 'Staatliches', 'size': 12, 'bold': True},
@@ -499,15 +745,16 @@ SHEET_FORMAT = {
         'data': {'family': 'Sofia Sans', 'size': 10, 'bold': False},
     },
     'column_widths': {
-        'jersey_number': 22,   # Column B (J#)
-        'games': 25,    # Column I (GMS)
-        'years': 25,    # Column AA (YRS) for historical section
+        'jersey_number': 22,  # Column B - 22px
+        'games': 25,          # Column I (GMS) - first stat column 25px
+        'years': 25,          # Column Z (YRS) and Column AR (playoff YRS) - 25px
     },
     'frozen': {
         'rows': 3,      # Freeze first 3 rows (headers + filter)
         'columns': 1,   # Freeze first column (Name)
     },
-    'total_columns': 44,  # A through AR (AR is hidden player_id)
+    'header_rows': 2,  # Number of header rows (for border config)
+    'total_columns': sum(s['columns']['count'] for s in SECTIONS.values()),  # Calculated from sections
 }
 
 # Default settings for historical stats
@@ -516,26 +763,78 @@ HISTORICAL_STATS_CONFIG = {
     'display_mode': 'values',  # 'values' or 'percentiles'
 }
 
-# Column headers
-HEADERS = {
-    'row_1': [
-        '{team_name}', 'Player Info', '', '', '', '', '', 'Notes',
-        '{season}', '', '', '', '', '', '', '', '',
-        '', '', '', '', '', '', '', '',
-        '{past_years}', '', '', '', '', '', '', '', '',
-        '', '', '', '', '', '', '', '', '', ''
-    ],
-    'row_2': [
-        'Name', 'J#', 'Exp', 'Age', 'Ht', 'W/S', 'Wt',
-        '*Double click cells to expand*',
-        'GMS', 'Min', 'Pts', 'TS%',
-        '2PA', '2P%', '3PA', '3P%', 'FTA', 'FT%',
-        'Ast', 'Tov', 'OR%', 'DR%', 'Stl', 'Blk', 'Fls',
-        'YRS', 'GMS', 'Min', 'Pts', 'TS%',
-        '2PA', '2P%', '3PA', '3P%', 'FTA', 'FT%',
-        'Ast', 'Tov', 'OR%', 'DR%', 'Stl', 'Blk', 'Fls', 'Player ID'
-    ],
-}
+# Column headers - Generated dynamically from SECTIONS
+def generate_headers():
+    """Generate header rows from SECTIONS configuration"""
+    total_cols = SHEET_FORMAT['total_columns']
+    row_1 = [''] * total_cols
+    row_2 = [''] * total_cols
+    
+    for section_name, section in SECTIONS.items():
+        cols = section['columns']
+        start = cols['start']
+        
+        if section_name == 'player_info':
+            # Column A (0): Team name placeholder
+            row_1[start] = section.get('header_placeholder', '')
+            # Columns B-G (1-6): "Player Info" (will be merged)
+            row_1[start + 1] = section.get('player_info_text', 'Player Info')
+            # Column H (7): "Notes"
+            row_1[start + 7] = section.get('notes_text', 'Notes')
+            # Player info sub-headers in row 2
+            row_2[start:start+8] = ['Name', 'J#', 'Exp', 'Age', 'Ht', 'W/S', 'Wt', '*Double click cells to expand*']
+            
+        elif section_name in ['current', 'historical', 'postseason']:
+            # Merged header cell placeholder
+            row_1[start] = section.get('header_placeholder', '')
+            
+            # Stat column headers
+            stat_headers = []
+            for stat in section['stats']:
+                if stat == 'years':
+                    stat_headers.append('YRS')
+                elif stat == 'games':
+                    stat_headers.append('GMS')
+                elif stat == 'minutes':
+                    stat_headers.append('Min')
+                elif stat == 'points':
+                    stat_headers.append('Pts')
+                elif stat == 'ts_pct':
+                    stat_headers.append('TS%')
+                elif stat == 'fg2a':
+                    stat_headers.append('2PA')
+                elif stat == 'fg2_pct':
+                    stat_headers.append('2P%')
+                elif stat == 'fg3a':
+                    stat_headers.append('3PA')
+                elif stat == 'fg3_pct':
+                    stat_headers.append('3P%')
+                elif stat == 'fta':
+                    stat_headers.append('FTA')
+                elif stat == 'ft_pct':
+                    stat_headers.append('FT%')
+                elif stat == 'assists':
+                    stat_headers.append('Ast')
+                elif stat == 'turnovers':
+                    stat_headers.append('Tov')
+                elif stat == 'oreb_pct':
+                    stat_headers.append('OR%')
+                elif stat == 'dreb_pct':
+                    stat_headers.append('DR%')
+                elif stat == 'steals':
+                    stat_headers.append('Stl')
+                elif stat == 'blocks':
+                    stat_headers.append('Blk')
+                elif stat == 'fouls':
+                    stat_headers.append('Fls')
+            row_2[start:start+len(stat_headers)] = stat_headers
+            
+        elif section_name == 'hidden':
+            row_2[start] = 'Player ID'
+    
+    return {'row_1': row_1, 'row_2': row_2}
+
+HEADERS = generate_headers()
 
 # ============================================================================
 # LOGGING CONFIGURATION
@@ -546,3 +845,47 @@ LOGGING_CONFIG = {
     'date_format': '%Y-%m-%d %H:%M:%S',
     'level': os.getenv('LOG_LEVEL', 'INFO'),
 }
+
+# ============================================================================
+# CONFIG EXPORT FOR APPS SCRIPT
+# ============================================================================
+
+def get_config_for_apps_script():
+    """
+    Export configuration in format suitable for Apps Script consumption.
+    This ensures Apps Script and Python stay in sync.
+    """
+    # Convert NBA_TEAMS list of tuples to dictionary for Apps Script
+    nba_teams_dict = {abbr: team_id for abbr, team_id in [(abbr, NBA_TEAMS_BY_ID[[k for k, v in NBA_TEAMS_BY_ID.items() if v == name][0]]) for abbr, name in NBA_TEAMS]}
+    # Simpler: just create abbr->id mapping directly
+    nba_teams_dict = {abbr: [tid for tid, tname in NBA_TEAMS_BY_ID.items() if tname == name][0] for abbr, name in NBA_TEAMS}
+    
+    return {
+        'api_base_url': f"http://{SERVER_CONFIG['production_host']}:{SERVER_CONFIG['production_port']}",
+        'sheet_id': GOOGLE_SHEETS_CONFIG['spreadsheet_id'],
+        'nba_teams': nba_teams_dict,
+        'stat_columns': list(STAT_COLUMNS.keys()),
+        'reverse_stats': list(REVERSE_STATS),
+        'stats_mode_display': STATS_MODE_DISPLAY,
+        'sections': {
+            name: {
+                'name': section['name'],
+                'columns': section['columns'],
+                'default_visible': section.get('default_visible', True),
+                'has_percentiles': section.get('has_percentiles', False),
+                'stats': section.get('stats', []),
+            }
+            for name, section in SECTIONS.items()
+        },
+        'column_indices': {
+            'wingspan': SECTIONS['player_info']['columns']['start'] + 5,  # Column F (W/S)
+            'notes': SECTIONS['player_info']['columns']['start'] + 7,      # Column H (Notes)
+            'player_id': SECTIONS['hidden']['columns']['start'],            # Column BJ (Player ID)
+            'stats_start': SECTIONS['current']['columns']['start'],         # Column I (first stat column)
+        },
+        'colors': {
+            'red': {'r': COLORS['red']['rgb']['red'], 'g': COLORS['red']['rgb']['green'], 'b': COLORS['red']['rgb']['blue']},
+            'yellow': {'r': COLORS['yellow']['rgb']['red'], 'g': COLORS['yellow']['rgb']['green'], 'b': COLORS['yellow']['rgb']['blue']},
+            'green': {'r': COLORS['green']['rgb']['red'], 'g': COLORS['green']['rgb']['green'], 'b': COLORS['green']['rgb']['blue']},
+        },
+    }

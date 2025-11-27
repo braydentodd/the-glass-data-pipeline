@@ -11,13 +11,12 @@ REMOTE_DIR="/home/ubuntu/the-glass-api"
 
 echo "📦 Deploying Flask API to $SERVER..."
 
-# Upload src directory
+# Upload src directory using tar (more reliable than rsync)
 echo "→ Uploading Python code..."
-rsync -av --delete \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
-    --exclude='.git' \
-    ./src/ $SERVER:$REMOTE_DIR/src/
+tar czf /tmp/src.tar.gz --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' ./src/
+scp /tmp/src.tar.gz $SERVER:$REMOTE_DIR/
+ssh $SERVER "cd $REMOTE_DIR && rm -rf src && tar xzf src.tar.gz && rm src.tar.gz"
+rm /tmp/src.tar.gz
 
 # Upload google credentials
 echo "→ Uploading credentials..."

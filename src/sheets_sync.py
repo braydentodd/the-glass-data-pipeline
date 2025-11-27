@@ -19,15 +19,15 @@ from src.config import (
     NBA_TEAMS,
     STAT_COLUMNS,
     HISTORICAL_STAT_COLUMNS,
+    PLAYOFF_STAT_COLUMNS,
     PLAYER_ID_COLUMN,
     REVERSE_STATS,
-    TOTALS_MODE_REPLACEMENTS,
     PERCENTILE_CONFIG,
     COLORS,
     COLOR_THRESHOLDS,
     SHEET_FORMAT,
     HEADERS,
-    HISTORICAL_STATS_CONFIG,
+    SECTIONS,
 )
 
 # Load environment variables
@@ -193,6 +193,81 @@ def fetch_historical_players_data(conn, past_years=3, include_current=False, spe
         rows = cur.fetchall()
     
     return [dict(row) for row in rows]
+
+def fetch_postseason_players_data(conn, past_years=25, specific_seasons=None):
+    """
+    Fetch aggregated postseason stats (season_type IN (2, 3) - playoffs + play-in).
+    Similar to historical stats but specifically for postseason games.
+    
+    Args:
+        conn: Database connection
+        past_years: Number of years to look back (default 25 for career)
+        specific_seasons: List of specific season years to include (e.g., [2023, 2024])
+    
+    Returns player postseason stats aggregated across specified seasons
+    """
+    current_year = NBA_CONFIG['current_season_year']
+    
+    if specific_seasons:
+        # Use specific seasons provided
+        season_filter = "AND s.year IN %s"
+        season_params = (tuple(specific_seasons),)
+        print(f"[POSTSEASON] Using specific seasons: {specific_seasons}")
+    else:
+        # Use year range (postseason never includes current year since postseason hasn't happened yet)
+        start_year = current_year - past_years
+        end_year = current_year  # Exclude current year
+        print(f"[POSTSEASON] Year range: {start_year} to {end_year-1} (current={current_year}, excluded)")
+        
+        season_filter = "AND s.year >= %s AND s.year < %s"
+        season_params = (start_year, end_year)
+    
+    query = f"""
+    SELECT 
+        p.player_id,
+        p.name AS player_name,
+        p.team_id,
+        t.team_abbr,
+        COUNT(DISTINCT s.year) AS seasons_played,
+        SUM(s.games_played) AS games_played,
+        SUM(s.minutes_x10::float) / 10 AS minutes_total,
+        SUM(s.possessions) AS possessions,
+        SUM(s.fg2m) AS fg2m, 
+        SUM(s.fg2a) AS fg2a,
+        SUM(s.fg3m) AS fg3m, 
+        SUM(s.fg3a) AS fg3a,
+        SUM(s.ftm) AS ftm, 
+        SUM(s.fta) AS fta,
+        SUM(s.off_rebounds) AS off_rebounds,
+        SUM(s.def_rebounds) AS def_rebounds,
+        -- Weighted average for rebounding percentages
+        SUM(s.off_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS oreb_pct,
+        SUM(s.def_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS dreb_pct,
+        SUM(s.assists) AS assists,
+        SUM(s.turnovers) AS turnovers,
+        SUM(s.steals) AS steals,
+        SUM(s.blocks) AS blocks,
+        SUM(s.fouls) AS fouls
+    FROM teams t
+    INNER JOIN players p ON p.team_id = t.team_id
+    LEFT JOIN player_season_stats s 
+        ON s.player_id = p.player_id 
+        {season_filter}
+        AND s.season_type IN (2, 3)
+    WHERE p.team_id IS NOT NULL
+    GROUP BY p.player_id, p.name, p.team_id, t.team_abbr
+    ORDER BY t.team_abbr, SUM(COALESCE(s.minutes_x10, 0)) DESC, p.name
+    """
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        params = season_params
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    
+    return [dict(row) for row in rows]
+
+# Backward compatibility alias
+fetch_playoff_players_data = fetch_postseason_players_data
 
 def calculate_per_100_poss_stats(player):
     """Calculate per-100 possession stats"""
@@ -505,8 +580,12 @@ def calculate_historical_percentiles(historical_players_data, mode='per_36', cus
             players_with_stats.append(player)
     
     # Calculate weighted percentiles for each stat
+    # Use HISTORICAL_STAT_COLUMNS keys (excluding 'years') for historical data
     percentiles = {}
-    for stat_name in STAT_COLUMNS.keys():
+    for stat_name in HISTORICAL_STAT_COLUMNS.keys():
+        if stat_name == 'years':  # Skip years column, it has custom percentile logic
+            continue
+            
         # Create weighted samples
         weighted_values = []
         for p in players_with_stats:
@@ -523,6 +602,48 @@ def calculate_historical_percentiles(historical_players_data, mode='per_36', cus
             percentiles[stat_name] = None
     
     return percentiles, players_with_stats
+
+def calculate_postseason_percentiles(postseason_players_data, mode='per_36', custom_value=None):
+    """
+    Calculate weighted percentiles for postseason data (season_type IN (2, 3) - playoffs + play-in).
+    Returns percentiles and players with calculated postseason stats.
+    """
+    # Calculate stats for all players with postseason data in the specified mode
+    players_with_stats = []
+    for player in postseason_players_data:
+        stats = calculate_stats_by_mode(player, mode, custom_value)
+        per100 = calculate_per_100_poss_stats(player)
+        if stats:
+            player['calculated_stats'] = stats
+            player['per100'] = per100
+            players_with_stats.append(player)
+    
+    # Calculate weighted percentiles for each stat
+    # Use HISTORICAL_STAT_COLUMNS keys (excluding 'years') for playoff data (same structure)
+    percentiles = {}
+    for stat_name in HISTORICAL_STAT_COLUMNS.keys():
+        if stat_name == 'years':  # Skip years column, it has custom percentile logic
+            continue
+            
+        # Create weighted samples
+        weighted_values = []
+        for p in players_with_stats:
+            stat_value = p['calculated_stats'].get(stat_name, 0)
+            if stat_value and stat_value != 0:
+                minutes_weight = p.get('minutes_total', 0)
+                if minutes_weight > 0:
+                    weight_count = max(1, int(round(minutes_weight / PERCENTILE_CONFIG['minutes_weight_factor'])))
+                    weighted_values.extend([stat_value] * weight_count)
+        
+        if weighted_values:
+            percentiles[stat_name] = np.percentile(weighted_values, range(101))
+        else:
+            percentiles[stat_name] = None
+    
+    return percentiles, players_with_stats
+
+# Backward compatibility alias
+calculate_playoff_percentiles = calculate_postseason_percentiles
 
 def get_percentile_rank(value, percentiles_array, reverse=False):
     """Get the percentile rank for a value"""
@@ -665,9 +786,17 @@ def parse_sheet_config(worksheet):
         log(f"Could not parse sheet config: {e}")
         return None, None, None
 
-def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, past_years=3, stats_mode='per_36', stats_custom_value=None, specific_seasons=None, include_current=False):
-    """Create/update a team sheet with formatting and color coding (including historical stats)"""
-    log(f"Creating {team_name} sheet with stats mode: {stats_mode}...")
+def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, 
+                      past_years=3, stats_mode='per_36', stats_custom_value=None, specific_seasons=None, 
+                      include_current=False, sync_section=None, show_percentiles=False, playoff_percentiles=None):
+    """Create/update a team sheet with formatting and color coding (including historical/playoff stats)
+    
+    Args:
+        sync_section: 'historical' or 'playoff' - determines which columns to write to
+        show_percentiles: If True, display percentile values instead of stat values
+        playoff_percentiles: Percentiles for playoff stats (when sync_section='playoff')
+    """
+    log(f"Creating {team_name} sheet with stats mode: {stats_mode}, section: {sync_section}, show_percentiles: {show_percentiles}...")
     
     # Get current season dynamically
     current_season = get_current_season()
@@ -678,43 +807,70 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         'totals': 'Totals',
         'per_game': 'Per Game',
         'per_36': 'Per 36 Mins',
+        'per_100_poss': 'Per 100 Poss',
         'per_minutes': f'Per {stats_custom_value} Mins' if stats_custom_value else 'Per Minute'
     }
     mode_text = mode_display.get(stats_mode, 'Per 36 Mins')
     
-    for h in HEADERS['row_1']:
-        if '{team_name}' in h:
-            header_row_1.append(h.replace('{team_name}', team_name.upper()))
-        elif '{season}' in h:
-            # Update header to reflect the stats mode
-            header_row_1.append(h.replace('{season}', f'{current_season} Stats {mode_text}'))
-        elif '{past_years}' in h:
-            # Build header text based on configuration
+    for i, h in enumerate(HEADERS['row_1']):
+        # Handle historical_years placeholder
+        if '{historical_years}' in h:
+            # Build header text for historical section
             if specific_seasons:
-                # Specific season(s) - show season followed by "stats" with mode
-                seasons_text = ', '.join([f"{year-1}-{str(year)[2:]}" for year in specific_seasons])
-                
+                # Specific season(s) - show start season only
+                start_year = min(specific_seasons)
+                start_season_text = f"{start_year-1}-{str(start_year)[2:]}"
                 if include_current:
-                    # Include current year - no "prev" prefix
-                    historical_text = f'{seasons_text} stats {mode_text.lower()}'
+                    historical_text = f'Stats since {start_season_text} {mode_text}'
                 else:
-                    # Don't include current - add "prev season" prefix
-                    historical_text = f'prev season stats {mode_text.lower()} since {seasons_text}'
-                    
+                    historical_text = f'Prev stats since {start_season_text} {mode_text}'
             elif past_years >= 25:
-                # Career mode
+                # Career mode (default)
                 if include_current:
-                    historical_text = f'Career season stats {mode_text.lower()}'
+                    historical_text = f'Career Stats {mode_text}'
                 else:
-                    historical_text = f'Career prev season stats {mode_text.lower()}'
+                    historical_text = f'Career Prev Season Stats {mode_text}'
             else:
                 # Number of years mode
                 if include_current:
-                    historical_text = f'last {past_years} season stats {mode_text.lower()}'
+                    historical_text = f'Last {past_years} Seasons {mode_text}'
                 else:
-                    historical_text = f'prev {past_years} season stats {mode_text.lower()}'
-                    
-            header_row_1.append(h.replace('{past_years}', historical_text))
+                    historical_text = f'Prev {past_years} Seasons {mode_text}'
+            header_row_1.append(h.replace('{historical_years}', historical_text))
+            
+        # Handle postseason_years placeholder
+        elif '{postseason_years}' in h:
+            # Build header text for postseason section - always show mode
+            if specific_seasons:
+                # Specific season(s) - show start season only
+                start_year = min(specific_seasons)
+                start_season_text = f"{start_year-1}-{str(start_year)[2:]}"
+                if include_current:
+                    postseason_text = f'Postseason Stats since {start_season_text} {mode_text}'
+                else:
+                    postseason_text = f'Prev Postseason Stats since {start_season_text} {mode_text}'
+            elif past_years >= 25:
+                # Career mode (default)
+                if include_current:
+                    postseason_text = f'Career Postseason Stats {mode_text}'
+                else:
+                    postseason_text = f'Career Prev Season Postseason Stats {mode_text}'
+            else:
+                # Number of years mode
+                if include_current:
+                    postseason_text = f'Last {past_years} Postseason Seasons {mode_text}'
+                else:
+                    postseason_text = f'Prev {past_years} Postseason Seasons {mode_text}'
+            header_row_1.append(h.replace('{postseason_years}', postseason_text))
+            
+        # Handle team_name placeholder
+        elif '{team_name}' in h:
+            header_row_1.append(h.replace('{team_name}', team_name.upper()))
+            
+        # Handle season placeholder
+        elif '{season}' in h:
+            # Update header to reflect the stats mode
+            header_row_1.append(h.replace('{season}', f'{current_season} Stats {mode_text}'))
         else:
             header_row_1.append(h)
     
@@ -765,6 +921,17 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 return int(rounded)
             return rounded
         
+        # Helper function to get percentile value or stat value based on mode
+        def get_display_value(stat_value, percentile_value, col_idx, is_pct=False, allow_zero=False):
+            """Return percentile if show_percentiles=True, otherwise return stat value"""
+            if show_percentiles and percentile_value is not None:
+                # Display percentile as whole number (0-100)
+                return int(round(percentile_value))
+            elif is_pct:
+                return format_pct(stat_value, allow_zero=allow_zero)
+            else:
+                return format_stat(stat_value)
+        
         # Check if there are attempts for shooting percentages
         fg2a = calculated_stats.get('fg2a', 0)
         fg3a = calculated_stats.get('fg3a', 0)
@@ -785,6 +952,105 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         hist_fg3a = historical_calculated_stats.get('fg3a', 0)
         hist_fta = historical_calculated_stats.get('fta', 0)
         
+        # Get playoff stats
+        playoff_calculated_stats = player.get('playoff_calculated_stats', {})
+        playoff_minutes = playoff_calculated_stats.get('minutes', 0)
+        has_playoff_minutes = playoff_minutes and playoff_minutes > 0
+        playoff_seasons_played = player.get('playoff_seasons_played', 0) if has_playoff_minutes else ''
+        
+        # Playoff shooting attempts
+        playoff_fg2a = playoff_calculated_stats.get('fg2a', 0)
+        playoff_fg3a = playoff_calculated_stats.get('fg3a', 0)
+        playoff_fta = playoff_calculated_stats.get('fta', 0)
+        
+        # PRE-CALCULATE PERCENTILES (needed for show_percentiles mode)
+        player_percentiles = {}
+        
+        # Current season percentiles
+        for stat_name, col_idx in STAT_COLUMNS.items():
+            value = calculated_stats.get(stat_name, 0)
+            if not has_minutes:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'ts_pct' and value == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'fg2_pct' and fg2a == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'fg3_pct' and fg3a == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'ft_pct' and fta == 0:
+                player_percentiles[col_idx] = None
+            elif value is not None and value != '':
+                reverse = stat_name in REVERSE_STATS
+                pct = get_percentile_rank(value, percentiles.get(stat_name), reverse=reverse)
+                player_percentiles[col_idx] = pct
+            else:
+                player_percentiles[col_idx] = None
+        
+        # Historical percentiles
+        for stat_name, col_idx in HISTORICAL_STAT_COLUMNS.items():
+            if stat_name == 'years':
+                if seasons_played and seasons_played > 0:
+                    if seasons_played >= 3:
+                        player_percentiles[col_idx] = 100
+                    elif seasons_played == 2:
+                        player_percentiles[col_idx] = 60
+                    else:
+                        player_percentiles[col_idx] = 20
+                else:
+                    player_percentiles[col_idx] = None
+                continue
+            
+            value = historical_calculated_stats.get(stat_name, 0)
+            if not has_historical_minutes:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'ts_pct' and value == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'fg2_pct' and hist_fg2a == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'fg3_pct' and hist_fg3a == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'ft_pct' and hist_fta == 0:
+                player_percentiles[col_idx] = None
+            elif value is not None and value != '':
+                reverse = stat_name in REVERSE_STATS
+                pct = get_percentile_rank(value, historical_percentiles.get(stat_name), reverse=reverse)
+                player_percentiles[col_idx] = pct
+            else:
+                player_percentiles[col_idx] = None
+        
+        # Playoff percentiles
+        for stat_name, col_idx in PLAYOFF_STAT_COLUMNS.items():
+            if stat_name == 'years':
+                if playoff_seasons_played and playoff_seasons_played > 0:
+                    if playoff_seasons_played >= 3:
+                        player_percentiles[col_idx] = 100
+                    elif playoff_seasons_played == 2:
+                        player_percentiles[col_idx] = 60
+                    else:
+                        player_percentiles[col_idx] = 20
+                else:
+                    player_percentiles[col_idx] = None
+                continue
+            
+            value = playoff_calculated_stats.get(stat_name, 0)
+            if not has_playoff_minutes:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'ts_pct' and value == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'fg2_pct' and playoff_fg2a == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'fg3_pct' and playoff_fg3a == 0:
+                player_percentiles[col_idx] = None
+            elif stat_name == 'ft_pct' and playoff_fta == 0:
+                player_percentiles[col_idx] = None
+            elif value is not None and value != '':
+                reverse = stat_name in REVERSE_STATS
+                pct = get_percentile_rank(value, playoff_percentiles.get(stat_name), reverse=reverse)
+                player_percentiles[col_idx] = pct
+            else:
+                player_percentiles[col_idx] = None
+        
+        # BUILD ROW with percentile-aware display
         row = [
             player['player_name'],
             player.get('jersey_number', ''),
@@ -794,109 +1060,67 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             format_height(player.get('wingspan_inches')),
             player.get('weight_lbs', ''),
             player.get('notes', ''),
-            # Current season stats
+            # Current season stats (columns 8-24, indexes 8-24)
             calculated_stats.get('games', 0) if calculated_stats.get('games', 0) and has_minutes else '',
-            format_stat(minutes) if has_minutes else '',
-            format_stat(calculated_stats.get('points', 0)) if has_minutes else '',
-            format_pct(calculated_stats.get('ts_pct')) if has_minutes else '',  # TS% - empty when 0 (no formula for attempts)
-            format_stat(fg2a) if has_minutes else '',
-            format_pct(calculated_stats.get('fg2_pct'), allow_zero=(fg2a > 0)) if has_minutes else '',  # 2P% - show 0 only if 2PA > 0
-            format_stat(fg3a) if has_minutes else '',
-            format_pct(calculated_stats.get('fg3_pct'), allow_zero=(fg3a > 0)) if has_minutes else '',  # 3P% - show 0 only if 3PA > 0
-            format_stat(fta) if has_minutes else '',
-            format_pct(calculated_stats.get('ft_pct'), allow_zero=(fta > 0)) if has_minutes else '',  # FT% - show 0 only if FTA > 0
-            format_stat(calculated_stats.get('assists', 0)) if has_minutes else '',
-            format_stat(calculated_stats.get('turnovers', 0)) if has_minutes else '',
-            format_pct(calculated_stats.get('oreb_pct'), allow_zero=True) if has_minutes else '',  # Rebounding % - show 0
-            format_pct(calculated_stats.get('dreb_pct'), allow_zero=True) if has_minutes else '',  # Rebounding % - show 0
-            format_stat(calculated_stats.get('steals', 0)) if has_minutes else '',
-            format_stat(calculated_stats.get('blocks', 0)) if has_minutes else '',
-            format_stat(calculated_stats.get('fouls', 0)) if has_minutes else '',
-            # Historical stats section
-            seasons_played,  # YRS column
+            get_display_value(minutes, player_percentiles.get(9), 9) if has_minutes else '',
+            get_display_value(calculated_stats.get('points', 0), player_percentiles.get(10), 10) if has_minutes else '',
+            get_display_value(calculated_stats.get('ts_pct'), player_percentiles.get(11), 11, is_pct=True) if has_minutes else '',
+            get_display_value(fg2a, player_percentiles.get(12), 12) if has_minutes else '',
+            get_display_value(calculated_stats.get('fg2_pct'), player_percentiles.get(13), 13, is_pct=True, allow_zero=(fg2a > 0)) if has_minutes else '',
+            get_display_value(fg3a, player_percentiles.get(14), 14) if has_minutes else '',
+            get_display_value(calculated_stats.get('fg3_pct'), player_percentiles.get(15), 15, is_pct=True, allow_zero=(fg3a > 0)) if has_minutes else '',
+            get_display_value(fta, player_percentiles.get(16), 16) if has_minutes else '',
+            get_display_value(calculated_stats.get('ft_pct'), player_percentiles.get(17), 17, is_pct=True, allow_zero=(fta > 0)) if has_minutes else '',
+            get_display_value(calculated_stats.get('assists', 0), player_percentiles.get(18), 18) if has_minutes else '',
+            get_display_value(calculated_stats.get('turnovers', 0), player_percentiles.get(19), 19) if has_minutes else '',
+            get_display_value(calculated_stats.get('oreb_pct'), player_percentiles.get(20), 20, is_pct=True, allow_zero=True) if has_minutes else '',
+            get_display_value(calculated_stats.get('dreb_pct'), player_percentiles.get(21), 21, is_pct=True, allow_zero=True) if has_minutes else '',
+            get_display_value(calculated_stats.get('steals', 0), player_percentiles.get(22), 22) if has_minutes else '',
+            get_display_value(calculated_stats.get('blocks', 0), player_percentiles.get(23), 23) if has_minutes else '',
+            get_display_value(calculated_stats.get('fouls', 0), player_percentiles.get(24), 24) if has_minutes else '',
+            # Historical stats section (columns 25-42, indexes 25-42)
+            seasons_played,  # YRS column - no percentile display
             # For non-totals modes, show games per season; for totals show total games
-            format_stat(historical_calculated_stats.get('games', 0) / seasons_played if seasons_played and seasons_played > 0 and stats_mode != 'totals' else historical_calculated_stats.get('games', 0)) if has_historical_minutes else '',
-            format_stat(historical_minutes) if has_historical_minutes else '',
-            format_stat(historical_calculated_stats.get('points', 0)) if has_historical_minutes else '',
-            format_pct(historical_calculated_stats.get('ts_pct')) if has_historical_minutes else '',
-            format_stat(hist_fg2a) if has_historical_minutes else '',
-            format_pct(historical_calculated_stats.get('fg2_pct'), allow_zero=(hist_fg2a > 0)) if has_historical_minutes else '',
-            format_stat(hist_fg3a) if has_historical_minutes else '',
-            format_pct(historical_calculated_stats.get('fg3_pct'), allow_zero=(hist_fg3a > 0)) if has_historical_minutes else '',
-            format_stat(hist_fta) if has_historical_minutes else '',
-            format_pct(historical_calculated_stats.get('ft_pct'), allow_zero=(hist_fta > 0)) if has_historical_minutes else '',
-            format_stat(historical_calculated_stats.get('assists', 0)) if has_historical_minutes else '',
-            format_stat(historical_calculated_stats.get('turnovers', 0)) if has_historical_minutes else '',
-            format_pct(historical_calculated_stats.get('oreb_pct'), allow_zero=True) if has_historical_minutes else '',
-            format_pct(historical_calculated_stats.get('dreb_pct'), allow_zero=True) if has_historical_minutes else '',
-            format_stat(historical_calculated_stats.get('steals', 0)) if has_historical_minutes else '',
-            format_stat(historical_calculated_stats.get('blocks', 0)) if has_historical_minutes else '',
-            format_stat(historical_calculated_stats.get('fouls', 0)) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('games', 0) / seasons_played if seasons_played and seasons_played > 0 and stats_mode != 'totals' else historical_calculated_stats.get('games', 0), player_percentiles.get(26), 26) if has_historical_minutes else '',
+            get_display_value(historical_minutes, player_percentiles.get(27), 27) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('points', 0), player_percentiles.get(28), 28) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('ts_pct'), player_percentiles.get(29), 29, is_pct=True) if has_historical_minutes else '',
+            get_display_value(hist_fg2a, player_percentiles.get(30), 30) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('fg2_pct'), player_percentiles.get(31), 31, is_pct=True, allow_zero=(hist_fg2a > 0)) if has_historical_minutes else '',
+            get_display_value(hist_fg3a, player_percentiles.get(32), 32) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('fg3_pct'), player_percentiles.get(33), 33, is_pct=True, allow_zero=(hist_fg3a > 0)) if has_historical_minutes else '',
+            get_display_value(hist_fta, player_percentiles.get(34), 34) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('ft_pct'), player_percentiles.get(35), 35, is_pct=True, allow_zero=(hist_fta > 0)) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('assists', 0), player_percentiles.get(36), 36) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('turnovers', 0), player_percentiles.get(37), 37) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('oreb_pct'), player_percentiles.get(38), 38, is_pct=True, allow_zero=True) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('dreb_pct'), player_percentiles.get(39), 39, is_pct=True, allow_zero=True) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('steals', 0), player_percentiles.get(40), 40) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('blocks', 0), player_percentiles.get(41), 41) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('fouls', 0), player_percentiles.get(42), 42) if has_historical_minutes else '',
+            # Playoff stats section (columns 43-60, indexes 43-60)
+            playoff_seasons_played,  # YRS column - no percentile display
+            # For non-totals modes, show games per season; for totals show total games
+            get_display_value(playoff_calculated_stats.get('games', 0) / playoff_seasons_played if playoff_seasons_played and playoff_seasons_played > 0 and stats_mode != 'totals' else playoff_calculated_stats.get('games', 0), player_percentiles.get(44), 44) if has_playoff_minutes else '',
+            get_display_value(playoff_minutes, player_percentiles.get(45), 45) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('points', 0), player_percentiles.get(46), 46) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('ts_pct'), player_percentiles.get(47), 47, is_pct=True) if has_playoff_minutes else '',
+            get_display_value(playoff_fg2a, player_percentiles.get(48), 48) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('fg2_pct'), player_percentiles.get(49), 49, is_pct=True, allow_zero=(playoff_fg2a > 0)) if has_playoff_minutes else '',
+            get_display_value(playoff_fg3a, player_percentiles.get(50), 50) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('fg3_pct'), player_percentiles.get(51), 51, is_pct=True, allow_zero=(playoff_fg3a > 0)) if has_playoff_minutes else '',
+            get_display_value(playoff_fta, player_percentiles.get(52), 52) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('ft_pct'), player_percentiles.get(53), 53, is_pct=True, allow_zero=(playoff_fta > 0)) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('assists', 0), player_percentiles.get(54), 54) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('turnovers', 0), player_percentiles.get(55), 55) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('oreb_pct'), player_percentiles.get(56), 56, is_pct=True, allow_zero=True) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('dreb_pct'), player_percentiles.get(57), 57, is_pct=True, allow_zero=True) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('steals', 0), player_percentiles.get(58), 58) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('blocks', 0), player_percentiles.get(59), 59) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('fouls', 0), player_percentiles.get(60), 60) if has_playoff_minutes else '',
             # Player ID at the end (hidden)
-            player['player_id'],  # Column AR - hidden player_id for onEdit lookups
+            str(player['player_id']),  # Column BJ (index 61) - hidden player_id for onEdit lookups
         ]
-        
-        # Calculate percentiles for this player (current season)
-        player_percentiles = {}
-        for stat_name, col_idx in STAT_COLUMNS.items():
-            value = calculated_stats.get(stat_name, 0)
-            # Skip percentile calculation if player has no minutes
-            if not has_minutes:
-                player_percentiles[col_idx] = None
-            # For shooting percentages, skip percentile calculation if no attempts (empty cell)
-            elif stat_name == 'ts_pct' and value == 0:
-                player_percentiles[col_idx] = None
-            elif stat_name == 'fg2_pct' and fg2a == 0:
-                player_percentiles[col_idx] = None
-            elif stat_name == 'fg3_pct' and fg3a == 0:
-                player_percentiles[col_idx] = None
-            elif stat_name == 'ft_pct' and fta == 0:
-                player_percentiles[col_idx] = None
-            # Include zero values in percentile calculation for other stats
-            elif value is not None and value != '':
-                reverse = stat_name in REVERSE_STATS
-                pct = get_percentile_rank(value, percentiles.get(stat_name), reverse=reverse)
-                player_percentiles[col_idx] = pct
-            else:
-                player_percentiles[col_idx] = None
-        
-        # Calculate percentiles for historical stats
-        for stat_name, col_idx in HISTORICAL_STAT_COLUMNS.items():
-            if stat_name == 'years':  # YRS column gets percentile coloring too
-                # Color code based on number of seasons played
-                if seasons_played and seasons_played > 0:
-                    # Create a simple percentile based on years (more years = better/greener)
-                    # Use wider spread for more distinctive colors: 1 year = 20%, 2 years = 60%, 3+ years = 100%
-                    if seasons_played >= 3:
-                        player_percentiles[col_idx] = 100
-                    elif seasons_played == 2:
-                        player_percentiles[col_idx] = 60
-                    else:  # 1 year
-                        player_percentiles[col_idx] = 20
-                else:
-                    player_percentiles[col_idx] = None
-                continue
-                
-            value = historical_calculated_stats.get(stat_name, 0)
-            # Skip percentile calculation if player has no historical minutes
-            if not has_historical_minutes:
-                player_percentiles[col_idx] = None
-            # For shooting percentages, skip if no attempts
-            elif stat_name == 'ts_pct' and value == 0:
-                player_percentiles[col_idx] = None
-            elif stat_name == 'fg2_pct' and hist_fg2a == 0:
-                player_percentiles[col_idx] = None
-            elif stat_name == 'fg3_pct' and hist_fg3a == 0:
-                player_percentiles[col_idx] = None
-            elif stat_name == 'ft_pct' and hist_fta == 0:
-                player_percentiles[col_idx] = None
-            # Include zero values in percentile calculation for other stats
-            elif value is not None and value != '':
-                reverse = stat_name in REVERSE_STATS
-                pct = get_percentile_rank(value, historical_percentiles.get(stat_name), reverse=reverse)
-                player_percentiles[col_idx] = pct
-            else:
-                player_percentiles[col_idx] = None
         
         data_rows.append(row)
         percentile_data.append(player_percentiles)
@@ -904,46 +1128,69 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     # Combine all data
     all_data = [header_row_1, header_row_2, filter_row] + data_rows
     
-    # Clear and update
-    worksheet.clear()
-    
     spreadsheet = worksheet.spreadsheet
-    
-    # Remove existing banding
-    sheet_metadata = spreadsheet.fetch_sheet_metadata({'includeGridData': False})
-    for sheet in sheet_metadata.get('sheets', []):
-        if sheet['properties']['sheetId'] == worksheet.id:
-            banded_ranges = sheet.get('bandedRanges', [])
-            if banded_ranges:
-                delete_requests = [
-                    {'deleteBanding': {'bandedRangeId': br['bandedRangeId']}}
-                    for br in banded_ranges
-                ]
-                spreadsheet.batch_update({'requests': delete_requests})
-                break
-    
-    worksheet.update(values=all_data, range_name='A1')
-    
     total_rows = 3 + len(data_rows)
     total_cols = SHEET_FORMAT['total_columns']
     
+    # Build ONE mega batch request with ALL operations
+    # This reduces from 6+ API calls per sheet to just 1!
     requests = []
     
-    # Delete extra rows/columns
-    sheet_properties = spreadsheet.fetch_sheet_metadata({'includeGridData': False})
-    current_row_count = 1000
-    current_col_count = 26
-    for sheet in sheet_properties.get('sheets', []):
-        if sheet['properties']['sheetId'] == worksheet.id:
-            current_row_count = sheet['properties']['gridProperties'].get('rowCount', 1000)
-            current_col_count = sheet['properties']['gridProperties'].get('columnCount', 26)
-            break
+    # 1. First, get current sheet metadata (we need this for sheet dimensions)
+    try:
+        sheet_metadata = spreadsheet.fetch_sheet_metadata({'includeGridData': False})
+        current_row_count = 1000
+        current_col_count = 26
+        sheet_id = worksheet.id
+        
+        for sheet in sheet_metadata.get('sheets', []):
+            if sheet['properties']['sheetId'] == sheet_id:
+                current_row_count = sheet['properties']['gridProperties'].get('rowCount', 1000)
+                current_col_count = sheet['properties']['gridProperties'].get('columnCount', 26)
+                
+                # Add delete banding requests if needed
+                banded_ranges = sheet.get('bandedRanges', [])
+                if banded_ranges:
+                    for br in banded_ranges:
+                        requests.append({'deleteBanding': {'bandedRangeId': br['bandedRangeId']}})
+                break
+    except Exception as e:
+        log(f"⚠️  Warning: Could not fetch sheet metadata for {team_abbr}: {e}")
+        sheet_id = worksheet.id
+        current_row_count = 1000
+        current_col_count = 26
     
-    if current_row_count > total_rows:
+    # 2. Adjust columns if needed (BEFORE updateCells!)
+    # ONLY adjust dimensions when doing a full sync (not partial section updates)
+    if sync_section in [None, 'all', 'current']:
+        if current_col_count > total_cols:
+            requests.append({
+                'deleteDimension': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': total_cols,
+                        'endIndex': current_col_count
+                    }
+                }
+            })
+        elif current_col_count < total_cols:
+            # Add columns if we need more (for playoff section)
+            requests.append({
+                'appendDimension': {
+                    'sheetId': sheet_id,
+                    'dimension': 'COLUMNS',
+                    'length': total_cols - current_col_count
+                }
+            })
+    
+    # 3. Adjust rows if needed
+    # ONLY adjust dimensions when doing a full sync (not partial section updates)
+    if sync_section in [None, 'all', 'current'] and current_row_count > total_rows:
         requests.append({
             'deleteDimension': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'dimension': 'ROWS',
                     'startIndex': total_rows,
                     'endIndex': current_row_count
@@ -951,55 +1198,144 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             }
         })
     
-    if current_col_count > total_cols:
+    # 4. Update cell values (via updateCells instead of separate update call)
+    # For partial syncs, only update the relevant column range
+    rows_data = []
+    start_col_idx = 0
+    
+    if sync_section == 'historical':
+        start_col_idx = SECTIONS['historical']['columns']['start']
+        end_col_idx = SECTIONS['historical']['columns']['end'] + 1  # +1 for exclusive end
+    elif sync_section == 'postseason':
+        start_col_idx = SECTIONS['postseason']['columns']['start']
+        end_col_idx = SECTIONS['postseason']['columns']['end'] + 1  # +1 for exclusive end
+    else:
+        # Full sync - write all columns
+        end_col_idx = total_cols
+    
+    try:
+        for row_idx, row_data in enumerate(all_data):
+            row_values = []
+            # Only process columns in the target range
+            for col_idx in range(start_col_idx, end_col_idx):
+                cell_value = row_data[col_idx] if col_idx < len(row_data) else ''
+                
+                # Convert all values to strings, handling None and empty strings
+                if cell_value is None or cell_value == '':
+                    str_value = ''
+                else:
+                    try:
+                        str_value = str(cell_value)
+                    except Exception as e:
+                        log(f"Error converting cell at row {row_idx}, col {col_idx}: value={cell_value}, type={type(cell_value)}, error={e}")
+                        raise
+                
+                row_values.append({
+                    'userEnteredValue': {
+                        'stringValue': str_value
+                    }
+                })
+            rows_data.append({'values': row_values})
+    except Exception as e:
+        log(f"Error building rows_data: {e}")
+        log(f"First row data types: {[type(v) for v in all_data[0]] if all_data else 'empty'}")
+        raise
+    
+    requests.append({
+        'updateCells': {
+            'rows': rows_data,
+            'fields': 'userEnteredValue',
+            'start': {'sheetId': sheet_id, 'rowIndex': 0, 'columnIndex': start_col_idx}
+        }
+    })
+    
+    # Only apply formatting, merges, and column widths during full syncs
+    if sync_section in [None, 'all', 'current']:
+        # 2.5. Set column A to fixed 187px width
         requests.append({
-            'deleteDimension': {
+            'updateDimensionProperties': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'dimension': 'COLUMNS',
-                    'startIndex': total_cols,
-                    'endIndex': current_col_count
-                }
+                    'startIndex': 0,
+                    'endIndex': 1
+                },
+                'properties': {
+                    'pixelSize': 187
+                },
+                'fields': 'pixelSize'
             }
         })
-    
-    # Merge cells
-    requests.append({
-        'mergeCells': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 0,
-                'endRowIndex': 1,
-                'startColumnIndex': 1,
-                'endColumnIndex': 7,
-            },
-            'mergeType': 'MERGE_ALL'
-        }
-    })
-    
-    # Current season stats header (I to Y, excluding hidden Z)
-    requests.append({
-        'mergeCells': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 0,
-                'endRowIndex': 1,
-                'startColumnIndex': 8,   # I
-                'endColumnIndex': 25,    # Y
-            },
-            'mergeType': 'MERGE_ALL'
-        }
-    })
+        
+        # 2.6. Set column A text wrapping to CLIP (don't wrap or truncate visibly)
+        requests.append({
+            'repeatCell': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 3,
+                    'startColumnIndex': 0,
+                    'endColumnIndex': 1
+                },
+                'cell': {
+                    'userEnteredFormat': {
+                        'wrapStrategy': 'CLIP'
+                    }
+                },
+                'fields': 'userEnteredFormat.wrapStrategy'
+            }
+        })
+        
+        # 5. Merge cells
+        requests.append({
+            'mergeCells': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                    'startColumnIndex': 1,
+                    'endColumnIndex': 7,
+                },
+                'mergeType': 'MERGE_ALL'
+            }
+        })
+        
+        # Current season stats header (I to Y, excluding hidden Z)
+        requests.append({
+            'mergeCells': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                    'startColumnIndex': 8,   # I
+                    'endColumnIndex': 25,    # Y
+                },
+                'mergeType': 'MERGE_ALL'
+            }
+        })
     
     # Historical stats header (Z to AQ - includes YRS column)
     requests.append({
         'mergeCells': {
             'range': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'startRowIndex': 0,
                 'endRowIndex': 1,
                 'startColumnIndex': 25,  # Z (YRS column)
                 'endColumnIndex': 43,    # AQ + 1 (endColumnIndex is exclusive)
+            },
+            'mergeType': 'MERGE_ALL'
+        }
+    })
+    
+    # Playoff stats header (AR to BI - includes YRS column)
+    requests.append({
+        'mergeCells': {
+            'range': {
+                'sheetId': sheet_id,
+                'startRowIndex': 0,
+                'endRowIndex': 1,
+                'startColumnIndex': 43,  # AR (YRS column for playoff)
+                'endColumnIndex': 61,    # BI + 1 (endColumnIndex is exclusive)
             },
             'mergeType': 'MERGE_ALL'
         }
@@ -1013,7 +1349,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     requests.append({
         'repeatCell': {
             'range': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'startRowIndex': 0,
                 'endRowIndex': 1,
             },
@@ -1039,7 +1375,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     requests.append({
         'repeatCell': {
             'range': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'startRowIndex': 1,
                 'endRowIndex': 2,
             },
@@ -1065,7 +1401,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     requests.append({
         'repeatCell': {
             'range': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'startRowIndex': 0,
                 'endRowIndex': 1,
                 'startColumnIndex': 0,
@@ -1093,7 +1429,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     requests.append({
         'repeatCell': {
             'range': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'startRowIndex': 2,
                 'endRowIndex': 3,
             },
@@ -1121,7 +1457,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         requests.append({
             'repeatCell': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'startRowIndex': 3,
                     'endRowIndex': 3 + len(data_rows),
                 },
@@ -1144,7 +1480,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         requests.append({
             'repeatCell': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'startRowIndex': 3,
                     'endRowIndex': 3 + len(data_rows),
                     'startColumnIndex': 0,
@@ -1163,7 +1499,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         requests.append({
             'repeatCell': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'startRowIndex': 3,
                     'endRowIndex': 3 + len(data_rows),
                     'startColumnIndex': 7,
@@ -1184,7 +1520,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         requests.append({
             'repeatCell': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'startRowIndex': 2,
                     'endRowIndex': 3 + len(data_rows),
                     'startColumnIndex': 0,
@@ -1200,38 +1536,47 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 'fields': 'userEnteredFormat.textFormat.bold'
             }
         })
-    
-    # Apply banding to ALL data columns FIRST (so empty cells get alternating colors)
-    if len(data_rows) > 0:
-        requests.append({
-            'addBanding': {
-                'bandedRange': {
-                    'range': {
-                        'sheetId': worksheet.id,
-                        'startRowIndex': 3,
-                        'endRowIndex': 3 + len(data_rows),
-                        'startColumnIndex': 0,
-                        'endColumnIndex': SHEET_FORMAT['total_columns']
-                    },
-                    'rowProperties': {
-                        'firstBandColor': white,
-                        'secondBandColor': light_gray
+        
+        # Apply banding to ALL data columns FIRST (so empty cells get alternating colors)
+        if len(data_rows) > 0:
+            requests.append({
+                'addBanding': {
+                    'bandedRange': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'startRowIndex': 3,
+                            'endRowIndex': 3 + len(data_rows),
+                            'startColumnIndex': 0,
+                            'endColumnIndex': SHEET_FORMAT['total_columns']
+                        },
+                        'rowProperties': {
+                            'firstBandColor': white,
+                            'secondBandColor': light_gray
+                        }
                     }
                 }
-            }
-        })
-        
-        # Apply percentile colors to stat cells AFTER banding
-        # This way, empty cells keep the alternating row colors, but cells with data get percentile colors
+            })
+            
+    # Apply percentile colors to stat cells (for both full and partial syncs)
+    # For partial syncs, only color the columns in the target section
+    if len(data_rows) > 0:
         for row_idx, player_percentiles in enumerate(percentile_data):
             for col_idx, percentile in player_percentiles.items():
+                # Skip if this column is not in the target section for partial syncs
+                if sync_section == 'historical':
+                    if not (start_col_idx <= col_idx < end_col_idx):
+                        continue
+                elif sync_section == 'postseason':
+                    if not (start_col_idx <= col_idx < end_col_idx):
+                        continue
+                
                 if percentile is not None:
                     color = get_color_for_percentile(percentile)
                     if color:
                         requests.append({
                             'repeatCell': {
                                 'range': {
-                                    'sheetId': worksheet.id,
+                                    'sheetId': sheet_id,
                                     'startRowIndex': 3 + row_idx,
                                     'endRowIndex': 3 + row_idx + 1,
                                     'startColumnIndex': col_idx,
@@ -1246,58 +1591,70 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                             }
                         })
     
-    # Column widths
-    requests.append({
-        'updateDimensionProperties': {
-            'range': {
-                'sheetId': worksheet.id,
-                'dimension': 'COLUMNS',
-                'startIndex': 1,
-                'endIndex': 2
-            },
-            'properties': {
-                'pixelSize': SHEET_FORMAT['column_widths']['jersey_number']
-            },
-            'fields': 'pixelSize'
-        }
-    })
+    # End of full-sync-only formatting section
     
-    requests.append({
-        'updateDimensionProperties': {
-            'range': {
-                'sheetId': worksheet.id,
-                'dimension': 'COLUMNS',
-                'startIndex': 8,
-                'endIndex': 9
-            },
-            'properties': {
-                'pixelSize': SHEET_FORMAT['column_widths']['games']
-            },
-            'fields': 'pixelSize'
-        }
-    })
-    
-    # YRS column width for historical section
-    requests.append({
-        'updateDimensionProperties': {
-            'range': {
-                'sheetId': worksheet.id,
-                'dimension': 'COLUMNS',
-                'startIndex': 25,  # Column Z (YRS)
-                'endIndex': 26
-            },
-            'properties': {
-                'pixelSize': SHEET_FORMAT['column_widths']['years']
-            },
-            'fields': 'pixelSize'
-        }
-    })
+    # CONFIG-DRIVEN COLUMN WIDTHS AND AUTO-RESIZE (only for full syncs)
+    if sync_section in [None, 'all', 'current']:
+        # Process all sections for fixed widths and auto-resize
+        for section_key in ['player_info', 'current', 'historical', 'postseason']:
+            section = SECTIONS.get(section_key)
+            if not section:
+                continue
+            
+            # Apply fixed width columns from resize_rules
+            resize_rules = section.get('resize_rules', {})
+            for field_name, rule in resize_rules.items():
+                if rule.get('fixed'):
+                    # Map field name to column index based on section
+                    if section_key == 'player_info':
+                        field_map = {'name': 0, 'jersey_number': 1}
+                    elif section_key == 'current':
+                        field_map = {'games': 8}
+                    elif section_key == 'historical':
+                        field_map = {'years': 25}
+                    elif section_key == 'postseason':
+                        field_map = {'years': 43}
+                    else:
+                        field_map = {}
+                
+                col_idx = field_map.get(field_name)
+                if col_idx is not None:
+                    requests.append({
+                        'updateDimensionProperties': {
+                            'range': {
+                                'sheetId': sheet_id,
+                                'dimension': 'COLUMNS',
+                                'startIndex': col_idx,
+                                'endIndex': col_idx + 1
+                            },
+                            'properties': {
+                                'pixelSize': rule['width']
+                            },
+                            'fields': 'pixelSize'
+                        }
+                    })
+        
+        # Apply auto-resize if configured
+        if section.get('auto_resize'):
+            start_idx = section.get('auto_resize_start')
+            end_idx = section.get('auto_resize_end')
+            if start_idx is not None and end_idx is not None:
+                requests.append({
+                    'autoResizeDimensions': {
+                        'dimensions': {
+                            'sheetId': sheet_id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': start_idx,
+                            'endIndex': end_idx
+                        }
+                    }
+                })
     
     # Row heights - Set row 3 (filter row) to 15 pixels
     requests.append({
         'updateDimensionProperties': {
             'range': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'dimension': 'ROWS',
                 'startIndex': 2,  # Row 3 (0-indexed)
                 'endIndex': 3
@@ -1314,7 +1671,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         requests.append({
             'updateDimensionProperties': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'dimension': 'ROWS',
                     'startIndex': 3,  # Start after header rows
                     'endIndex': 3 + len(data_rows)
@@ -1326,154 +1683,125 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             }
         })
     
-    # Borders
-    # Black border after weight column (between player info and current stats)
-    requests.append({
-        'updateBorders': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 3,
-                'endRowIndex': 3 + len(data_rows),
-                'startColumnIndex': 6,
-                'endColumnIndex': 7,
-            },
-            'right': {
-                'style': 'SOLID',
-                'width': 2,
-                'color': black
-            }
-        }
-    })
+    # Define header_rows for use in both full and partial syncs
+    header_rows = SHEET_FORMAT.get('header_rows', 2)
     
-    # Black border after notes column (between player info and current stats)
-    requests.append({
-        'updateBorders': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 3,
-                'endRowIndex': 3 + len(data_rows),
-                'startColumnIndex': 7,
-                'endColumnIndex': 8,
-            },
-            'right': {
-                'style': 'SOLID',
-                'width': 2,
-                'color': black
-            }
-        }
-    })
+    # CONFIG-DRIVEN BORDERS for stat sections (only for full syncs)
+    if sync_section in [None, 'all', 'current']:
+        # Add borders based on SECTIONS config
+        
+        # Iterate through sections that have borders configured
+        for section_key in ['current', 'historical', 'postseason']:
+            section = SECTIONS.get(section_key)
+            if not section or not section.get('has_border'):
+                continue
+                
+            border_cfg = section.get('border_config', {})
+            start_col = section['columns']['start']
+            end_col = section['columns']['end']
+            weight = border_cfg.get('weight', 2)
+            header_color = COLORS[border_cfg.get('header_color', 'white')]['rgb']
+            data_color = COLORS[border_cfg.get('data_color', 'black')]['rgb']
+            
+            # Left border on FIRST column only (if configured)
+            if border_cfg.get('first_column_left'):
+                # Header rows (white)
+                requests.append({
+                    'updateBorders': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'startRowIndex': 0,
+                            'endRowIndex': header_rows + 1,
+                            'startColumnIndex': start_col,
+                            'endColumnIndex': start_col + 1,
+                        },
+                        'left': {
+                            'style': 'SOLID',
+                            'width': weight,
+                            'color': header_color
+                        }
+                    }
+                })
+            
+            # Data rows (black)
+            requests.append({
+                'updateBorders': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': header_rows + 1,
+                        'endRowIndex': header_rows + 1 + len(data_rows),
+                        'startColumnIndex': start_col,
+                        'endColumnIndex': start_col + 1,
+                    },
+                    'left': {
+                        'style': 'SOLID',
+                        'width': weight,
+                        'color': data_color
+                    }
+                }
+            })
+        
+        # Right border on LAST column only (if configured)
+        if border_cfg.get('last_column_right'):
+            # Row 1 only (white, weight 2)
+            requests.append({
+                'updateBorders': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 0,
+                        'endRowIndex': 1,
+                        'startColumnIndex': end_col,
+                        'endColumnIndex': end_col + 1,
+                    },
+                    'right': {
+                        'style': 'SOLID',
+                        'width': weight,
+                        'color': header_color
+                    }
+                }
+            })
+            
+            # Rows 2-3 (header rows, white)
+            requests.append({
+                'updateBorders': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 1,
+                        'endRowIndex': header_rows + 1,
+                        'startColumnIndex': end_col,
+                        'endColumnIndex': end_col + 1,
+                    },
+                    'right': {
+                        'style': 'SOLID',
+                        'width': weight,
+                        'color': header_color
+                    }
+                }
+            })
+            
+            # Data rows (black)
+            requests.append({
+                'updateBorders': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': header_rows + 1,
+                        'endRowIndex': header_rows + 1 + len(data_rows),
+                        'startColumnIndex': end_col,
+                        'endColumnIndex': end_col + 1,
+                    },
+                    'right': {
+                        'style': 'SOLID',
+                        'width': weight,
+                        'color': data_color
+                    }
+                }
+            })
     
-    # BLACK border between current stats and historical stats (left of YRS column)
-    # Column 24 (Y) is the last current stat column (Fls)
-    # Column 25 (Z) is the first historical stat column (YRS)
+    # Top border for row 2 (white, across all columns)
     requests.append({
         'updateBorders': {
             'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 3,
-                'endRowIndex': 3 + len(data_rows),
-                'startColumnIndex': 24,
-                'endColumnIndex': 25,
-            },
-            'right': {
-                'style': 'SOLID',
-                'width': 2,
-                'color': black
-            }
-        }
-    })
-    
-    # White borders in header rows
-    requests.append({
-        'updateBorders': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 0,
-                'endRowIndex': 3,
-                'startColumnIndex': 6,
-                'endColumnIndex': 7,
-            },
-            'right': {
-                'style': 'SOLID',
-                'width': 2,
-                'color': white
-            }
-        }
-    })
-    
-    requests.append({
-        'updateBorders': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 0,
-                'endRowIndex': 3,
-                'startColumnIndex': 7,
-                'endColumnIndex': 8,
-            },
-            'left': {
-                'style': 'SOLID',
-                'width': 2,
-                'color': white
-            }
-        }
-    })
-    
-    requests.append({
-        'updateBorders': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 0,
-                'endRowIndex': 3,
-                'startColumnIndex': 7,
-                'endColumnIndex': 8,
-            },
-            'right': {
-                'style': 'SOLID',
-                'width': 2,
-                'color': white
-            }
-        }
-    })
-    
-    # Border before historical section (after hidden column Z, before column AA)
-    requests.append({
-        'updateBorders': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 0,
-                'endRowIndex': 3,
-                'startColumnIndex': 25,  # Column Z (hidden player_id)
-                'endColumnIndex': 26,
-            },
-            'right': {
-                'style': 'SOLID',
-                'width': 2,
-                'color': white
-            }
-        }
-    })
-    
-    requests.append({
-        'updateBorders': {
-            'range': {
-                'sheetId': worksheet.id,
-                'startRowIndex': 0,
-                'endRowIndex': 3,
-                'startColumnIndex': 25,  # Column Z (YRS - start of historical)
-                'endColumnIndex': 26,
-            },
-            'left': {
-                'style': 'SOLID',
-                'width': 2,
-                'color': white
-            }
-        }
-    })
-    
-    requests.append({
-        'updateBorders': {
-            'range': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'startRowIndex': 1,
                 'endRowIndex': 2,
                 'startColumnIndex': 0,
@@ -1487,14 +1815,14 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         }
     })
     
-    # WHITE border to the right of each column B-X in rows 2-3 (exclude Y, column 24)
+    # WHITE borders between all columns in header rows (rows 2-3)
     for col_idx in range(1, SHEET_FORMAT['total_columns'] - 1):
         requests.append({
             'updateBorders': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'startRowIndex': 1,
-                    'endRowIndex': 3,
+                    'endRowIndex': header_rows + 1,
                     'startColumnIndex': col_idx,
                     'endColumnIndex': col_idx + 1,
                 },
@@ -1506,11 +1834,49 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             }
         })
     
+    # WHITE borders between columns in row 1 (only certain columns)
+    # Add border on left of column H (Notes) to separate from Player Info
+    requests.append({
+        'updateBorders': {
+            'range': {
+                'sheetId': sheet_id,
+                'startRowIndex': 0,
+                'endRowIndex': 1,
+                'startColumnIndex': 7,  # Column H (Notes)
+                'endColumnIndex': 8,
+            },
+            'left': {
+                'style': 'SOLID',
+                'width': 2,
+                'color': white
+            }
+        }
+    })
+    
+    # BLACK border on right of column G (last player info column before Notes) from row 4 down
+    black = {'red': 0, 'green': 0, 'blue': 0}
+    requests.append({
+        'updateBorders': {
+            'range': {
+                'sheetId': sheet_id,
+                'startRowIndex': 3,  # Row 4 (data starts)
+                'endRowIndex': 3 + len(data_rows),
+                'startColumnIndex': 6,  # Column G (weight/last player stat)
+                'endColumnIndex': 7,
+            },
+            'right': {
+                'style': 'SOLID',
+                'width': 2,
+                'color': black
+            }
+        }
+    })
+    
     # Freeze panes
     requests.append({
         'updateSheetProperties': {
             'properties': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'gridProperties': {
                     'frozenRowCount': SHEET_FORMAT['frozen']['rows'],
                     'frozenColumnCount': SHEET_FORMAT['frozen']['columns']
@@ -1524,7 +1890,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     requests.append({
         'updateSheetProperties': {
             'properties': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'gridProperties': {
                     'hideGridlines': True
                 }
@@ -1533,26 +1899,11 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         }
     })
     
-    # Auto-resize columns (do this BEFORE hiding column Z so it sizes correctly)
-    for col_idx in range(SHEET_FORMAT['total_columns']):
-        # Skip columns we already set specific widths for
-        if col_idx not in [1, 8, 25]:  # B (jersey), I (games), Z (years)
-            requests.append({
-                'autoResizeDimensions': {
-                    'dimensions': {
-                        'sheetId': worksheet.id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': col_idx,
-                        'endIndex': col_idx + 1
-                    }
-                }
-            })
-    
-    # Hide player_id column (column AR) - do this AFTER auto-resize
+    # Hide player_id column (column BJ at index 61, NOT column AR which is playoff YRS)
     requests.append({
         'updateDimensionProperties': {
             'range': {
-                'sheetId': worksheet.id,
+                'sheetId': sheet_id,
                 'dimension': 'COLUMNS',
                 'startIndex': PLAYER_ID_COLUMN,
                 'endIndex': PLAYER_ID_COLUMN + 1
@@ -1569,7 +1920,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         'setBasicFilter': {
             'filter': {
                 'range': {
-                    'sheetId': worksheet.id,
+                    'sheetId': sheet_id,
                     'startRowIndex': 2,
                     'endRowIndex': 3 + len(data_rows),
                     'startColumnIndex': 0,
@@ -1578,15 +1929,35 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             }
         }
     })
+    # End of full-sync-only operations
     
-    # Execute all requests
-    spreadsheet.batch_update({'requests': requests})
+    # Execute all requests in ONE batch call with retry logic
+    try:
+        log(f"Executing batch update with {len(requests)} requests for {team_abbr}")
+        spreadsheet.batch_update({'requests': requests})
+    except Exception as e:
+        log(f"⚠️  Error in batch update for {team_abbr}: {type(e).__name__}: {str(e)}")
+        log(f"Error details - Total requests: {len(requests)}")
+        # Log the type of error more clearly
+        import traceback
+        log(f"Full traceback:\n{traceback.format_exc()}")
+        
+        log(f"Retrying after delay...")
+        time.sleep(3)
+        try:
+            spreadsheet.batch_update({'requests': requests})
+            log(f"✅ Retry successful for {team_abbr}")
+        except Exception as e2:
+            log(f"❌ Failed batch update for {team_abbr} after retry: {e2}")
+            raise
     
     log(f"✅ {team_name} sheet created with {len(data_rows)} players")
 
-def main():
+def main(priority_team=None):
     log("=" * 60)
     log("SYNCING ALL 30 NBA TEAMS TO GOOGLE SHEETS")
+    if priority_team:
+        log(f"Priority team: {priority_team} (will be updated first)")
     log("=" * 60)
     
     # Connect to database
@@ -1610,34 +1981,61 @@ def main():
     # Read stats mode from environment
     stats_mode = os.environ.get('STATS_MODE', 'per_36')  # Default to per_36
     stats_custom_value = os.environ.get('STATS_CUSTOM_VALUE')
+    sync_section = os.environ.get('SYNC_SECTION')  # None = full sync, 'historical' or 'postseason' for partial
+    show_percentiles = os.environ.get('SHOW_PERCENTILES', 'false').lower() == 'true'
     log(f"Using stats mode: {stats_mode}" + (f" ({stats_custom_value} minutes)" if stats_custom_value else ""))
+    log(f"Sync section: {sync_section}")
+    log(f"Show percentiles: {show_percentiles}")
     
     # Parse historical stats configuration from environment variables
-    past_years = 3  # Default
-    include_current = False  # Default
+    past_years = 25  # Default to career (25 years)
+    include_current = True  # Default to include current season
     specific_seasons = None
     
-    historical_mode = os.environ.get('HISTORICAL_MODE', 'years')
-    include_current_env = os.environ.get('INCLUDE_CURRENT_YEAR', 'false')
+    historical_mode = os.environ.get('HISTORICAL_MODE', 'career')  # Default to career mode
+    include_current_env = os.environ.get('INCLUDE_CURRENT_YEAR', 'true')  # Default to true
     include_current = (include_current_env.lower() == 'true')
     
     if historical_mode == 'seasons':
-        # Parse specific seasons (e.g., "2023-24, 2012-13, 1999-00")
+        # Parse specific seasons
+        # When user enters a single season like "2010-11", it means "since 2010-11" (all seasons from then to now)
+        # When user enters multiple seasons like "2010-11, 2015-16", it means only those specific seasons
         seasons_str = os.environ.get('HISTORICAL_SEASONS', '')
         if seasons_str:
-            specific_seasons = []
-            for season in seasons_str.split(','):
-                season = season.strip()
-                # Parse season format like "2023-24" or "1999-00"
-                if '-' in season:
-                    start_year = season.split('-')[0]
-                    # Convert to 4-digit year (e.g., "2023-24" -> 2024, "1999-00" -> 2000)
-                    if len(start_year) == 4:
-                        year = int(start_year) + 1
+            season_list = [s.strip() for s in seasons_str.split(',')]
+            
+            if len(season_list) == 1:
+                # Single season = "since" that season (expand to full range)
+                season = season_list[0]
+                if '-' in season or '/' in season:
+                    start_year_str = season.split('-')[0] if '-' in season else season.split('/')[0]
+                    # Convert to 4-digit year (e.g., "2010-11" -> 2011, "10-11" -> 2011)
+                    if len(start_year_str) == 4:
+                        start_year = int(start_year_str) + 1
+                    elif len(start_year_str) == 2:
+                        # Handle 2-digit years (e.g., "10" in "10-11")
+                        yr = int(start_year_str)
+                        start_year = (2000 + yr if yr >= 0 else 1900 + yr) + 1
                     else:
-                        year = int(start_year)
-                    specific_seasons.append(year)
-            log(f"Using specific seasons: {specific_seasons}")
+                        start_year = int(start_year_str) + 1
+                    
+                    # Generate all years from start_year through current
+                    current_year = NBA_CONFIG['current_season_year']
+                    specific_seasons = list(range(start_year, current_year + 1))
+                    log(f"Expanding single season '{season}' to range since that year: {start_year} to {current_year} = {len(specific_seasons)} seasons")
+            else:
+                # Multiple seasons = use exactly those seasons
+                specific_seasons = []
+                for season in season_list:
+                    if '-' in season or '/' in season:
+                        start_year_str = season.split('-')[0] if '-' in season else season.split('/')[0]
+                        # Convert to 4-digit year
+                        if len(start_year_str) == 4:
+                            year = int(start_year_str) + 1
+                        else:
+                            year = int(start_year_str) + 1
+                        specific_seasons.append(year)
+                log(f"Using specific seasons only: {specific_seasons}")
     elif historical_mode == 'career':
         past_years = 25  # Use max years for career stats
         log("Using career mode (all available seasons)")
@@ -1653,13 +2051,28 @@ def main():
     
     # Fetch historical data
     if specific_seasons:
-        log(f"Fetching historical data for specific seasons: {specific_seasons}...")
-        historical_players = fetch_historical_players_data(conn, specific_seasons=specific_seasons)
+        # If include_current is true and current season not in list, add it
+        seasons_to_fetch = specific_seasons.copy() if specific_seasons else []
+        if include_current:
+            current_season_year = NBA_CONFIG['current_season_year']
+            if current_season_year not in seasons_to_fetch:
+                seasons_to_fetch.append(current_season_year)
+                log(f"Including current season ({current_season_year}) in specific seasons")
+        log(f"Fetching historical data for specific seasons: {seasons_to_fetch}...")
+        historical_players = fetch_historical_players_data(conn, specific_seasons=seasons_to_fetch)
     else:
         log(f"Fetching historical data for past {past_years} seasons (include_current={include_current})...")
         historical_players = fetch_historical_players_data(conn, past_years, include_current)
     
     log(f"✅ Fetched historical data for {len(historical_players)} players")
+    
+    # Fetch playoff data (always use career mode for playoffs)
+    log("Fetching playoff data (career stats)...")
+    if specific_seasons:
+        playoff_players = fetch_playoff_players_data(conn, specific_seasons=specific_seasons)
+    else:
+        playoff_players = fetch_playoff_players_data(conn, past_years=25)  # Career = 25 years
+    log(f"✅ Fetched playoff data for {len(playoff_players)} players")
     
     conn.close()
     
@@ -1677,84 +2090,123 @@ def main():
         log(f"❌ Error connecting to Google Sheets: {e}")
         return False
     
-    # Read configuration from the first sheet (or use env vars/defaults)
+    # Read configuration from the first sheet to check if it differs
     # This ensures all sheets use the same configuration
     first_sheet = spreadsheet.get_worksheet(0)
     existing_mode, existing_custom, existing_historical = parse_sheet_config(first_sheet)
     
-    # Use existing config if available, otherwise use environment/defaults
-    final_stats_mode = existing_mode if existing_mode else stats_mode
-    final_custom_value = existing_custom if existing_custom else stats_custom_value
+    # ALWAYS use the provided configuration (from environment/API) - don't preserve old config
+    # The API/environment variables represent the USER'S CURRENT REQUEST
+    final_stats_mode = stats_mode
+    final_custom_value = stats_custom_value
+    final_past_years = past_years
+    final_include_current = include_current
+    final_specific_seasons = specific_seasons
     
+    log(f"Using NEW configuration for all sheets: mode={final_stats_mode}, years={final_past_years}, include_current={final_include_current}")
+    
+    # Check if we need to re-fetch historical data (compare new config to existing)
+    need_refetch = False
     if existing_historical:
-        final_past_years, final_include_current, final_specific_seasons = existing_historical
+        # Config came from sheet - check if it differs from what we're trying to set
+        existing_years, existing_include, existing_seasons = existing_historical
+        if final_specific_seasons != existing_seasons:
+            need_refetch = True
+            log("Historical config changed (seasons differ), re-fetching data...")
+        elif final_past_years != existing_years or final_include_current != existing_include:
+            need_refetch = True
+            log(f"Historical config changed (years: {existing_years}->{final_past_years}, include_current: {existing_include}->{final_include_current}), re-fetching data...")
+        else:
+            log("ℹ️  Historical config unchanged from existing sheet")
     else:
-        final_past_years = past_years
-        final_include_current = include_current
-        final_specific_seasons = specific_seasons
+        # No existing config - this is a new configuration
+        need_refetch = True
+        log("No existing historical config found, fetching data...")
     
-    log(f"Using configuration for all sheets: mode={final_stats_mode}, years={final_past_years}, include_current={final_include_current}")
-    
-    # Re-fetch historical data if needed based on first sheet's config
-    conn = psycopg2.connect(
-        host=DB_CONFIG['host'],
-        database=DB_CONFIG['database'],
-        user=DB_CONFIG['user'],
-        password=DB_CONFIG['password']
-    )
-    
-    if final_specific_seasons:
-        historical_players = fetch_historical_players_data(conn, specific_seasons=final_specific_seasons)
+    # Re-fetch historical data only if config changed
+    if need_refetch:
+        conn = psycopg2.connect(
+            host=DB_CONFIG['host'],
+            database=DB_CONFIG['database'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password']
+        )
+        
+        if final_specific_seasons:
+            historical_players = fetch_historical_players_data(conn, specific_seasons=final_specific_seasons)
+        else:
+            historical_players = fetch_historical_players_data(conn, final_past_years, final_include_current)
+        
+        conn.close()
+        log(f"✅ Re-fetched historical data for {len(historical_players)} players")
     else:
-        historical_players = fetch_historical_players_data(conn, final_past_years, final_include_current)
-    
-    conn.close()
+        log("ℹ️  Using already-fetched historical data (config unchanged)")
     
     # Calculate percentiles once for all sheets using the same configuration
     log(f"Calculating percentiles using mode: {final_stats_mode}...")
     percentiles, players_with_stats = calculate_percentiles(all_players, final_stats_mode, final_custom_value)
     historical_percentiles, historical_players_with_stats = calculate_historical_percentiles(historical_players, final_stats_mode, final_custom_value)
+    playoff_percentiles, playoff_players_with_stats = calculate_playoff_percentiles(playoff_players, final_stats_mode, final_custom_value)
     log("✅ Percentiles calculated")
     
     # Group players by team and add calculated stats
+    # First, create lookup dictionaries for O(1) access instead of O(n) loops
+    log("Building player stats lookups...")
+    current_stats_by_id = {p['player_id']: p for p in players_with_stats}
+    historical_stats_by_id = {p['player_id']: p for p in historical_players_with_stats}
+    playoff_stats_by_id = {p['player_id']: p for p in playoff_players_with_stats}
+    
     teams_data = {}
     for player in all_players:
         team_abbr = player['team_abbr']
         if team_abbr not in teams_data:
             teams_data[team_abbr] = []
         
-        # Add current season calculated stats
-        for p_with_stats in players_with_stats:
-            if p_with_stats['player_id'] == player['player_id']:
-                player['calculated_stats'] = p_with_stats.get('calculated_stats', {})
-                player['per100'] = p_with_stats.get('per100', {})
-                break
+        # Add current season calculated stats - O(1) lookup instead of O(n) loop
+        player_id = player['player_id']
+        if player_id in current_stats_by_id:
+            p_with_stats = current_stats_by_id[player_id]
+            player['calculated_stats'] = p_with_stats.get('calculated_stats', {})
+            player['per100'] = p_with_stats.get('per100', {})
         
-        # Add historical stats
-        for hist_player in historical_players_with_stats:
-            if hist_player['player_id'] == player['player_id']:
-                player['historical_calculated_stats'] = hist_player.get('calculated_stats', {})
-                player['historical_per100'] = hist_player.get('per100', {})
-                player['seasons_played'] = hist_player.get('seasons_played', 0)
-                break
+        # Add historical stats - O(1) lookup instead of O(n) loop
+        if player_id in historical_stats_by_id:
+            hist_player = historical_stats_by_id[player_id]
+            player['historical_calculated_stats'] = hist_player.get('calculated_stats', {})
+            player['historical_per100'] = hist_player.get('per100', {})
+            player['seasons_played'] = hist_player.get('seasons_played', 0)
+        
+        # Add playoff stats - O(1) lookup instead of O(n) loop
+        if player_id in playoff_stats_by_id:
+            playoff_player = playoff_stats_by_id[player_id]
+            player['playoff_calculated_stats'] = playoff_player.get('calculated_stats', {})
+            player['playoff_per100'] = playoff_player.get('per100', {})
+            player['playoff_seasons_played'] = playoff_player.get('seasons_played', 0)
         
         teams_data[team_abbr].append(player)
     
+    log("✅ Player data grouped by team")
+    
+    # Fetch all worksheet metadata once to avoid repeated API calls
+    log("Fetching worksheet metadata to avoid API rate limits...")
+    all_worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
+    log(f"✅ Found {len(all_worksheets)} existing worksheets")
+    
     # Create/update sheets for each team
-    # Check if there's a priority team to process first
-    priority_team = os.environ.get('PRIORITY_TEAM_ABBR')
+    # Check if there's a priority team to process first (from parameter or env var)
+    priority_team_param = priority_team or os.environ.get('PRIORITY_TEAM_ABBR')
     
     # Reorder teams to process priority team first
     teams_to_process = list(NBA_TEAMS)
-    if priority_team:
-        priority_team = priority_team.upper()
+    if priority_team_param:
+        priority_team_upper = priority_team_param.upper()
         # Find the priority team in the list
         for i, (team_abbr, team_name) in enumerate(teams_to_process):
-            if team_abbr == priority_team:
+            if team_abbr == priority_team_upper:
                 # Move this team to the front
                 priority_entry = teams_to_process.pop(i)
                 teams_to_process.insert(0, priority_entry)
-                log(f"📌 Priority team: {priority_team} will be processed first")
+                log(f"📌 Priority team: {priority_team_upper} will be processed first")
                 break
     
     for idx, (team_abbr, team_name) in enumerate(teams_to_process):
@@ -1763,18 +2215,33 @@ def main():
             log(f"⚠️  No data found for {team_name}, skipping...")
             continue
         
-        try:
-            worksheet = spreadsheet.worksheet(team_abbr)
-        except gspread.WorksheetNotFound:
+        # Use cached worksheet to avoid API rate limits
+        if team_abbr in all_worksheets:
+            worksheet = all_worksheets[team_abbr]
+        else:
             worksheet = spreadsheet.add_worksheet(title=team_abbr, rows=100, cols=30)
+            all_worksheets[team_abbr] = worksheet
         
         log(f"Updating {team_name} ({team_abbr})...")
-        create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, final_past_years, final_stats_mode, final_custom_value, final_specific_seasons, final_include_current)
-        log(f"✅ {team_name} complete")
         
-        # Add a 5-second delay after each team to avoid rate limits
-        if idx < len(teams_to_process) - 1:
-            time.sleep(5)
+        # Add small delay before updating each sheet to avoid API rate limits
+        # Skip delay for first team to start immediately
+        if idx > 0:
+            time.sleep(0.5)  # 500ms between sheets
+        
+        create_team_sheet(
+            worksheet, team_abbr, team_name, team_players, 
+            percentiles, historical_percentiles,
+            past_years=final_past_years,
+            stats_mode=final_stats_mode,
+            stats_custom_value=final_custom_value,
+            specific_seasons=final_specific_seasons,
+            include_current=final_include_current,
+            sync_section=sync_section,
+            playoff_percentiles=playoff_percentiles,
+            show_percentiles=show_percentiles
+        )
+        log(f"✅ {team_name} complete")
     
     log("=" * 60)
     log("✅ SUCCESS! All teams synced to Google Sheets")
@@ -1784,5 +2251,9 @@ def main():
     return True
 
 if __name__ == "__main__":
-    success = main()
+    # Check for priority team argument
+    priority = None
+    if len(sys.argv) > 1:
+        priority = sys.argv[1]
+    success = main(priority_team=priority)
     sys.exit(0 if success else 1)

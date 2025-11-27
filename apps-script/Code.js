@@ -140,14 +140,33 @@ function getCurrentSeason() {
  */
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
-  ui.createMenu('Stats View')
-    .addItem('Totals', 'switchToTotals')
-    .addItem('Per Game', 'switchToPerGame')
-    .addItem('Per Minute', 'switchToPerMinute')
-    .addSeparator()
-    .addItem('Show Percentiles', 'togglePercentileDisplay')
-    .addSeparator()
-    .addItem('Previous Years Stats', 'showHistoricalStatsDialog')
+  
+  // Initialize default settings if not already set
+  const props = PropertiesService.getDocumentProperties();
+  if (!props.getProperty('HISTORICAL_MODE')) {
+    props.setProperty('HISTORICAL_MODE', 'career');
+    props.setProperty('HISTORICAL_YEARS', '25');
+    props.setProperty('INCLUDE_CURRENT_YEAR', 'false');
+  }
+  if (!props.getProperty('POSTSEASON_MODE')) {
+    props.setProperty('POSTSEASON_MODE', 'career');
+    props.setProperty('POSTSEASON_YEARS', '25');
+  }
+  
+  ui.createMenu('Stats')
+    .addSubMenu(ui.createMenu('Stats Config')
+      .addItem('Totals', 'switchToTotals')
+      .addItem('Per Game', 'switchToPerGame')
+      .addItem('Per Minute', 'switchToPerMinute')
+      .addItem('Per Possession', 'switchToPerPossession')
+      .addSeparator()
+      .addItem('Toggle Percentiles', 'togglePercentileDisplay')
+      .addSeparator()
+      .addItem('Historical Timeframe', 'showHistoricalStatsDialog'))
+    .addSubMenu(ui.createMenu('Show/Hide')
+      .addItem('Current', 'toggleCurrentStats')
+      .addItem('Historical', 'toggleHistoricalStats')
+      .addItem('Postseason', 'togglePostseasonStats'))
     .addToUi();
 }
 
@@ -186,7 +205,6 @@ function onEditInstallable(e) {
   
   if (!playerId) {
     const playerName = sheet.getRange(row, 1).getValue();
-    SpreadsheetApp.getUi().alert(`Could not find player ID for ${playerName}. Please refresh the sheet.`);
     return;
   }
   
@@ -206,7 +224,6 @@ function onEditInstallable(e) {
     } else {
       fieldValue = parseWingspan(newValue);
       if (fieldValue === null) {
-        SpreadsheetApp.getUi().alert('Invalid wingspan format. Please use format like 6\'8" or enter inches as a number.');
         return;
       }
     }
@@ -229,7 +246,6 @@ function onEditInstallable(e) {
     );
   } catch (error) {
     Logger.log(`Error updating player: ${error}`);
-    SpreadsheetApp.getUi().alert(`Error updating database: ${error.message}`);
   }
 }
 
@@ -237,16 +253,24 @@ function onEditInstallable(e) {
  * Switch all team sheets to Totals mode
  */
 function switchToTotals() {
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Switching to Totals',
+    'Updating Stats',
+    -1
+  );
   updateAllSheets('totals', null);
-  SpreadsheetApp.getUi().alert('Switched to Totals mode');
 }
 
 /**
  * Switch all team sheets to Per Game mode
  */
 function switchToPerGame() {
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Switching to Per Game',
+    'Updating Stats',
+    -1
+  );
   updateAllSheets('per_game', null);
-  SpreadsheetApp.getUi().alert('Switched to Per Game mode');
 }
 
 /**
@@ -263,11 +287,39 @@ function switchToPerMinute() {
   if (response.getSelectedButton() === ui.Button.OK) {
     const minutes = parseFloat(response.getResponseText());
     if (isNaN(minutes) || minutes <= 0) {
-      ui.alert('Invalid input. Please enter a positive number.');
       return;
     }
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      `Switching to Per ${minutes} Minutes`,
+      'Updating Stats',
+      -1
+    );
     updateAllSheets('per_minutes', minutes);
-    ui.alert(`Switched to Per ${minutes} Minutes mode`);
+  }
+}
+
+/**
+ * Switch all team sheets to Per Possession mode with user input
+ */
+function switchToPerPossession() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(
+    'Per __ Possession Stats',
+    'Enter the number of possessions to scale stats to:',
+    ui.ButtonSet.OK_CANCEL
+  );
+  
+  if (response.getSelectedButton() === ui.Button.OK) {
+    const possessions = parseFloat(response.getResponseText());
+    if (isNaN(possessions) || possessions <= 0) {
+      return;
+    }
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      `Switching to Per ${possessions} Possessions`,
+      'Updating Stats',
+      -1
+    );
+    updateAllSheets('per_possessions', possessions);
   }
 }
 
@@ -282,18 +334,50 @@ function togglePercentileDisplay() {
   const newMode = (currentMode === 'true') ? 'false' : 'true';
   props.setProperty('SHOW_PERCENTILES', newMode);
   
-  if (newMode === 'true') {
-    // Trigger a refresh of all sheets
-    const statsMode = props.getProperty('STATS_MODE') || 'totals';
-    const customValue = props.getProperty('STATS_CUSTOM_VALUE');
-    updateAllSheets(statsMode, customValue ? parseFloat(customValue) : null);
-    ui.alert('Now showing percentile ranks instead of stat values.');
+  // Show loading message
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Toggling percentiles display',
+    'Updating Stats',
+    -1
+  );
+  
+  // Get the active sheet to set as priority team
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const activeSheet = ss.getActiveSheet();
+  const activeSheetName = activeSheet.getName().toUpperCase();
+  const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
+  
+  // Check if historical or postseason stats are configured
+  const historicalMode = props.getProperty('HISTORICAL_MODE');
+  const postseasonMode = props.getProperty('POSTSEASON_MODE');
+  
+  if (historicalMode || postseasonMode) {
+    // If historical or postseason stats are configured, trigger full sync
+    // This ensures current, historical, and postseason stats all update together
+    const historicalYears = props.getProperty('HISTORICAL_YEARS');
+    const historicalSeasons = props.getProperty('HISTORICAL_SEASONS');
+    const includeCurrent = props.getProperty('INCLUDE_CURRENT_YEAR') === 'true';
+    
+    let value;
+    let syncMode = historicalMode || 'career';
+    if (syncMode === 'seasons') {
+      // Multiple specific seasons
+      value = historicalSeasons || '';
+    } else if (syncMode === 'career') {
+      // Career mode - use all available years
+      value = 25;
+    } else {
+      // Years mode - use specific number of years
+      value = parseInt(historicalYears) || 3;
+    }
+    
+    // Call full sync (updates current, historical, and postseason)
+    syncFullStatsUpdate(syncMode, value, includeCurrent, priorityTeam);
   } else {
-    // Trigger a refresh of all sheets
+    // No historical/postseason configured, just update current season
     const statsMode = props.getProperty('STATS_MODE') || 'totals';
     const customValue = props.getProperty('STATS_CUSTOM_VALUE');
     updateAllSheets(statsMode, customValue ? parseFloat(customValue) : null);
-    ui.alert('Now showing stat values.');
   }
 }
 
@@ -335,20 +419,26 @@ function showHistoricalStatsDialog() {
  * Returns: { valid: boolean, mode: string, value: any, error: string }
  */
 function parseHistoricalStatsInput(input) {
+  Logger.log(`parseHistoricalStatsInput called with: "${input}"`);
+  
   if (!input || input.trim() === '') {
+    Logger.log('Input is empty');
     return { valid: false, error: 'Please enter a value' };
   }
   
   const trimmed = input.trim();
+  Logger.log(`Trimmed input: "${trimmed}"`);
   
   // Check for Career mode
   if (trimmed.toLowerCase() === 'career' || trimmed.toLowerCase() === 'c') {
+    Logger.log('Detected career mode');
     return { valid: true, mode: 'career', value: 25 };
   }
   
   // Check if it's a number (number of years)
   const numYears = parseInt(trimmed);
   if (!isNaN(numYears) && trimmed === numYears.toString()) {
+    Logger.log(`Detected years mode: ${numYears}`);
     if (numYears < 1 || numYears > 25) {
       return { valid: false, error: 'Number of years must be between 1 and 25' };
     }
@@ -359,6 +449,7 @@ function parseHistoricalStatsInput(input) {
   // Valid formats: 2024-25, 1998-99, 98-99, 2024/25, 2024, 1998
   const seasonPattern = /^\d{2,4}([\-\/]\d{2,4})?$/;
   if (seasonPattern.test(trimmed)) {
+    Logger.log('Detected season format');
     // Normalize to YYYY-YY format
     let normalized;
     
@@ -366,6 +457,7 @@ function parseHistoricalStatsInput(input) {
       const parts = trimmed.split(/[\-\/]/);
       const firstPart = parts[0];
       const secondPart = parts[1];
+      Logger.log(`Season parts: ${firstPart}, ${secondPart}`);
       
       // Handle 98-99 or 98/99 format
       if (firstPart.length === 2) {
@@ -385,13 +477,16 @@ function parseHistoricalStatsInput(input) {
         const nextYear = year + 1;
         normalized = `${year}-${nextYear.toString().slice(-2)}`;
       } else {
+        Logger.log('Invalid single year format');
         return { valid: false, error: 'Invalid season format. Use: 2024-25, 98-99, or 2024' };
       }
     }
     
+    Logger.log(`Normalized season: ${normalized}`);
     return { valid: true, mode: 'season', value: normalized };
   }
   
+  Logger.log('No pattern matched');
   return { valid: false, error: 'Invalid format. Enter: number (1-25), season (2024-25), or "Career"' };
 }
 
@@ -430,111 +525,125 @@ function saveHistoricalStatsConfig(input, includeCurrentYear) {
   const activeSheetName = activeSheet.getName().toUpperCase();
   const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
   
-  // Trigger the sync via API in background using a time-driven trigger
-  // This allows the dialog to close immediately without waiting for sync to complete
+  // Execute sync directly (synchronous) - user waits but gets immediate results
   try {
-    // Store sync parameters in script properties for the trigger to use
-    const scriptProps = PropertiesService.getScriptProperties();
+    Logger.log(`Starting direct sync: mode=${parsed.mode}, value=${parsed.value}, includeCurrent=${includeCurrentYear}, priority=${priorityTeam}`);
     
-    Logger.log(`Storing pending sync: mode=${parsed.mode}, value=${parsed.value}, includeCurrent=${includeCurrentYear}, priority=${priorityTeam}`);
-    
-    scriptProps.setProperty('PENDING_SYNC_MODE', parsed.mode);
-    scriptProps.setProperty('PENDING_SYNC_VALUE', parsed.value.toString());
-    scriptProps.setProperty('PENDING_SYNC_INCLUDE_CURRENT', includeCurrentYear ? 'true' : 'false');
-    scriptProps.setProperty('PENDING_SYNC_PRIORITY_TEAM', priorityTeam || '');
-    
-    // Create a one-time trigger to run the sync in 1 second
-    ScriptApp.newTrigger('executePendingSync')
-      .timeBased()
-      .after(1000)  // 1 second
-      .create();
-    
-    // Show immediate feedback
+    // Show loading message
     SpreadsheetApp.getActiveSpreadsheet().toast(
-      'Sync will start in 1 second. You can continue working.',
-      'Historical Stats Sync Scheduled',
+      'Updating historical stats timeframe',
+      'Updating Stats',
+      -1  // -1 means toast stays until manually dismissed or replaced
+    );
+    
+    // Execute full sync WITHOUT sync_section parameter to update ALL sections with new timeframe
+    // This ensures current, historical, and postseason all use the same timeframe
+    syncFullStatsUpdate(parsed.mode, parsed.value, includeCurrentYear, priorityTeam);
+    
+    // Show success message
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      'Stats updated to ' + (parsed.mode === 'career' ? 'Career' : parsed.value + ' seasons') + ' successfully!',
+      'Updating Stats',
       5
     );
     
     return { success: true };
   } catch (error) {
-    Logger.log(`Error setting up sync: ${error}`);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Execute the pending sync (called by time-driven trigger)
- */
-function executePendingSync() {
-  const scriptProps = PropertiesService.getScriptProperties();
-  
-  try {
-    Logger.log('executePendingSync triggered');
-    
-    const mode = scriptProps.getProperty('PENDING_SYNC_MODE');
-    const value = scriptProps.getProperty('PENDING_SYNC_VALUE');
-    const includeCurrentStr = scriptProps.getProperty('PENDING_SYNC_INCLUDE_CURRENT');
-    const priorityTeam = scriptProps.getProperty('PENDING_SYNC_PRIORITY_TEAM');
-    
-    Logger.log(`Retrieved: mode=${mode}, value=${value}, includeCurrent=${includeCurrentStr}, priority=${priorityTeam}`);
-    
-    // Clear the pending sync properties
-    scriptProps.deleteProperty('PENDING_SYNC_MODE');
-    scriptProps.deleteProperty('PENDING_SYNC_VALUE');
-    scriptProps.deleteProperty('PENDING_SYNC_INCLUDE_CURRENT');
-    scriptProps.deleteProperty('PENDING_SYNC_PRIORITY_TEAM');
-    
-    if (!mode || !value) {
-      throw new Error('No pending sync found');
-    }
-    
-    const includeCurrentBool = includeCurrentStr === 'true';
-    const priority = priorityTeam && priorityTeam !== '' ? priorityTeam : null;
-    
-    // Show toast at the start
-    SpreadsheetApp.getActiveSpreadsheet().toast(
-      'Syncing previous years stats in the background. Sheets will update in a few minutes.',
-      'Background Sync Started',
-      3
-    );
-    
-    // Execute the sync
-    syncHistoricalStats(mode, value, includeCurrentBool, priority);
-    
-  } catch (error) {
-    Logger.log(`Sync execution error: ${error}`);
+    Logger.log(`Sync error: ${error}`);
     SpreadsheetApp.getActiveSpreadsheet().toast(
       `Sync failed: ${error.message}`,
       'Error',
       5
     );
-  } finally {
-    // Clean up the trigger
-    const triggers = ScriptApp.getProjectTriggers();
-    for (const trigger of triggers) {
-      if (trigger.getHandlerFunction() === 'executePendingSync') {
-        ScriptApp.deleteTrigger(trigger);
-      }
-    }
+    return { success: false, error: error.message };
   }
 }
 
 /**
- * Trigger historical stats sync via API
+ * Save postseason stats configuration and trigger sync
  */
-function syncHistoricalStats(mode, value, includeCurrentYear, priorityTeam) {
-  const url = `${API_BASE_URL}/api/sync-historical-stats`;
+function savePostseasonStatsConfig(input) {
+  const parsed = parseHistoricalStatsInput(input);
+  
+  if (!parsed.valid) {
+    return { success: false, error: parsed.error };
+  }
+  
+  const props = PropertiesService.getDocumentProperties();
+  
+  if (parsed.mode === 'career') {
+    props.setProperty('POSTSEASON_MODE', 'career');
+    props.setProperty('POSTSEASON_YEARS', '25');
+    props.deleteProperty('POSTSEASON_SEASONS');
+  } else if (parsed.mode === 'years') {
+    props.setProperty('POSTSEASON_MODE', 'years');
+    props.setProperty('POSTSEASON_YEARS', parsed.value.toString());
+    props.deleteProperty('POSTSEASON_SEASONS');
+  } else if (parsed.mode === 'season') {
+    props.setProperty('POSTSEASON_MODE', 'season');
+    props.setProperty('POSTSEASON_SEASONS', parsed.value);
+    props.deleteProperty('POSTSEASON_YEARS');
+  }
+  
+  // Get the active sheet to set as priority team
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const activeSheet = ss.getActiveSheet();
+  const activeSheetName = activeSheet.getName().toUpperCase();
+  const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
+  
+  // Execute sync directly (synchronous) - user waits but gets immediate results
+  try {
+    Logger.log(`Starting postseason sync: mode=${parsed.mode}, value=${parsed.value}, priority=${priorityTeam}`);
+    
+    // Show loading message
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      'Postseason stats timeframe',
+      'Updating Stats',
+      -1  // -1 means toast stays until manually dismissed or replaced
+    );
+    
+    // Execute the sync directly
+    syncStatsSection('postseason', parsed.mode, parsed.value, false, priorityTeam);
+    
+    // Show success message
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      'Postseason stats updated to ' + (parsed.mode === 'career' ? 'Career' : parsed.value + ' seasons') + ' successfully!',
+      'Updating Stats',
+      5
+    );
+    
+    return { success: true };
+  } catch (error) {
+    Logger.log(`Sync error: ${error}`);
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      `Sync failed: ${error.message}`,
+      'Error',
+      5
+    );
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Trigger stats sync via API for historical or postseason sections
+ * @param {string} section - 'historical' or 'postseason'
+ */
+function syncStatsSection(section, mode, value, includeCurrentYear, priorityTeam) {
+  const endpoint = section === 'postseason' ? 'sync-postseason-stats' : 'sync-historical-stats';
+  const url = `${API_BASE_URL}/api/${endpoint}`;
   
   // Get current stats mode from document properties
   const props = PropertiesService.getDocumentProperties();
   const statsMode = props.getProperty('STATS_MODE') || 'per_36';
   const statsCustomValue = props.getProperty('STATS_CUSTOM_VALUE');
+  const showPercentiles = props.getProperty('SHOW_PERCENTILES') === 'true';
   
   const payload = {
     mode: mode,
     include_current: includeCurrentYear,
-    stats_mode: statsMode  // Pass current stats mode to sync
+    stats_mode: statsMode,  // Pass current stats mode to sync
+    show_percentiles: showPercentiles,  // Pass percentile preference
+    sync_section: section  // Tell API which section to update ('historical' or 'postseason')
   };
   
   // Add custom value if it exists
@@ -597,6 +706,90 @@ function syncHistoricalStats(mode, value, includeCurrentYear, priorityTeam) {
 }
 
 /**
+ * Trigger historical stats sync via API (legacy wrapper)
+ */
+function syncHistoricalStats(mode, value, includeCurrentYear, priorityTeam) {
+  return syncStatsSection('historical', mode, value, includeCurrentYear, priorityTeam);
+}
+
+/**
+ * Trigger FULL stats sync via API (updates current, historical, and postseason)
+ * This is used when changing stats modes to ensure all sections update together
+ */
+function syncFullStatsUpdate(mode, value, includeCurrentYear, priorityTeam) {
+  const url = `${API_BASE_URL}/api/sync-historical-stats`;
+  
+  // Get current stats mode from document properties
+  const props = PropertiesService.getDocumentProperties();
+  const statsMode = props.getProperty('STATS_MODE') || 'per_36';
+  const statsCustomValue = props.getProperty('STATS_CUSTOM_VALUE');
+  const showPercentiles = props.getProperty('SHOW_PERCENTILES') === 'true';
+  
+  const payload = {
+    mode: mode,
+    include_current: includeCurrentYear,
+    stats_mode: statsMode,
+    show_percentiles: showPercentiles
+    // NOTE: NO sync_section parameter - this triggers a FULL sync of all sections
+  };
+  
+  // Add custom value if it exists
+  if (statsCustomValue) {
+    payload.stats_custom_value = parseFloat(statsCustomValue);
+  }
+  
+  // Add priority team if specified
+  if (priorityTeam) {
+    payload.priority_team = priorityTeam;
+  }
+  
+  // Add the appropriate value based on mode
+  if (mode === 'years' || mode === 'career') {
+    payload.years = parseInt(value);
+  } else if (mode === 'season' || mode === 'seasons') {
+    // Handle both singular 'season' (single season string) and plural 'seasons' (comma-separated)
+    if (typeof value === 'string' && value.includes(',')) {
+      payload.seasons = value.split(',').map(s => s.trim());
+    } else {
+      payload.seasons = [value];  // Single season as array
+    }
+  }
+  
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+  
+  const response = UrlFetchApp.fetch(url, options);
+  const responseCode = response.getResponseCode();
+  const responseText = response.getContentText();
+  
+  Logger.log(`API Response Code: ${responseCode}`);
+  Logger.log(`API Response: ${responseText}`);
+  
+  if (responseCode !== 200) {
+    const errorData = JSON.parse(responseText);
+    const errorMessage = errorData.error || 'Unknown error occurred';
+    const stderr = errorData.stderr || '';
+    const stdout = errorData.stdout || '';
+    
+    Logger.log(`STDERR: ${stderr}`);
+    Logger.log(`STDOUT: ${stdout}`);
+    
+    throw new Error(`API Error (${responseCode}): ${errorMessage}`);
+  }
+  
+  try {
+    return JSON.parse(responseText);
+  } catch (e) {
+    Logger.log(`Response: ${responseText}`);
+    return { success: true };
+  }
+}
+
+/**
  * Update all team sheets with new stat mode
  */
 function updateAllSheets(mode, customValue) {
@@ -613,52 +806,52 @@ function updateAllSheets(mode, customValue) {
     props.deleteProperty('STATS_CUSTOM_VALUE');
   }
   
-  // Check if historical stats are configured
+  // Check if historical or postseason stats are configured
   const historicalMode = props.getProperty('HISTORICAL_MODE');
+  const postseasonMode = props.getProperty('POSTSEASON_MODE');
   
-  if (historicalMode) {
-    // If historical stats are configured, trigger full sync (no quick update)
-    // This ensures both current and historical stats update together without header duplication
+  if (historicalMode || postseasonMode) {
+    // If historical or postseason stats are configured, trigger full sync
+    // This ensures current, historical, and postseason stats all update together
+    
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      'Stats Mode',
+      'Updating Stats',
+      -1
+    );
+    
+    // Pass the active sheet as priority team if it's a team sheet
+    const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
+    
+    // When changing stats mode, we need to update ALL sections (current, historical, postseason)
+    // This is done by calling the historical sync endpoint WITHOUT setting SYNC_SECTION
+    // The Python script will update all three sections in one pass
     
     const historicalYears = props.getProperty('HISTORICAL_YEARS');
     const historicalSeasons = props.getProperty('HISTORICAL_SEASONS');
     const includeCurrent = props.getProperty('INCLUDE_CURRENT_YEAR') === 'true';
     
     let value;
-    if (historicalMode === 'season') {
-      value = historicalSeasons;
+    let syncMode = historicalMode || 'career';
+    if (syncMode === 'seasons') {
+      // Multiple specific seasons
+      value = historicalSeasons || '';
+    } else if (syncMode === 'career') {
+      // Career mode - use all available years
+      value = 25;
     } else {
+      // Years mode - use specific number of years
       value = parseInt(historicalYears) || 3;
     }
-
-       // Format mode text for display
-    let modeDisplay = mode;
-    if (mode === 'per_minutes' && customValue) {
-      modeDisplay = `Per ${customValue} Minutes`;
-    } else if (mode === 'per_game') {
-      modeDisplay = 'Per Game';
-    } else if (mode === 'totals') {
-      modeDisplay = 'Totals';
-    }
     
-    // Show appropriate message based on whether user is on a team sheet
-    if (NBA_TEAMS.hasOwnProperty(activeSheetName)) {
-      SpreadsheetApp.getActiveSpreadsheet().toast(
-        `Updating stats view...`,
-        modeDisplay,
-        5
-      );
-    } else {
-      SpreadsheetApp.getActiveSpreadsheet().toast(
-        `Updating stats view...`,
-        modeDisplay,
-        5
-      );
-    }
+    // Call full sync (updates current, historical, and postseason)
+    syncFullStatsUpdate(syncMode, value, includeCurrent, priorityTeam);
     
-    // Pass the active sheet as priority team if it's a team sheet
-    const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
-    syncHistoricalStats(historicalMode, value, includeCurrent, priorityTeam);
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      'Stats updated successfully!',
+      'Updating Stats',
+      3
+    );
     
   } else {
     // No historical stats configured, just update current season via API (fast)
@@ -677,7 +870,6 @@ function updateAllSheets(mode, customValue) {
           Logger.log(`${activeSheetName}: Received ${stats.players.length} players from API`);
           updateSheetWithStats(activeSheet, stats, mode, customValue);
           updatedCount++;
-          SpreadsheetApp.getActiveSpreadsheet().toast(`${activeSheetName} updated`, 'Current Sheet Complete', 2);
         } else {
           Logger.log(`${activeSheetName}: No stats returned from API`);
         }
@@ -695,8 +887,6 @@ function updateAllSheets(mode, customValue) {
         continue;
       }
       
-      SpreadsheetApp.getActiveSpreadsheet().toast(`Updating ${sheetName}...`, 'Please wait', -1);
-      
       const teamId = NBA_TEAMS[sheetName];
       
       try {
@@ -713,8 +903,6 @@ function updateAllSheets(mode, customValue) {
         Logger.log(`Error updating ${sheetName}: ${error}`);
       }
     }
-    
-    SpreadsheetApp.getActiveSpreadsheet().toast(`Updated ${updatedCount} teams`, 'Complete', 3);
   }
 }
 
@@ -901,8 +1089,16 @@ function updateSheetWithStats(sheet, statsData, mode, customValue) {
     }
   }
   
+  // Flush all pending updates
+  SpreadsheetApp.flush();
+  
   // Auto-resize column A (player names) to fit content
+  // Set a reasonable max width to prevent overly wide columns
   sheet.autoResizeColumn(1);
+  const currentWidth = sheet.getColumnWidth(1);
+  if (currentWidth > 120) {
+    sheet.setColumnWidth(1, 120);  // Cap at 120 pixels (reduced from 200)
+  }
 }
 
 /**
@@ -1015,4 +1211,123 @@ function updatePlayerField(playerId, fieldName, fieldValue) {
   }
   
   return data;
+}
+
+/**
+ * Section visibility toggle functions
+ * Column ranges (1-indexed):
+ * - Current Stats: I-Y (columns 9-25)
+ * - Historical Stats: Z-AQ (columns 26-43)
+ * - Postseason Stats: AR-BI (columns 44-61)
+ */
+
+function toggleCurrentStats() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  const props = PropertiesService.getDocumentProperties();
+  const currentVisible = props.getProperty('CURRENT_VISIBLE') !== 'false';  // Default true
+  const newVisible = !currentVisible;
+  
+  Logger.log(`toggleCurrentStats: currentVisible=${currentVisible}, newVisible=${newVisible}`);
+  
+  // Get teams from config
+  const nbaTeams = getNbaTeams();
+  Logger.log(`NBA_TEAMS loaded: ${Object.keys(nbaTeams).length} teams`);
+  
+  let updatedCount = 0;
+  // Toggle visibility on all team sheets
+  for (const sheet of sheets) {
+    const sheetName = sheet.getName().toUpperCase();
+    const isTeam = nbaTeams.hasOwnProperty(sheetName);
+    Logger.log(`Checking sheet: ${sheetName}, is team: ${isTeam}`);
+    if (isTeam) {
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 9-25`);
+      if (newVisible) {
+        sheet.showColumns(9, 17);  // Show 17 columns starting at I (columns I-Y)
+      } else {
+        sheet.hideColumns(9, 17);  // Hide 17 columns starting at I (columns I-Y)
+      }
+      updatedCount++;
+    }
+  }
+  
+  Logger.log(`Updated ${updatedCount} sheets`);
+  props.setProperty('CURRENT_VISIBLE', newVisible.toString());
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    newVisible ? `Current stats shown on ${updatedCount} sheets` : `Current stats hidden on ${updatedCount} sheets`,
+    'Column Visibility',
+    3
+  );
+}
+
+function toggleHistoricalStats() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  const props = PropertiesService.getDocumentProperties();
+  const historicalVisible = props.getProperty('HISTORICAL_VISIBLE') !== 'false';  // Default true
+  const newVisible = !historicalVisible;
+  
+  Logger.log(`toggleHistoricalStats: historicalVisible=${historicalVisible}, newVisible=${newVisible}`);
+  
+  // Get teams from config
+  const nbaTeams = getNbaTeams();
+  
+  let updatedCount = 0;
+  // Toggle visibility on all team sheets
+  for (const sheet of sheets) {
+    const sheetName = sheet.getName().toUpperCase();
+    if (nbaTeams.hasOwnProperty(sheetName)) {
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 26-43`);
+      if (newVisible) {
+        sheet.showColumns(26, 18);  // Show 18 columns starting at Z (columns Z-AQ)
+      } else {
+        sheet.hideColumns(26, 18);  // Hide 18 columns starting at Z (columns Z-AQ)
+      }
+      updatedCount++;
+    }
+  }
+  
+  Logger.log(`Updated ${updatedCount} sheets`);
+  props.setProperty('HISTORICAL_VISIBLE', newVisible.toString());
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    newVisible ? `Historical stats shown on ${updatedCount} sheets` : `Historical stats hidden on ${updatedCount} sheets`,
+    'Column Visibility',
+    3
+  );
+}
+
+function togglePostseasonStats() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheets = ss.getSheets();
+  const props = PropertiesService.getDocumentProperties();
+  const postseasonVisible = props.getProperty('POSTSEASON_VISIBLE') !== 'false';  // Default true
+  const newVisible = !postseasonVisible;
+  
+  Logger.log(`togglePostseasonStats: postseasonVisible=${postseasonVisible}, newVisible=${newVisible}`);
+  
+  // Get teams from config
+  const nbaTeams = getNbaTeams();
+  
+  let updatedCount = 0;
+  // Toggle visibility on all team sheets
+  for (const sheet of sheets) {
+    const sheetName = sheet.getName().toUpperCase();
+    if (nbaTeams.hasOwnProperty(sheetName)) {
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 44-61`);
+      if (newVisible) {
+        sheet.showColumns(44, 18);  // Show 18 columns starting at AR (columns AR-BI)
+      } else {
+        sheet.hideColumns(44, 18);  // Hide 18 columns starting at AR (columns AR-BI)
+      }
+      updatedCount++;
+    }
+  }
+  
+  Logger.log(`Updated ${updatedCount} sheets`);
+  props.setProperty('POSTSEASON_VISIBLE', newVisible.toString());
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    newVisible ? `Postseason stats shown on ${updatedCount} sheets` : `Postseason stats hidden on ${updatedCount} sheets`,
+    'Column Visibility',
+    3
+  );
 }
