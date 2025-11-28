@@ -389,70 +389,79 @@ NBA_TEAMS_BY_ID = {
 STAT_COLUMNS = {
     'games': 8,        # Column I (GMS)
     'minutes': 9,      # Column J (Min)
-    'points': 10,      # Column K (Pts)
-    'ts_pct': 11,      # Column L (TS%)
-    'fg2a': 12,        # Column M (2PA)
-    'fg2_pct': 13,     # Column N (2P%)
-    'fg3a': 14,        # Column O (3PA)
-    'fg3_pct': 15,     # Column P (3P%)
-    'fta': 16,         # Column Q (FTA)
-    'ft_pct': 17,      # Column R (FT%)
-    'assists': 18,     # Column S (Ast)
-    'turnovers': 19,   # Column T (Tov) - reversed (lower is better)
-    'oreb_pct': 20,    # Column U (OR%)
-    'dreb_pct': 21,    # Column V (DR%)
-    'steals': 22,      # Column W (Stl)
-    'blocks': 23,      # Column X (Blk)
-    'fouls': 24,       # Column Y (Fls) - reversed (lower is better)
+    'possessions': 10, # Column K (POS)
+    'points': 11,      # Column L (Pts)
+    'ts_pct': 12,      # Column M (TS%)
+    'fg2a': 13,        # Column N (2PA)
+    'fg2_pct': 14,     # Column O (2P%)
+    'fg3a': 15,        # Column P (3PA)
+    'fg3_pct': 16,     # Column Q (3P%)
+    'fta': 17,         # Column R (FTA)
+    'ft_pct': 18,      # Column S (FT%)
+    'assists': 19,     # Column T (Ast)
+    'turnovers': 20,   # Column U (Tov) - reversed (lower is better)
+    'oreb_pct': 21,    # Column V (OR%)
+    'dreb_pct': 22,    # Column W (DR%)
+    'steals': 23,      # Column X (Stl)
+    'blocks': 24,      # Column Y (Blk)
+    'fouls': 25,       # Column Z (Fls) - reversed (lower is better)
+    'off_rating': 26,  # Column AA (OR)
+    'def_rating': 27,  # Column AB (DR)
 }
 
 # Historical stats section - starts after current stats
 HISTORICAL_STAT_COLUMNS = {
-    'years': 25,       # Column Z (YRS) - count of seasons played
-    'games': 26,       # Column AA (GMS)
-    'minutes': 27,     # Column AB (Min)
-    'points': 28,      # Column AC (Pts)
-    'ts_pct': 29,      # Column AD (TS%)
-    'fg2a': 30,        # Column AE (2PA)
-    'fg2_pct': 31,     # Column AF (2P%)
-    'fg3a': 32,        # Column AG (3PA)
-    'fg3_pct': 33,     # Column AH (3P%)
-    'fta': 34,         # Column AI (FTA)
-    'ft_pct': 35,      # Column AJ (FT%)
-    'assists': 36,     # Column AK (Ast)
-    'turnovers': 37,   # Column AL (Tov) - reversed (lower is better)
-    'oreb_pct': 38,    # Column AM (OR%)
-    'dreb_pct': 39,    # Column AN (DR%)
-    'steals': 40,      # Column AO (Stl)
-    'blocks': 41,      # Column AP (Blk)
-    'fouls': 42,       # Column AQ (Fls) - reversed (lower is better)
+    'years': 28,       # Column AC (YRS) - count of seasons played
+    'games': 29,       # Column AD (GMS)
+    'minutes': 30,     # Column AE (Min)
+    'possessions': 31, # Column AF (POS)
+    'points': 32,      # Column AG (Pts)
+    'ts_pct': 33,      # Column AH (TS%)
+    'fg2a': 34,        # Column AI (2PA)
+    'fg2_pct': 35,     # Column AJ (2P%)
+    'fg3a': 36,        # Column AK (3PA)
+    'fg3_pct': 37,     # Column AL (3P%)
+    'fta': 38,         # Column AM (FTA)
+    'ft_pct': 39,      # Column AN (FT%)
+    'assists': 40,     # Column AO (Ast)
+    'turnovers': 41,   # Column AP (Tov) - reversed (lower is better)
+    'oreb_pct': 42,    # Column AQ (OR%)
+    'dreb_pct': 43,    # Column AR (DR%)
+    'steals': 44,      # Column AS (Stl)
+    'blocks': 45,      # Column AT (Blk)
+    'fouls': 46,       # Column AU (Fls) - reversed (lower is better)
+    'off_rating': 47,  # Column AV (OR)
+    'def_rating': 48,  # Column AW (DR)
 }
 
 # Postseason stat columns (same structure as historical, different column range)
 # Includes both playoffs (season_type=2) and play-in games (season_type=3)
 POSTSEASON_STAT_COLUMNS = {
-    'years': 43,       # Column AR (YRS) - count of postseason seasons played
-    'games': 44,       # Column AS (GMS)
-    'minutes': 45,     # Column AT (Min)
-    'points': 46,      # Column AU (Pts)
-    'ts_pct': 47,      # Column AV (TS%)
-    'fg2a': 48,        # Column AW (2PA)
-    'fg2_pct': 49,     # Column AX (2P%)
-    'fg3a': 50,        # Column AY (3PA)
-    'fg3_pct': 51,     # Column AZ (3P%)
-    'fta': 52,         # Column BA (FTA)
-    'ft_pct': 53,      # Column BB (FT%)
-    'assists': 54,     # Column BC (Ast)
-    'turnovers': 55,   # Column BD (Tov) - reversed (lower is better)
-    'oreb_pct': 56,    # Column BE (OR%)
-    'dreb_pct': 57,    # Column BF (DR%)
-    'steals': 58,      # Column BG (Stl)
-    'blocks': 59,      # Column BH (Blk)
-    'fouls': 60,       # Column BI (Fls) - reversed (lower is better)
+    'years': 49,       # Column AX (YRS) - count of postseason seasons played
+    'games': 50,       # Column AY (GMS)
+    'minutes': 51,     # Column AZ (Min)
+    'possessions': 52, # Column BA (POS)
+    'points': 53,      # Column BB (Pts)
+    'ts_pct': 54,      # Column BC (TS%)
+    'fg2a': 55,        # Column BD (2PA)
+    'fg2_pct': 56,     # Column BE (2P%)
+    'fg3a': 57,        # Column BF (3PA)
+    'fg3_pct': 58,     # Column BG (3P%)
+    'fta': 59,         # Column BH (FTA)
+    'ft_pct': 60,      # Column BI (FT%)
+    'assists': 61,     # Column BJ (Ast)
+    'turnovers': 62,   # Column BK (Tov) - reversed (lower is better)
+    'oreb_pct': 63,    # Column BL (OR%)
+    'dreb_pct': 64,    # Column BM (DR%)
+    'steals': 65,      # Column BN (Stl)
+    'blocks': 66,      # Column BO (Blk)
+    'fouls': 67,       # Column BP (Fls) - reversed (lower is better)
+    'off_rating': 68,  # Column BQ (OR)
+    'def_rating': 69,  # Column BR (DR)
 }
 
 # Player ID column - hidden at end after all stats
-PLAYER_ID_COLUMN = 61  # Column BJ - hidden player_id for onEdit lookups (moved to end after postseason section)
+PLAYER_ID_COLUMN = 70  # Column BS - hidden player_id for onEdit lookups (moved to end after postseason section)
 
 # Stats where lower values are better (will use reversed color scale)
 REVERSE_STATS = {'turnovers', 'fouls'}
@@ -491,13 +500,13 @@ SECTIONS = {
         'name': 'Current Season Stats',
         'columns': {
             'start': 8,   # Column I
-            'end': 24,    # Column Y (index 24, last current stat column)
-            'count': 17
+            'end': 28,    # Column AB (index 27, last current stat column) - increased by 3
+            'count': 20   # Increased from 17 to 20 (added POS, OR, DR)
         },
         'season_type': 1,  # Regular season
         'include_current': True,
-        'stats': ['games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct', 
-                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls'],
+        'stats': ['games', 'minutes', 'possessions', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct', 
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls', 'off_rating', 'def_rating'],
         'merge_header': True,
         'header_placeholder': '{season}',  # Replaced with "2025-26 Stats Per 36 Mins" by default
         'default_visible': True,
@@ -516,20 +525,20 @@ SECTIONS = {
         },
         'auto_resize': True,  # Auto-resize all other columns in this section
         'auto_resize_start': 9,  # Start auto-resize from column J (after games)
-        'auto_resize_end': 25,   # End at column Y (last current stat)
+        'auto_resize_end': 28,   # End at column AB (last current stat)
     },
     
     'historical': {
         'name': 'Historical Stats',
         'columns': {
-            'start': 25,  # Column Z
-            'end': 42,    # Column AQ (index 42, last historical stat column)
-            'count': 18   # Includes YRS column
+            'start': 28,  # Column AC (shifted right by 3)
+            'end': 49,    # Column AW (index 48, last historical stat column) - increased by 3
+            'count': 21   # Increased from 18 to 21 (added POS, OR, DR)
         },
         'season_type': 1,  # Regular season
         'include_current': True,  # Include current season by default
-        'stats': ['years', 'games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
-                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls'],
+        'stats': ['years', 'games', 'minutes', 'possessions', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls', 'off_rating', 'def_rating'],
         'merge_header': True,
         'header_placeholder': '{historical_years}',  # Replaced with "Career Stats Per 36 Mins" by default
         'default_visible': True,
@@ -567,21 +576,21 @@ SECTIONS = {
             'fouls': {'width': 60, 'fixed': False},
         },
         'auto_resize': True,  # Auto-resize all columns except YRS
-        'auto_resize_start': 26,  # Start from column AA (first stat after YRS)
-        'auto_resize_end': 43,    # End at column AQ (last historical stat) - inclusive
+        'auto_resize_start': 30,  # Start from column AE (first stat after YRS) - shifted by 3
+        'auto_resize_end': 49,    # End at column AW (last historical stat) - inclusive
     },
     
     'postseason': {
         'name': 'Postseason Stats',
         'columns': {
-            'start': 43,  # Column AR
-            'end': 60,    # Column BI (index 60, last postseason stat column)
-            'count': 18   # Includes YRS column
+            'start': 49,  # Column AX (shifted right by 6)
+            'end': 70,    # Column BR (index 69, last postseason stat column) - increased by 3
+            'count': 21   # Increased from 18 to 21 (added POS, OR, DR)
         },
         'season_type': [2, 3],  # Playoffs (2) + Play-in (3)
         'include_current': True,  # Include current season postseason by default
-        'stats': ['years', 'games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
-                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls'],
+        'stats': ['years', 'games', 'minutes', 'possessions', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls', 'off_rating', 'def_rating'],
         'merge_header': True,
         'header_placeholder': '{postseason_years}',  # Replaced with "Postseason Stats Per 36 Mins" by default
         'default_visible': True,
@@ -619,20 +628,162 @@ SECTIONS = {
             'fouls': {'width': 60, 'fixed': False},
         },
         'auto_resize': True,  # Auto-resize all columns except YRS
-        'auto_resize_start': 44,  # Start from column AS (first stat after YRS)
-        'auto_resize_end': 61,    # End at column BI (last postseason stat) - inclusive
+        'auto_resize_start': 50,  # Start from column AY (first stat after YRS) - shifted by 6
+        'auto_resize_end': 70,    # End at column BR (last postseason stat) - inclusive
     },
     
     'hidden': {
         'name': 'Hidden Fields',
         'columns': {
-            'start': 61,  # Column BJ
-            'end': 62,    # Column BJ (inclusive)
+            'start': 70,  # Column BS (shifted right by 9)
+            'end': 71,    # Column BS (inclusive)
             'count': 1
         },
         'fields': ['player_id'],
         'merge_header': False,
         'default_visible': False,  # Always hidden
+    }
+}
+
+# NBA Sheet sections (All players including FA with Team column)
+# All columns shifted right by 1 compared to team sheets due to Team column
+SECTIONS_NBA = {
+    'player_info': {
+        'name': 'Player Info',
+        'columns': {
+            'start': 0,  # Column A
+            'end': 9,    # Column I (inclusive) - one more column than team sheets
+            'count': 9
+        },
+        'fields': ['name', 'team', 'jersey_number', 'experience', 'age', 'height', 'wingspan', 'weight', 'notes'],
+        'merge_header': True,  # Merge C-H for "Player Info"
+        'merge_range': {'start': 2, 'end': 7},  # Columns C-H (0-indexed: 2-7)
+        'notes_header': True,  # Column I has separate "Notes" header
+        'header_placeholder': 'NBA',  # Row 1 header (Column A)
+        'player_info_text': 'Player Info',  # Text for merged C-H header
+        'notes_text': 'Notes',  # Text for Column I header
+        'resize_rules': {
+            'name': {'width': 187, 'fixed': True},  # Column A always 187px
+            'team': {'width': 40, 'fixed': True},   # Column B always 40px for team abbr
+            'jersey_number': {'width': 22, 'fixed': True},  # Column C always 22px
+        },
+        'auto_resize': True,  # Auto-resize other player info columns
+        'auto_resize_start': 3,  # Start from column D (experience)
+        'auto_resize_end': 9,    # End at column I (notes) - inclusive
+    },
+    
+    'current': {
+        'name': 'Current Season Stats',
+        'columns': {
+            'start': 9,   # Column J (shifted right by 1)
+            'end': 29,    # Column AC (shifted right by 1, increased by 3)
+            'count': 20   # Increased from 17 to 20
+        },
+        'season_type': 1,  # Regular season
+        'include_current': True,
+        'stats': ['games', 'minutes', 'possessions', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct', 
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls', 'off_rating', 'def_rating'],
+        'merge_header': True,
+        'header_placeholder': '{season}',
+        'default_visible': True,
+        'default_stats_mode': 'per_36',
+        'has_percentiles': True,
+        'has_border': True,
+        'border_config': {
+            'first_column_left': True,
+            'last_column_right': True,
+            'weight': 2,
+            'header_color': 'white',
+            'data_color': 'black',
+        },
+        'resize_rules': {
+            'games': {'width': 25, 'fixed': True},
+        },
+        'auto_resize': True,
+        'auto_resize_start': 10,  # Shifted right by 1
+        'auto_resize_end': 29,
+    },
+    
+    'historical': {
+        'name': 'Historical Stats',
+        'columns': {
+            'start': 29,  # Column AD (shifted right by 1)
+            'end': 50,    # Column AX (shifted right by 1, increased by 3)
+            'count': 21   # Increased from 18 to 21
+        },
+        'season_type': 1,
+        'include_current': True,
+        'stats': ['years', 'games', 'minutes', 'possessions', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls', 'off_rating', 'def_rating'],
+        'merge_header': True,
+        'header_placeholder': '{historical_years}',
+        'default_visible': True,
+        'default_mode': 'career',
+        'default_years': 25,
+        'default_include_current': True,
+        'default_stats_mode': 'per_36',
+        'has_percentiles': True,
+        'has_border': True,
+        'border_config': {
+            'first_column_left': True,
+            'last_column_right': True,
+            'weight': 2,
+            'header_color': 'white',
+            'data_color': 'black',
+        },
+        'resize_rules': {
+            'years': {'width': 25, 'fixed': True},
+        },
+        'auto_resize': True,  # Auto-resize all columns except YRS
+        'auto_resize_start': 31,  # Shifted right by 1 from 30
+        'auto_resize_end': 50,
+    },
+    
+    'postseason': {
+        'name': 'Postseason Stats',
+        'columns': {
+            'start': 50,  # Column AY (shifted right by 1)
+            'end': 71,    # Column BS (shifted right by 1, increased by 3)
+            'count': 21   # Increased from 18 to 21
+        },
+        'season_type': [2, 3],  # Playoffs + Play-in
+        'include_current': True,
+        'stats': ['years', 'games', 'minutes', 'possessions', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+                  'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 'blocks', 'fouls', 'off_rating', 'def_rating'],
+        'merge_header': True,
+        'header_placeholder': '{postseason_years}',
+        'default_visible': True,
+        'default_mode': 'career',
+        'default_years': 25,
+        'default_include_current': True,
+        'default_stats_mode': 'per_36',
+        'has_percentiles': True,
+        'has_border': True,
+        'border_config': {
+            'first_column_left': True,
+            'last_column_right': True,
+            'weight': 2,
+            'header_color': 'white',
+            'data_color': 'black',
+        },
+        'resize_rules': {
+            'years': {'width': 25, 'fixed': True},
+        },
+        'auto_resize': True,
+        'auto_resize_start': 51,  # Shifted right by 1 from 50
+        'auto_resize_end': 71,
+    },
+    
+    'hidden': {
+        'name': 'Hidden Fields',
+        'columns': {
+            'start': 71,  # Column BT (shifted right by 1)
+            'end': 72,    # Column BT (inclusive)
+            'count': 1
+        },
+        'fields': ['player_id'],
+        'merge_header': False,
+        'default_visible': False,
     }
 }
 
@@ -646,6 +797,14 @@ def get_column_letter(index):
         letter = chr(65 + (index % 26)) + letter
         index //= 26
     return letter
+
+# Generate column ranges for NBA sections
+for section_name, section in SECTIONS_NBA.items():
+    if 'columns' in section:
+        cols = section['columns']
+        cols['start_letter'] = get_column_letter(cols['start'])
+        cols['end_letter'] = get_column_letter(cols['end'] - 1)
+        cols['range'] = f"{cols['start_letter']}-{cols['end_letter']}"
 
 # Generate column ranges for easy reference
 for section_name, section in SECTIONS.items():
@@ -757,6 +916,23 @@ SHEET_FORMAT = {
     'total_columns': sum(s['columns']['count'] for s in SECTIONS.values()),  # Calculated from sections
 }
 
+# NBA sheet format (with Team column, all columns shifted right by 1)
+SHEET_FORMAT_NBA = {
+    'fonts': SHEET_FORMAT['fonts'],  # Reuse same fonts
+    'column_widths': {
+        'team': 40,           # Column B - 40px for team abbreviation
+        'jersey_number': 22,  # Column C - 22px
+        'games': 25,          # Column J (GMS) - first stat column 25px
+        'years': 25,          # Column AA (YRS) and Column AS (playoff YRS) - 25px
+    },
+    'frozen': {
+        'rows': 3,      # Freeze first 3 rows (headers + filter)
+        'columns': 1,   # Freeze first column (Name)
+    },
+    'header_rows': 2,
+    'total_columns': sum(s['columns']['count'] for s in SECTIONS_NBA.values()),  # Calculated from NBA sections
+}
+
 # Default settings for historical stats
 HISTORICAL_STATS_CONFIG = {
     'default_past_years': 3,  # Default number of past seasons to show
@@ -797,6 +973,8 @@ def generate_headers():
                     stat_headers.append('GMS')
                 elif stat == 'minutes':
                     stat_headers.append('Min')
+                elif stat == 'possessions':
+                    stat_headers.append('POS')
                 elif stat == 'points':
                     stat_headers.append('Pts')
                 elif stat == 'ts_pct':
@@ -827,6 +1005,10 @@ def generate_headers():
                     stat_headers.append('Blk')
                 elif stat == 'fouls':
                     stat_headers.append('Fls')
+                elif stat == 'off_rating':
+                    stat_headers.append('OR')
+                elif stat == 'def_rating':
+                    stat_headers.append('DR')
             row_2[start:start+len(stat_headers)] = stat_headers
             
         elif section_name == 'hidden':
@@ -835,6 +1017,87 @@ def generate_headers():
     return {'row_1': row_1, 'row_2': row_2}
 
 HEADERS = generate_headers()
+
+# Generate NBA sheet headers (with Team column)
+def generate_nba_headers():
+    """Generate header rows for NBA sheet with Team column"""
+    total_cols = SHEET_FORMAT_NBA['total_columns']
+    row_1 = [''] * total_cols
+    row_2 = [''] * total_cols
+    
+    for section_name, section in SECTIONS_NBA.items():
+        cols = section['columns']
+        start = cols['start']
+        
+        if section_name == 'player_info':
+            # Column A (0): "NBA" header
+            row_1[start] = section.get('header_placeholder', 'NBA')
+            # Column B (1): "Team" (no merge, standalone)
+            row_1[start + 1] = ''  # Empty for team column
+            # Columns C-H (2-7): "Player Info" (will be merged)
+            row_1[start + 2] = section.get('player_info_text', 'Player Info')
+            # Column I (8): "Notes"
+            row_1[start + 8] = section.get('notes_text', 'Notes')
+            # Player info sub-headers in row 2
+            row_2[start:start+9] = ['Name', 'Team', 'J#', 'Exp', 'Age', 'Ht', 'W/S', 'Wt', '*Double click cells to expand*']
+            
+        elif section_name in ['current', 'historical', 'postseason']:
+            # Merged header cell placeholder
+            row_1[start] = section.get('header_placeholder', '')
+            
+            # Stat column headers
+            stat_headers = []
+            for stat in section['stats']:
+                if stat == 'years':
+                    stat_headers.append('YRS')
+                elif stat == 'games':
+                    stat_headers.append('GMS')
+                elif stat == 'minutes':
+                    stat_headers.append('Min')
+                elif stat == 'possessions':
+                    stat_headers.append('POS')
+                elif stat == 'points':
+                    stat_headers.append('Pts')
+                elif stat == 'ts_pct':
+                    stat_headers.append('TS%')
+                elif stat == 'fg2a':
+                    stat_headers.append('2PA')
+                elif stat == 'fg2_pct':
+                    stat_headers.append('2P%')
+                elif stat == 'fg3a':
+                    stat_headers.append('3PA')
+                elif stat == 'fg3_pct':
+                    stat_headers.append('3P%')
+                elif stat == 'fta':
+                    stat_headers.append('FTA')
+                elif stat == 'ft_pct':
+                    stat_headers.append('FT%')
+                elif stat == 'assists':
+                    stat_headers.append('Ast')
+                elif stat == 'turnovers':
+                    stat_headers.append('Tov')
+                elif stat == 'oreb_pct':
+                    stat_headers.append('OR%')
+                elif stat == 'dreb_pct':
+                    stat_headers.append('DR%')
+                elif stat == 'steals':
+                    stat_headers.append('Stl')
+                elif stat == 'blocks':
+                    stat_headers.append('Blk')
+                elif stat == 'fouls':
+                    stat_headers.append('Fls')
+                elif stat == 'off_rating':
+                    stat_headers.append('OR')
+                elif stat == 'def_rating':
+                    stat_headers.append('DR')
+            row_2[start:start+len(stat_headers)] = stat_headers
+            
+        elif section_name == 'hidden':
+            row_2[start] = 'Player ID'
+    
+    return {'row_1': row_1, 'row_2': row_2}
+
+HEADERS_NBA = generate_nba_headers()
 
 # ============================================================================
 # LOGGING CONFIGURATION

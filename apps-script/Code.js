@@ -179,8 +179,8 @@ function onEditInstallable(e) {
   const sheet = range.getSheet();
   const sheetName = sheet.getName().toUpperCase();
   
-  // Only process team sheets
-  if (!NBA_TEAMS.hasOwnProperty(sheetName)) {
+  // Only process team sheets and NBA sheet
+  if (!NBA_TEAMS.hasOwnProperty(sheetName) && sheetName !== 'NBA') {
     return;
   }
   
@@ -195,13 +195,19 @@ function onEditInstallable(e) {
   // Get column indices from config
   const colIndices = getColumnIndices();
   
+  // For NBA sheet, columns are shifted right by 1 due to Team column
+  const isNBASheet = (sheetName === 'NBA');
+  const wingspanCol = isNBASheet ? colIndices.wingspan + 1 : colIndices.wingspan;
+  const notesCol = isNBASheet ? colIndices.notes + 1 : colIndices.notes;
+  const playerIdCol = isNBASheet ? colIndices.player_id + 1 : colIndices.player_id;
+  
   // Check if edited cell is in wingspan or notes column
-  if (col !== colIndices.wingspan && col !== colIndices.notes) {
+  if (col !== wingspanCol && col !== notesCol) {
     return;
   }
   
   // Get player ID from hidden column
-  const playerId = sheet.getRange(row, colIndices.player_id).getValue();
+  const playerId = sheet.getRange(row, playerIdCol).getValue();
   
   if (!playerId) {
     const playerName = sheet.getRange(row, 1).getValue();
@@ -213,7 +219,7 @@ function onEditInstallable(e) {
   
   // Determine which field was edited
   let fieldName, fieldValue, displayFieldName;
-  if (col === colIndices.wingspan) {
+  if (col === wingspanCol) {
     // Wingspan column
     fieldName = 'wingspan_inches';
     displayFieldName = 'wingspan';
@@ -256,7 +262,7 @@ function switchToTotals() {
   SpreadsheetApp.getActiveSpreadsheet().toast(
     'Switching to Totals',
     'Updating Stats',
-    -1
+    5
   );
   updateAllSheets('totals', null);
 }
@@ -268,7 +274,7 @@ function switchToPerGame() {
   SpreadsheetApp.getActiveSpreadsheet().toast(
     'Switching to Per Game',
     'Updating Stats',
-    -1
+    5
   );
   updateAllSheets('per_game', null);
 }
@@ -338,7 +344,7 @@ function togglePercentileDisplay() {
   SpreadsheetApp.getActiveSpreadsheet().toast(
     'Toggling percentiles display',
     'Updating Stats',
-    -1
+    5
   );
   
   // Get the active sheet to set as priority team
@@ -1216,9 +1222,11 @@ function updatePlayerField(playerId, fieldName, fieldValue) {
 /**
  * Section visibility toggle functions
  * Column ranges (1-indexed):
- * - Current Stats: I-Y (columns 9-25)
- * - Historical Stats: Z-AQ (columns 26-43)
- * - Postseason Stats: AR-BI (columns 44-61)
+ * - Current Stats: I-AB (columns 9-28)
+ * - Historical Stats: AC-AW (columns 29-49)
+ * - Postseason Stats: AX-BR (columns 50-70)
+ * - Hidden: BS (column 71)
+ * For NBA sheet, all ranges shifted right by 1 due to Team column
  */
 
 function toggleCurrentStats() {
@@ -1235,17 +1243,26 @@ function toggleCurrentStats() {
   Logger.log(`NBA_TEAMS loaded: ${Object.keys(nbaTeams).length} teams`);
   
   let updatedCount = 0;
-  // Toggle visibility on all team sheets
+  // Toggle visibility on all team sheets and NBA sheet
   for (const sheet of sheets) {
     const sheetName = sheet.getName().toUpperCase();
     const isTeam = nbaTeams.hasOwnProperty(sheetName);
-    Logger.log(`Checking sheet: ${sheetName}, is team: ${isTeam}`);
+    const isNBA = (sheetName === 'NBA');
+    Logger.log(`Checking sheet: ${sheetName}, is team: ${isTeam}, is NBA: ${isNBA}`);
     if (isTeam) {
-      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 9-25`);
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 9-28`);
       if (newVisible) {
-        sheet.showColumns(9, 17);  // Show 17 columns starting at I (columns I-Y)
+        sheet.showColumns(9, 20);  // Show 20 columns starting at I (columns I-AB)
       } else {
-        sheet.hideColumns(9, 17);  // Hide 17 columns starting at I (columns I-Y)
+        sheet.hideColumns(9, 20);  // Hide 20 columns starting at I (columns I-AB)
+      }
+      updatedCount++;
+    } else if (isNBA) {
+      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns 10-29`);
+      if (newVisible) {
+        sheet.showColumns(10, 20);  // Show 20 columns starting at J (columns J-AC, shifted by 1)
+      } else {
+        sheet.hideColumns(10, 20);  // Hide 20 columns starting at J (columns J-AC, shifted by 1)
       }
       updatedCount++;
     }
@@ -1273,15 +1290,25 @@ function toggleHistoricalStats() {
   const nbaTeams = getNbaTeams();
   
   let updatedCount = 0;
-  // Toggle visibility on all team sheets
+  // Toggle visibility on all team sheets and NBA sheet
   for (const sheet of sheets) {
     const sheetName = sheet.getName().toUpperCase();
-    if (nbaTeams.hasOwnProperty(sheetName)) {
-      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 26-43`);
+    const isTeam = nbaTeams.hasOwnProperty(sheetName);
+    const isNBA = (sheetName === 'NBA');
+    if (isTeam) {
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 29-49`);
       if (newVisible) {
-        sheet.showColumns(26, 18);  // Show 18 columns starting at Z (columns Z-AQ)
+        sheet.showColumns(29, 21);  // Show 21 columns starting at AC (columns AC-AW)
       } else {
-        sheet.hideColumns(26, 18);  // Hide 18 columns starting at Z (columns Z-AQ)
+        sheet.hideColumns(29, 21);  // Hide 21 columns starting at AC (columns AC-AW)
+      }
+      updatedCount++;
+    } else if (isNBA) {
+      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns 30-50`);
+      if (newVisible) {
+        sheet.showColumns(30, 21);  // Show 21 columns starting at AD (columns AD-AX, shifted by 1)
+      } else {
+        sheet.hideColumns(30, 21);  // Hide 21 columns starting at AD (columns AD-AX, shifted by 1)
       }
       updatedCount++;
     }
@@ -1309,15 +1336,25 @@ function togglePostseasonStats() {
   const nbaTeams = getNbaTeams();
   
   let updatedCount = 0;
-  // Toggle visibility on all team sheets
+  // Toggle visibility on all team sheets and NBA sheet
   for (const sheet of sheets) {
     const sheetName = sheet.getName().toUpperCase();
-    if (nbaTeams.hasOwnProperty(sheetName)) {
-      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 44-61`);
+    const isTeam = nbaTeams.hasOwnProperty(sheetName);
+    const isNBA = (sheetName === 'NBA');
+    if (isTeam) {
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 50-70`);
       if (newVisible) {
-        sheet.showColumns(44, 18);  // Show 18 columns starting at AR (columns AR-BI)
+        sheet.showColumns(50, 21);  // Show 21 columns starting at AX (columns AX-BR)
       } else {
-        sheet.hideColumns(44, 18);  // Hide 18 columns starting at AR (columns AR-BI)
+        sheet.hideColumns(50, 21);  // Hide 21 columns starting at AX (columns AX-BR)
+      }
+      updatedCount++;
+    } else if (isNBA) {
+      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns 51-71`);
+      if (newVisible) {
+        sheet.showColumns(51, 21);  // Show 21 columns starting at AY (columns AY-BS, shifted by 1)
+      } else {
+        sheet.hideColumns(51, 21);  // Hide 21 columns starting at AY (columns AY-BS, shifted by 1)
       }
       updatedCount++;
     }
