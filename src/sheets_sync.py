@@ -26,8 +26,11 @@ from src.config import (
     COLORS,
     COLOR_THRESHOLDS,
     SHEET_FORMAT,
+    SHEET_FORMAT_NBA,
     HEADERS,
+    HEADERS_NBA,
     SECTIONS,
+    SECTIONS_NBA,
 )
 
 # Load environment variables
@@ -100,7 +103,9 @@ def fetch_all_players_data(conn):
         s.turnovers,
         s.steals,
         s.blocks,
-        s.fouls
+        s.fouls,
+        s.off_rating_x10,
+        s.def_rating_x10
     FROM teams t
     INNER JOIN players p ON p.team_id = t.team_id
     LEFT JOIN player_season_stats s 
@@ -109,6 +114,55 @@ def fetch_all_players_data(conn):
         AND s.season_type = %s
     WHERE p.team_id IS NOT NULL
     ORDER BY t.team_abbr, COALESCE(s.minutes_x10, 0) DESC, p.name
+    """
+    
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, (NBA_CONFIG['current_season_year'], NBA_CONFIG['season_type']))
+        rows = cur.fetchall()
+    
+    return [dict(row) for row in rows]
+
+def fetch_all_nba_players_data(conn):
+    """Fetch ALL players in the database including those without teams (marked as FA)"""
+    query = """
+    SELECT 
+        p.player_id,
+        p.name AS player_name,
+        p.team_id,
+        COALESCE(t.team_abbr, 'FA') AS team_abbr,
+        p.jersey_number,
+        p.years_experience,
+        EXTRACT(YEAR FROM AGE(p.birthdate)) + 
+            (EXTRACT(MONTH FROM AGE(p.birthdate)) / 12.0) + 
+            (EXTRACT(DAY FROM AGE(p.birthdate)) / 365.25) AS age,
+        p.height_inches,
+        p.weight_lbs,
+        p.wingspan_inches,
+        p.notes,
+        s.games_played,
+        s.minutes_x10::float / 10 AS minutes_total,
+        s.possessions,
+        s.fg2m, s.fg2a,
+        s.fg3m, s.fg3a,
+        s.ftm, s.fta,
+        s.off_rebounds,
+        s.def_rebounds,
+        s.off_reb_pct_x1000::float / 1000 AS oreb_pct,
+        s.def_reb_pct_x1000::float / 1000 AS dreb_pct,
+        s.assists,
+        s.turnovers,
+        s.steals,
+        s.blocks,
+        s.fouls,
+        s.off_rating_x10,
+        s.def_rating_x10
+    FROM players p
+    LEFT JOIN teams t ON p.team_id = t.team_id
+    LEFT JOIN player_season_stats s 
+        ON s.player_id = p.player_id 
+        AND s.year = %s 
+        AND s.season_type = %s
+    ORDER BY COALESCE(t.team_abbr, 'FA'), COALESCE(s.minutes_x10, 0) DESC, p.name
     """
     
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -171,6 +225,9 @@ def fetch_historical_players_data(conn, past_years=3, include_current=False, spe
         -- Weighted average for rebounding percentages
         SUM(s.off_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS oreb_pct,
         SUM(s.def_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS dreb_pct,
+        -- Weighted average for ratings
+        SUM(s.off_rating_x10 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) AS off_rating_x10,
+        SUM(s.def_rating_x10 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) AS def_rating_x10,
         SUM(s.assists) AS assists,
         SUM(s.turnovers) AS turnovers,
         SUM(s.steals) AS steals,
@@ -243,6 +300,9 @@ def fetch_postseason_players_data(conn, past_years=25, specific_seasons=None):
         -- Weighted average for rebounding percentages
         SUM(s.off_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS oreb_pct,
         SUM(s.def_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS dreb_pct,
+        -- Weighted average for ratings
+        SUM(s.off_rating_x10 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) AS off_rating_x10,
+        SUM(s.def_rating_x10 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) AS def_rating_x10,
         SUM(s.assists) AS assists,
         SUM(s.turnovers) AS turnovers,
         SUM(s.steals) AS steals,
@@ -334,6 +394,7 @@ def calculate_per_36_stats(player):
     return {
         'games': player.get('games_played', 0),
         'minutes': player.get('minutes_total', 0) / player.get('games_played', 1),
+        'possessions': (player.get('possessions', 0) or 0) * factor,
         'points': points * factor,
         'ts_pct': ts_pct,
         'fg2a': (player.get('fg2a', 0) or 0) * factor,
@@ -349,6 +410,8 @@ def calculate_per_36_stats(player):
         'steals': (player.get('steals', 0) or 0) * factor,
         'blocks': (player.get('blocks', 0) or 0) * factor,
         'fouls': (player.get('fouls', 0) or 0) * factor,
+        'off_rating': (player.get('off_rating_x10', 0) or 0) / 10.0,
+        'def_rating': (player.get('def_rating_x10', 0) or 0) / 10.0,
     }
 
 def calculate_totals_stats(player):
@@ -370,12 +433,14 @@ def calculate_totals_stats(player):
     ft_pct = ((player.get('ftm', 0) or 0) / (player.get('fta', 0) or 1)) if player.get('fta', 0) else 0
     
     # For totals, OR% and DR% become ORS and DRS (actual rebound counts)
-    ors = player.get('off_rebounds', 0) or 0
-    drs = player.get('def_rebounds', 0) or 0
+    # These are stored as percentages (0-1), so multiply by 100 to get raw counts
+    ors = (player.get('oreb_pct', 0) or 0) * 100
+    drs = (player.get('dreb_pct', 0) or 0) * 100
     
     return {
         'games': player.get('games_played', 0),
         'minutes': player.get('minutes_total', 0),
+        'possessions': player.get('possessions', 0) or 0,
         'points': points,
         'ts_pct': ts_pct,
         'fg2a': (player.get('fg2a', 0) or 0),
@@ -391,6 +456,8 @@ def calculate_totals_stats(player):
         'steals': (player.get('steals', 0) or 0),
         'blocks': (player.get('blocks', 0) or 0),
         'fouls': (player.get('fouls', 0) or 0),
+        'off_rating': (player.get('off_rating_x10', 0) or 0) / 10.0,
+        'def_rating': (player.get('def_rating_x10', 0) or 0) / 10.0,
     }
 
 def calculate_per_game_stats(player):
@@ -417,6 +484,7 @@ def calculate_per_game_stats(player):
     return {
         'games': games,
         'minutes': player.get('minutes_total', 0) / games,
+        'possessions': (player.get('possessions', 0) or 0) * factor,
         'points': points * factor,
         'ts_pct': ts_pct,
         'fg2a': (player.get('fg2a', 0) or 0) * factor,
@@ -432,6 +500,8 @@ def calculate_per_game_stats(player):
         'steals': (player.get('steals', 0) or 0) * factor,
         'blocks': (player.get('blocks', 0) or 0) * factor,
         'fouls': (player.get('fouls', 0) or 0) * factor,
+        'off_rating': (player.get('off_rating_x10', 0) or 0) / 10.0,
+        'def_rating': (player.get('def_rating_x10', 0) or 0) / 10.0,
     }
 
 def calculate_per_minutes_stats(player, minutes=36.0):
@@ -459,6 +529,7 @@ def calculate_per_minutes_stats(player, minutes=36.0):
         'games': player.get('games_played', 0),
         # Keep minutes as per-game average, not the scaled target value
         'minutes': player.get('minutes_total', 0) / player.get('games_played', 1),
+        'possessions': (player.get('possessions', 0) or 0) * factor,
         'points': points * factor,
         'ts_pct': ts_pct,
         'fg2a': (player.get('fg2a', 0) or 0) * factor,
@@ -474,6 +545,8 @@ def calculate_per_minutes_stats(player, minutes=36.0):
         'steals': (player.get('steals', 0) or 0) * factor,
         'blocks': (player.get('blocks', 0) or 0) * factor,
         'fouls': (player.get('fouls', 0) or 0) * factor,
+        'off_rating': (player.get('off_rating_x10', 0) or 0) / 10.0,
+        'def_rating': (player.get('def_rating_x10', 0) or 0) / 10.0,
     }
 
 def calculate_stats_by_mode(player, mode='per_36', custom_value=None):
@@ -1060,66 +1133,75 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             format_height(player.get('wingspan_inches')),
             player.get('weight_lbs', ''),
             player.get('notes', ''),
-            # Current season stats (columns 8-24, indexes 8-24)
+            # Current season stats (columns 8-27, indexes 8-27)
             calculated_stats.get('games', 0) if calculated_stats.get('games', 0) and has_minutes else '',
             get_display_value(minutes, player_percentiles.get(9), 9) if has_minutes else '',
-            get_display_value(calculated_stats.get('points', 0), player_percentiles.get(10), 10) if has_minutes else '',
-            get_display_value(calculated_stats.get('ts_pct'), player_percentiles.get(11), 11, is_pct=True) if has_minutes else '',
-            get_display_value(fg2a, player_percentiles.get(12), 12) if has_minutes else '',
-            get_display_value(calculated_stats.get('fg2_pct'), player_percentiles.get(13), 13, is_pct=True, allow_zero=(fg2a > 0)) if has_minutes else '',
-            get_display_value(fg3a, player_percentiles.get(14), 14) if has_minutes else '',
-            get_display_value(calculated_stats.get('fg3_pct'), player_percentiles.get(15), 15, is_pct=True, allow_zero=(fg3a > 0)) if has_minutes else '',
-            get_display_value(fta, player_percentiles.get(16), 16) if has_minutes else '',
-            get_display_value(calculated_stats.get('ft_pct'), player_percentiles.get(17), 17, is_pct=True, allow_zero=(fta > 0)) if has_minutes else '',
-            get_display_value(calculated_stats.get('assists', 0), player_percentiles.get(18), 18) if has_minutes else '',
-            get_display_value(calculated_stats.get('turnovers', 0), player_percentiles.get(19), 19) if has_minutes else '',
-            get_display_value(calculated_stats.get('oreb_pct'), player_percentiles.get(20), 20, is_pct=True, allow_zero=True) if has_minutes else '',
-            get_display_value(calculated_stats.get('dreb_pct'), player_percentiles.get(21), 21, is_pct=True, allow_zero=True) if has_minutes else '',
-            get_display_value(calculated_stats.get('steals', 0), player_percentiles.get(22), 22) if has_minutes else '',
-            get_display_value(calculated_stats.get('blocks', 0), player_percentiles.get(23), 23) if has_minutes else '',
-            get_display_value(calculated_stats.get('fouls', 0), player_percentiles.get(24), 24) if has_minutes else '',
-            # Historical stats section (columns 25-42, indexes 25-42)
+            get_display_value(calculated_stats.get('possessions', 0), player_percentiles.get(10), 10) if has_minutes else '',
+            get_display_value(calculated_stats.get('points', 0), player_percentiles.get(11), 11) if has_minutes else '',
+            get_display_value(calculated_stats.get('ts_pct'), player_percentiles.get(12), 12, is_pct=True) if has_minutes else '',
+            get_display_value(fg2a, player_percentiles.get(13), 13) if has_minutes else '',
+            get_display_value(calculated_stats.get('fg2_pct'), player_percentiles.get(14), 14, is_pct=True, allow_zero=(fg2a > 0)) if has_minutes else '',
+            get_display_value(fg3a, player_percentiles.get(15), 15) if has_minutes else '',
+            get_display_value(calculated_stats.get('fg3_pct'), player_percentiles.get(16), 16, is_pct=True, allow_zero=(fg3a > 0)) if has_minutes else '',
+            get_display_value(fta, player_percentiles.get(17), 17) if has_minutes else '',
+            get_display_value(calculated_stats.get('ft_pct'), player_percentiles.get(18), 18, is_pct=True, allow_zero=(fta > 0)) if has_minutes else '',
+            get_display_value(calculated_stats.get('assists', 0), player_percentiles.get(19), 19) if has_minutes else '',
+            get_display_value(calculated_stats.get('turnovers', 0), player_percentiles.get(20), 20) if has_minutes else '',
+            get_display_value(calculated_stats.get('oreb_pct'), player_percentiles.get(21), 21, is_pct=True, allow_zero=True) if has_minutes else '',
+            get_display_value(calculated_stats.get('dreb_pct'), player_percentiles.get(22), 22, is_pct=True, allow_zero=True) if has_minutes else '',
+            get_display_value(calculated_stats.get('steals', 0), player_percentiles.get(23), 23) if has_minutes else '',
+            get_display_value(calculated_stats.get('blocks', 0), player_percentiles.get(24), 24) if has_minutes else '',
+            get_display_value(calculated_stats.get('fouls', 0), player_percentiles.get(25), 25) if has_minutes else '',
+            get_display_value(calculated_stats.get('off_rating', 0), player_percentiles.get(26), 26) if has_minutes else '',
+            get_display_value(calculated_stats.get('def_rating', 0), player_percentiles.get(27), 27) if has_minutes else '',
+            # Historical stats section (columns 28-48, indexes 28-48)
             seasons_played,  # YRS column - no percentile display
             # For non-totals modes, show games per season; for totals show total games
-            get_display_value(historical_calculated_stats.get('games', 0) / seasons_played if seasons_played and seasons_played > 0 and stats_mode != 'totals' else historical_calculated_stats.get('games', 0), player_percentiles.get(26), 26) if has_historical_minutes else '',
-            get_display_value(historical_minutes, player_percentiles.get(27), 27) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('points', 0), player_percentiles.get(28), 28) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('ts_pct'), player_percentiles.get(29), 29, is_pct=True) if has_historical_minutes else '',
-            get_display_value(hist_fg2a, player_percentiles.get(30), 30) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('fg2_pct'), player_percentiles.get(31), 31, is_pct=True, allow_zero=(hist_fg2a > 0)) if has_historical_minutes else '',
-            get_display_value(hist_fg3a, player_percentiles.get(32), 32) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('fg3_pct'), player_percentiles.get(33), 33, is_pct=True, allow_zero=(hist_fg3a > 0)) if has_historical_minutes else '',
-            get_display_value(hist_fta, player_percentiles.get(34), 34) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('ft_pct'), player_percentiles.get(35), 35, is_pct=True, allow_zero=(hist_fta > 0)) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('assists', 0), player_percentiles.get(36), 36) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('turnovers', 0), player_percentiles.get(37), 37) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('oreb_pct'), player_percentiles.get(38), 38, is_pct=True, allow_zero=True) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('dreb_pct'), player_percentiles.get(39), 39, is_pct=True, allow_zero=True) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('steals', 0), player_percentiles.get(40), 40) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('blocks', 0), player_percentiles.get(41), 41) if has_historical_minutes else '',
-            get_display_value(historical_calculated_stats.get('fouls', 0), player_percentiles.get(42), 42) if has_historical_minutes else '',
-            # Playoff stats section (columns 43-60, indexes 43-60)
+            get_display_value(historical_calculated_stats.get('games', 0) / seasons_played if seasons_played and seasons_played > 0 and stats_mode != 'totals' else historical_calculated_stats.get('games', 0), player_percentiles.get(29), 29) if has_historical_minutes else '',
+            get_display_value(historical_minutes, player_percentiles.get(30), 30) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('possessions', 0), player_percentiles.get(31), 31) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('points', 0), player_percentiles.get(32), 32) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('ts_pct'), player_percentiles.get(33), 33, is_pct=True) if has_historical_minutes else '',
+            get_display_value(hist_fg2a, player_percentiles.get(34), 34) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('fg2_pct'), player_percentiles.get(35), 35, is_pct=True, allow_zero=(hist_fg2a > 0)) if has_historical_minutes else '',
+            get_display_value(hist_fg3a, player_percentiles.get(36), 36) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('fg3_pct'), player_percentiles.get(37), 37, is_pct=True, allow_zero=(hist_fg3a > 0)) if has_historical_minutes else '',
+            get_display_value(hist_fta, player_percentiles.get(38), 38) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('ft_pct'), player_percentiles.get(39), 39, is_pct=True, allow_zero=(hist_fta > 0)) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('assists', 0), player_percentiles.get(40), 40) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('turnovers', 0), player_percentiles.get(41), 41) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('oreb_pct'), player_percentiles.get(42), 42, is_pct=True, allow_zero=True) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('dreb_pct'), player_percentiles.get(43), 43, is_pct=True, allow_zero=True) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('steals', 0), player_percentiles.get(44), 44) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('blocks', 0), player_percentiles.get(45), 45) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('fouls', 0), player_percentiles.get(46), 46) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('off_rating', 0), player_percentiles.get(47), 47) if has_historical_minutes else '',
+            get_display_value(historical_calculated_stats.get('def_rating', 0), player_percentiles.get(48), 48) if has_historical_minutes else '',
+            # Playoff stats section (columns 49-69, indexes 49-69)
             playoff_seasons_played,  # YRS column - no percentile display
             # For non-totals modes, show games per season; for totals show total games
-            get_display_value(playoff_calculated_stats.get('games', 0) / playoff_seasons_played if playoff_seasons_played and playoff_seasons_played > 0 and stats_mode != 'totals' else playoff_calculated_stats.get('games', 0), player_percentiles.get(44), 44) if has_playoff_minutes else '',
-            get_display_value(playoff_minutes, player_percentiles.get(45), 45) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('points', 0), player_percentiles.get(46), 46) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('ts_pct'), player_percentiles.get(47), 47, is_pct=True) if has_playoff_minutes else '',
-            get_display_value(playoff_fg2a, player_percentiles.get(48), 48) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('fg2_pct'), player_percentiles.get(49), 49, is_pct=True, allow_zero=(playoff_fg2a > 0)) if has_playoff_minutes else '',
-            get_display_value(playoff_fg3a, player_percentiles.get(50), 50) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('fg3_pct'), player_percentiles.get(51), 51, is_pct=True, allow_zero=(playoff_fg3a > 0)) if has_playoff_minutes else '',
-            get_display_value(playoff_fta, player_percentiles.get(52), 52) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('ft_pct'), player_percentiles.get(53), 53, is_pct=True, allow_zero=(playoff_fta > 0)) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('assists', 0), player_percentiles.get(54), 54) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('turnovers', 0), player_percentiles.get(55), 55) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('oreb_pct'), player_percentiles.get(56), 56, is_pct=True, allow_zero=True) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('dreb_pct'), player_percentiles.get(57), 57, is_pct=True, allow_zero=True) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('steals', 0), player_percentiles.get(58), 58) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('blocks', 0), player_percentiles.get(59), 59) if has_playoff_minutes else '',
-            get_display_value(playoff_calculated_stats.get('fouls', 0), player_percentiles.get(60), 60) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('games', 0) / playoff_seasons_played if playoff_seasons_played and playoff_seasons_played > 0 and stats_mode != 'totals' else playoff_calculated_stats.get('games', 0), player_percentiles.get(50), 50) if has_playoff_minutes else '',
+            get_display_value(playoff_minutes, player_percentiles.get(51), 51) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('possessions', 0), player_percentiles.get(52), 52) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('points', 0), player_percentiles.get(53), 53) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('ts_pct'), player_percentiles.get(54), 54, is_pct=True) if has_playoff_minutes else '',
+            get_display_value(playoff_fg2a, player_percentiles.get(55), 55) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('fg2_pct'), player_percentiles.get(56), 56, is_pct=True, allow_zero=(playoff_fg2a > 0)) if has_playoff_minutes else '',
+            get_display_value(playoff_fg3a, player_percentiles.get(57), 57) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('fg3_pct'), player_percentiles.get(58), 58, is_pct=True, allow_zero=(playoff_fg3a > 0)) if has_playoff_minutes else '',
+            get_display_value(playoff_fta, player_percentiles.get(59), 59) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('ft_pct'), player_percentiles.get(60), 60, is_pct=True, allow_zero=(playoff_fta > 0)) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('assists', 0), player_percentiles.get(61), 61) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('turnovers', 0), player_percentiles.get(62), 62) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('oreb_pct'), player_percentiles.get(63), 63, is_pct=True, allow_zero=True) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('dreb_pct'), player_percentiles.get(64), 64, is_pct=True, allow_zero=True) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('steals', 0), player_percentiles.get(65), 65) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('blocks', 0), player_percentiles.get(66), 66) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('fouls', 0), player_percentiles.get(67), 67) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('off_rating', 0), player_percentiles.get(68), 68) if has_playoff_minutes else '',
+            get_display_value(playoff_calculated_stats.get('def_rating', 0), player_percentiles.get(69), 69) if has_playoff_minutes else '',
             # Player ID at the end (hidden)
-            str(player['player_id']),  # Column BJ (index 61) - hidden player_id for onEdit lookups
+            str(player['player_id']),  # Column BS (index 70) - hidden player_id for onEdit lookups
         ]
         
         data_rows.append(row)
@@ -1942,7 +2024,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         import traceback
         log(f"Full traceback:\n{traceback.format_exc()}")
         
-        log(f"Retrying after delay...")
+        log("Retrying after delay...")
         time.sleep(3)
         try:
             spreadsheet.batch_update({'requests': requests})
@@ -1952,6 +2034,1085 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             raise
     
     log(f"✅ {team_name} sheet created with {len(data_rows)} players")
+
+def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles,
+                     past_years=3, stats_mode='per_36', stats_custom_value=None, specific_seasons=None,
+                     include_current=False, sync_section=None, show_percentiles=False, playoff_percentiles=None):
+    """Create/update the NBA sheet with all players including FA with Team column
+    
+    This is similar to create_team_sheet but with:
+    - Team column added as column B
+    - All other columns shifted right by 1
+    - Uses SECTIONS_NBA, HEADERS_NBA, and SHEET_FORMAT_NBA configurations
+    """
+    log(f"Creating NBA sheet with {len(nba_players)} total players (stats mode: {stats_mode}, show_percentiles: {show_percentiles})...")
+    
+    # Get current season dynamically
+    current_season = get_current_season()
+    
+    # Header row 1 - replace placeholders
+    header_row_1 = []
+    mode_display = {
+        'totals': 'Totals',
+        'per_game': 'Per Game',
+        'per_36': 'Per 36 Mins',
+        'per_100_poss': 'Per 100 Poss',
+        'per_minutes': f'Per {stats_custom_value} Mins' if stats_custom_value else 'Per Minute'
+    }
+    mode_text = mode_display.get(stats_mode, 'Per 36 Mins')
+    
+    for i, h in enumerate(HEADERS_NBA['row_1']):
+        # Handle historical_years placeholder
+        if '{historical_years}' in h:
+            if specific_seasons:
+                start_year = min(specific_seasons)
+                start_season_text = f"{start_year-1}-{str(start_year)[2:]}"
+                if include_current:
+                    historical_text = f'Stats since {start_season_text} {mode_text}'
+                else:
+                    historical_text = f'Prev stats since {start_season_text} {mode_text}'
+            elif past_years >= 25:
+                if include_current:
+                    historical_text = f'Career Stats {mode_text}'
+                else:
+                    historical_text = f'Career Prev Season Stats {mode_text}'
+            else:
+                if include_current:
+                    historical_text = f'Last {past_years} Seasons {mode_text}'
+                else:
+                    historical_text = f'Prev {past_years} Seasons {mode_text}'
+            header_row_1.append(h.replace('{historical_years}', historical_text))
+            
+        # Handle postseason_years placeholder
+        elif '{postseason_years}' in h:
+            if specific_seasons:
+                start_year = min(specific_seasons)
+                start_season_text = f"{start_year-1}-{str(start_year)[2:]}"
+                if include_current:
+                    postseason_text = f'Postseason Stats since {start_season_text} {mode_text}'
+                else:
+                    postseason_text = f'Prev Postseason Stats since {start_season_text} {mode_text}'
+            elif past_years >= 25:
+                if include_current:
+                    postseason_text = f'Career Postseason Stats {mode_text}'
+                else:
+                    postseason_text = f'Career Prev Season Postseason Stats {mode_text}'
+            else:
+                if include_current:
+                    postseason_text = f'Last {past_years} Postseason Seasons {mode_text}'
+                else:
+                    postseason_text = f'Prev {past_years} Postseason Seasons {mode_text}'
+            header_row_1.append(h.replace('{postseason_years}', postseason_text))
+            
+        # Handle season placeholder
+        elif '{season}' in h:
+            header_row_1.append(h.replace('{season}', f'{current_season} Stats {mode_text}'))
+        else:
+            header_row_1.append(h)
+    
+    # Header row 2 - replace OR%/DR% with ORS/DRS for totals mode
+    header_row_2 = list(HEADERS_NBA['row_2'])
+    if stats_mode == 'totals':
+        header_row_2 = [h.replace('OR%', 'ORS').replace('DR%', 'DRS') for h in header_row_2]
+    else:
+        # For non-totals modes, adjust GMS headers for historical (index 27 for NBA sheet)
+        header_row_2[27] = 'GMS'  # Historical games column (shifted right by 1)
+    
+    # Filter row
+    filter_row = [""] * SHEET_FORMAT_NBA['total_columns']
+    
+    # NOTE: The rest of the logic is identical to create_team_sheet,
+    # but we need to insert team abbreviation in column B (index 1)
+    # For simplicity, I'll reuse create_team_sheet's data row logic inline here
+    
+    # Prepare data rows with percentile tracking
+    data_rows = []
+    percentile_data = []
+    
+    for player in nba_players:
+        calculated_stats = player.get('calculated_stats', {})
+        
+        exp = player.get('years_experience')
+        exp_display = 0 if exp == 0 else (exp if exp else '')
+        
+        # Format functions (same as in create_team_sheet)
+        def format_stat(value, decimals=1):
+            if value is None or value == 0:
+                return 0
+            rounded = round(value, decimals)
+            if rounded == int(rounded):
+                return int(rounded)
+            return rounded
+        
+        def format_pct(value, decimals=1, allow_zero=False):
+            if value is None:
+                return ''
+            if value == 0:
+                return 0 if allow_zero else ''
+            result = value * 100
+            rounded = round(result, decimals)
+            if rounded == int(rounded):
+                return int(rounded)
+            return rounded
+        
+        def get_display_value(stat_value, percentile_value, col_idx, is_pct=False, allow_zero=False):
+            if show_percentiles and percentile_value is not None:
+                return int(round(percentile_value))
+            elif is_pct:
+                return format_pct(stat_value, allow_zero=allow_zero)
+            else:
+                return format_stat(stat_value)
+        
+        # Check for shooting attempts
+        fg2a = calculated_stats.get('fg2a', 0)
+        fg3a = calculated_stats.get('fg3a', 0)
+        fta = calculated_stats.get('fta', 0)
+        
+        # Skip if no minutes
+        games_played = calculated_stats.get('games', 0)
+        minutes_played = calculated_stats.get('minutes', 0)
+        has_stats = games_played and minutes_played
+        
+        # Get percentiles for this player
+        player_id = player['player_id']
+        player_percentiles = percentiles.get(player_id, {})
+        
+        # NBA Sheet Row Structure (shifted right by 1, with Team in column B):
+        # A: Name, B: Team, C: J#, D: Exp, E: Age, F: Ht, G: W/S, H: Wt, I: Notes,
+        # J-Z: Current stats (17 cols), AA-AR: Historical stats (18 cols), AS-BJ: Postseason stats (18 cols), BK: Player ID
+        
+        row = [
+            player.get('player_name', ''),  # A: Name
+            player.get('team_abbr', 'FA'),  # B: Team (NEW COLUMN!)
+            player.get('jersey_number', ''),  # C: Jersey
+            exp_display,  # D: Experience
+            round(float(player.get('age', 0)), 1) if player.get('age') else '',  # E: Age (convert Decimal to float)
+            format_height(player.get('height_inches')),  # F: Height
+            format_height(player.get('wingspan_inches')),  # G: Wingspan (convert Decimal)
+            int(player.get('weight_lbs', 0)) if player.get('weight_lbs') else '',  # H: Weight (convert Decimal to int)
+            player.get('notes', ''),  # I: Notes
+        ]
+        
+        # Current season stats (columns J-AC, 20 columns) - NBA sheet includes Team so +1 shift
+        if has_stats and not sync_section:  # Only write if full sync or current section
+            current_stats = [
+                get_display_value(calculated_stats.get('games', 0), None, 9),
+                get_display_value(calculated_stats.get('minutes', 0), None, 10),
+                get_display_value(calculated_stats.get('possessions', 0), None, 11),  # POS after MIN
+                get_display_value(calculated_stats.get('points', 0), player_percentiles.get('points'), 12),
+                get_display_value(calculated_stats.get('ts_pct', 0), player_percentiles.get('ts_pct'), 13, is_pct=True),
+                get_display_value(fg2a, player_percentiles.get('fg2a'), 14),
+                get_display_value(calculated_stats.get('fg2_pct', 0) if fg2a else 0, player_percentiles.get('fg2_pct'), 15, is_pct=True),
+                get_display_value(fg3a, player_percentiles.get('fg3a'), 16),
+                get_display_value(calculated_stats.get('fg3_pct', 0) if fg3a else 0, player_percentiles.get('fg3_pct'), 17, is_pct=True),
+                get_display_value(fta, player_percentiles.get('fta'), 18),
+                get_display_value(calculated_stats.get('ft_pct', 0) if fta else 0, player_percentiles.get('ft_pct'), 19, is_pct=True),
+                get_display_value(calculated_stats.get('assists', 0), player_percentiles.get('assists'), 20),
+                get_display_value(calculated_stats.get('turnovers', 0), player_percentiles.get('turnovers'), 21),
+                get_display_value(calculated_stats.get('oreb_pct', 0), player_percentiles.get('oreb_pct'), 22, is_pct=(stats_mode != 'totals'), allow_zero=True),
+                get_display_value(calculated_stats.get('dreb_pct', 0), player_percentiles.get('dreb_pct'), 23, is_pct=(stats_mode != 'totals'), allow_zero=True),
+                get_display_value(calculated_stats.get('steals', 0), player_percentiles.get('steals'), 24),
+                get_display_value(calculated_stats.get('blocks', 0), player_percentiles.get('blocks'), 25),
+                get_display_value(calculated_stats.get('fouls', 0), player_percentiles.get('fouls'), 26),
+                get_display_value(calculated_stats.get('off_rating', 0), player_percentiles.get('off_rating'), 27),  # OR after FLS
+                get_display_value(calculated_stats.get('def_rating', 0), player_percentiles.get('def_rating'), 28),  # DR after OR
+            ]
+            row.extend(current_stats)
+        else:
+            row.extend([''] * 20)  # Empty current stats
+        
+        # Historical stats placeholder (we'll fill these if historical data exists)
+        # Columns AD-AX (29-49 in 0-indexed, 21 columns) - NBA sheet
+        row.extend([''] * 21)
+        
+        # Postseason stats placeholder
+        # Columns AY-BS (50-70 in 0-indexed, 21 columns) - NBA sheet
+        row.extend([''] * 21)
+        
+        # Hidden player ID column (BT, index 71) - NBA sheet
+        row.append(player_id)
+        
+        data_rows.append(row)
+        
+        # Track percentiles for color coding (only if showing values, not percentiles)
+        if not show_percentiles:
+            percentile_data.append(player_percentiles)
+    
+    # Write data to sheet with full formatting (similar to create_team_sheet)
+    try:
+        all_data = [header_row_1, header_row_2, filter_row] + data_rows
+        total_rows = len(all_data)
+        total_cols = SHEET_FORMAT_NBA['total_columns']
+        
+        # Get spreadsheet object for batch updates
+        spreadsheet = worksheet.spreadsheet
+        
+        # Build ONE mega batch request with ALL operations
+        requests = []
+        
+        # 1. Get current sheet metadata
+        try:
+            sheet_metadata = spreadsheet.fetch_sheet_metadata({'includeGridData': False})
+            current_row_count = 1000
+            current_col_count = 27  # NBA sheet has +1 columns vs team sheets
+            sheet_id = worksheet.id
+            
+            for sheet in sheet_metadata.get('sheets', []):
+                if sheet['properties']['sheetId'] == sheet_id:
+                    current_row_count = sheet['properties']['gridProperties'].get('rowCount', 1000)
+                    current_col_count = sheet['properties']['gridProperties'].get('columnCount', 27)
+                    
+                    # Delete any existing banding
+                    banded_ranges = sheet.get('bandedRanges', [])
+                    if banded_ranges:
+                        for br in banded_ranges:
+                            requests.append({'deleteBanding': {'bandedRangeId': br['bandedRangeId']}})
+                    break
+        except Exception as e:
+            log(f"⚠️  Warning: Could not fetch sheet metadata for NBA: {e}")
+            sheet_id = worksheet.id
+            current_row_count = 1000
+            current_col_count = 27
+        
+        # 2. Adjust columns if needed
+        if sync_section in [None, 'all', 'current']:
+            if current_col_count > total_cols:
+                requests.append({
+                    'deleteDimension': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': total_cols,
+                            'endIndex': current_col_count
+                        }
+                    }
+                })
+            elif current_col_count < total_cols:
+                requests.append({
+                    'appendDimension': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'length': total_cols - current_col_count
+                    }
+                })
+        
+        # 3. Adjust rows if needed
+        if sync_section in [None, 'all', 'current'] and current_row_count > total_rows:
+            requests.append({
+                'deleteDimension': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'ROWS',
+                        'startIndex': total_rows,
+                        'endIndex': current_row_count
+                    }
+                }
+            })
+        
+        # 4. Update cell values
+        rows_data = []
+        start_col_idx = 0
+        
+        if sync_section == 'historical':
+            start_col_idx = SECTIONS_NBA['historical']['columns']['start']
+            end_col_idx = SECTIONS_NBA['historical']['columns']['end'] + 1
+        elif sync_section == 'postseason':
+            start_col_idx = SECTIONS_NBA['postseason']['columns']['start']
+            end_col_idx = SECTIONS_NBA['postseason']['columns']['end'] + 1
+        else:
+            # Full sync - write all columns
+            end_col_idx = total_cols
+        
+        for row_idx, row_data in enumerate(all_data):
+            row_values = []
+            for col_idx in range(start_col_idx, end_col_idx):
+                cell_value = row_data[col_idx] if col_idx < len(row_data) else ''
+                
+                if cell_value is None or cell_value == '':
+                    str_value = ''
+                else:
+                    str_value = str(cell_value)
+                
+                row_values.append({
+                    'userEnteredValue': {
+                        'stringValue': str_value
+                    }
+                })
+            rows_data.append({'values': row_values})
+        
+        requests.append({
+            'updateCells': {
+                'rows': rows_data,
+                'fields': 'userEnteredValue',
+                'start': {'sheetId': sheet_id, 'rowIndex': 0, 'columnIndex': start_col_idx}
+            }
+        })
+        
+        # Only apply formatting for full syncs
+        if sync_section in [None, 'all', 'current']:
+            # Set column A (Name) to fixed 187px width
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 0,
+                        'endIndex': 1
+                    },
+                    'properties': {
+                        'pixelSize': 187
+                    },
+                    'fields': 'pixelSize'
+                }
+            })
+            
+            # Set column A text wrapping to CLIP
+            requests.append({
+                'repeatCell': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 3,
+                        'startColumnIndex': 0,
+                        'endColumnIndex': 1
+                    },
+                    'cell': {
+                        'userEnteredFormat': {
+                            'wrapStrategy': 'CLIP'
+                        }
+                    },
+                    'fields': 'userEnteredFormat.wrapStrategy'
+                }
+            })
+            
+            # 5. Merge cells
+            # Player Info header (B-G, columns 1-7) - includes Team column
+            requests.append({
+                'mergeCells': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 0,
+                        'endRowIndex': 1,
+                        'startColumnIndex': 1,
+                        'endColumnIndex': 8,  # +1 for Team column
+                    },
+                    'mergeType': 'MERGE_ALL'
+                }
+            })
+            
+            # Current season stats header (I to Z) - shifted by 1
+            requests.append({
+                'mergeCells': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 0,
+                        'endRowIndex': 1,
+                        'startColumnIndex': 9,   # J (+1 from team sheets)
+                        'endColumnIndex': 26,    # Z (+1 from team sheets)
+                    },
+                    'mergeType': 'MERGE_ALL'
+                }
+            })
+        
+        # Historical stats header (AA to AR - includes YRS column) - shifted by 1
+        requests.append({
+            'mergeCells': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                    'startColumnIndex': 26,  # AA (+1 from Z on team sheets)
+                    'endColumnIndex': 44,    # AR + 1 (+1 from team sheets)
+                },
+                'mergeType': 'MERGE_ALL'
+            }
+        })
+        
+        # Playoff stats header (AS to BJ - includes YRS column) - shifted by 1
+        requests.append({
+            'mergeCells': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                    'startColumnIndex': 44,  # AS (+1 from team sheets)
+                    'endColumnIndex': 62,    # BJ + 1 (+1 from team sheets)
+                },
+                'mergeType': 'MERGE_ALL'
+            }
+        })
+        
+        # Format row 1
+        black = COLORS['black']['rgb']
+        white = COLORS['white']['rgb']
+        light_gray = COLORS['light_gray']['rgb']
+        
+        requests.append({
+            'repeatCell': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                },
+                'cell': {
+                    'userEnteredFormat': {
+                        'backgroundColor': black,
+                        'textFormat': {
+                            'foregroundColor': white,
+                            'fontFamily': SHEET_FORMAT_NBA['fonts']['header_primary']['family'],
+                            'fontSize': SHEET_FORMAT_NBA['fonts']['header_primary']['size'],
+                            'bold': True
+                        },
+                        'horizontalAlignment': 'CENTER',
+                        'verticalAlignment': 'MIDDLE',
+                        'wrapStrategy': 'CLIP'
+                    }
+                },
+                'fields': 'userEnteredFormat'
+            }
+        })
+        
+        # Format row 2
+        requests.append({
+            'repeatCell': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 1,
+                    'endRowIndex': 2,
+                },
+                'cell': {
+                    'userEnteredFormat': {
+                        'backgroundColor': black,
+                        'textFormat': {
+                            'foregroundColor': white,
+                            'fontFamily': SHEET_FORMAT_NBA['fonts']['header_secondary']['family'],
+                            'fontSize': SHEET_FORMAT_NBA['fonts']['header_secondary']['size'],
+                            'bold': True
+                        },
+                        'horizontalAlignment': 'CENTER',
+                        'verticalAlignment': 'MIDDLE',
+                        'wrapStrategy': 'CLIP'
+                    }
+                },
+                'fields': 'userEnteredFormat'
+            }
+        })
+        
+        # Format A1 (NBA text)
+        requests.append({
+            'repeatCell': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                    'startColumnIndex': 0,
+                    'endColumnIndex': 1
+                },
+                'cell': {
+                    'userEnteredFormat': {
+                        'backgroundColor': black,
+                        'textFormat': {
+                            'foregroundColor': white,
+                            'fontFamily': SHEET_FORMAT_NBA['fonts']['team_name']['family'],
+                            'fontSize': SHEET_FORMAT_NBA['fonts']['team_name']['size'],
+                            'bold': True
+                        },
+                        'horizontalAlignment': 'CENTER',
+                        'verticalAlignment': 'MIDDLE',
+                        'wrapStrategy': 'CLIP'
+                    }
+                },
+                'fields': 'userEnteredFormat'
+            }
+        })
+        
+        # Format filter row
+        requests.append({
+            'repeatCell': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 2,
+                    'endRowIndex': 3,
+                },
+                'cell': {
+                    'userEnteredFormat': {
+                        'backgroundColor': black,
+                        'textFormat': {
+                            'foregroundColor': white,
+                            'fontFamily': SHEET_FORMAT_NBA['fonts']['header_primary']['family'],
+                            'fontSize': SHEET_FORMAT_NBA['fonts']['header_primary']['size'],
+                            'bold': True
+                        },
+                        'horizontalAlignment': 'CENTER',
+                        'verticalAlignment': 'MIDDLE',
+                        'wrapStrategy': 'CLIP'
+                    }
+                },
+                'fields': 'userEnteredFormat'
+            }
+        })
+        
+        # Format data rows
+        if len(data_rows) > 0:
+            requests.append({
+                'repeatCell': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 3,
+                        'endRowIndex': 3 + len(data_rows),
+                    },
+                    'cell': {
+                        'userEnteredFormat': {
+                            'textFormat': {
+                                'fontFamily': SHEET_FORMAT_NBA['fonts']['data']['family'],
+                                'fontSize': SHEET_FORMAT_NBA['fonts']['data']['size']
+                            },
+                            'wrapStrategy': 'CLIP',
+                            'verticalAlignment': 'TOP',
+                            'horizontalAlignment': 'CENTER'
+                        }
+                    },
+                    'fields': 'userEnteredFormat.textFormat,userEnteredFormat.wrapStrategy,userEnteredFormat.verticalAlignment,userEnteredFormat.horizontalAlignment'
+                }
+            })
+            
+            # Left-align column A (Name)
+            requests.append({
+                'repeatCell': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 3,
+                        'endRowIndex': 3 + len(data_rows),
+                        'startColumnIndex': 0,
+                        'endColumnIndex': 1
+                    },
+                    'cell': {
+                        'userEnteredFormat': {
+                            'horizontalAlignment': 'LEFT'
+                        }
+                    },
+                    'fields': 'userEnteredFormat.horizontalAlignment'
+                }
+            })
+            
+            # Left-align column I (Notes) - shifted by 1 from team sheets
+            requests.append({
+                'repeatCell': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 3,
+                        'endRowIndex': 3 + len(data_rows),
+                        'startColumnIndex': 8,  # Column I (+1 from team sheets)
+                        'endColumnIndex': 9
+                    },
+                    'cell': {
+                        'userEnteredFormat': {
+                            'horizontalAlignment': 'LEFT',
+                            'wrapStrategy': 'CLIP'
+                        }
+                    },
+                    'fields': 'userEnteredFormat.horizontalAlignment,userEnteredFormat.wrapStrategy'
+                }
+            })
+        
+        # Bold column A
+        if len(data_rows) > 0:
+            requests.append({
+                'repeatCell': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 2,
+                        'endRowIndex': 3 + len(data_rows),
+                        'startColumnIndex': 0,
+                        'endColumnIndex': 1,
+                    },
+                    'cell': {
+                        'userEnteredFormat': {
+                            'textFormat': {
+                                'bold': True
+                            }
+                        }
+                    },
+                    'fields': 'userEnteredFormat.textFormat.bold'
+                }
+            })
+            
+            # Apply banding
+            requests.append({
+                'addBanding': {
+                    'bandedRange': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'startRowIndex': 3,
+                            'endRowIndex': 3 + len(data_rows),
+                            'startColumnIndex': 0,
+                            'endColumnIndex': SHEET_FORMAT_NBA['total_columns']
+                        },
+                        'rowProperties': {
+                            'firstBandColor': white,
+                            'secondBandColor': light_gray
+                        }
+                    }
+                }
+            })
+            
+        # Apply percentile colors (if not showing percentiles)
+        if len(data_rows) > 0 and not show_percentiles:
+            for row_idx, player_percentiles in enumerate(percentile_data):
+                for col_idx, percentile in player_percentiles.items():
+                    if sync_section == 'historical':
+                        if not (start_col_idx <= col_idx < end_col_idx):
+                            continue
+                    elif sync_section == 'postseason':
+                        if not (start_col_idx <= col_idx < end_col_idx):
+                            continue
+                    
+                    if percentile is not None:
+                        color = get_color_for_percentile(percentile)
+                        if color:
+                            requests.append({
+                                'repeatCell': {
+                                    'range': {
+                                        'sheetId': sheet_id,
+                                        'startRowIndex': 3 + row_idx,
+                                        'endRowIndex': 3 + row_idx + 1,
+                                        'startColumnIndex': col_idx,
+                                        'endColumnIndex': col_idx + 1
+                                    },
+                                    'cell': {
+                                        'userEnteredFormat': {
+                                            'backgroundColor': color
+                                        }
+                                    },
+                                    'fields': 'userEnteredFormat.backgroundColor'
+                                }
+                            })
+        
+        # CONFIG-DRIVEN COLUMN WIDTHS AND AUTO-RESIZE (only for full syncs)
+        if sync_section in [None, 'all', 'current']:
+            # Set column B (Team) to 40px fixed width
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 1,
+                        'endIndex': 2
+                    },
+                    'properties': {
+                        'pixelSize': 40
+                    },
+                    'fields': 'pixelSize'
+                }
+            })
+            
+            # Set column C (Jersey) to 22px
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 2,
+                        'endIndex': 3
+                    },
+                    'properties': {
+                        'pixelSize': 22
+                    },
+                    'fields': 'pixelSize'
+                }
+            })
+            
+            # Set column J (GMS) to 25px - shifted by 1
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 9,  # +1 from team sheets
+                        'endIndex': 10
+                    },
+                    'properties': {
+                        'pixelSize': 25
+                    },
+                    'fields': 'pixelSize'
+                }
+            })
+            
+            # Set column AA (Historical YRS) to 25px - shifted by 1
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 26,  # +1 from team sheets
+                        'endIndex': 27
+                    },
+                    'properties': {
+                        'pixelSize': 25
+                    },
+                    'fields': 'pixelSize'
+                }
+            })
+            
+            # Set column AS (Playoff YRS) to 25px - shifted by 1
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 44,  # +1 from team sheets
+                        'endIndex': 45
+                    },
+                    'properties': {
+                        'pixelSize': 25
+                    },
+                    'fields': 'pixelSize'
+                }
+            })
+            
+            # Auto-resize columns D-I (player info)
+            requests.append({
+                'autoResizeDimensions': {
+                    'dimensions': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 3,  # Column D (Exp)
+                        'endIndex': 9     # Column I (Notes)
+                    }
+                }
+            })
+            
+            # Auto-resize stat columns (J-AC, AA-AR, AS-BK) - shifted by 1
+            requests.append({
+                'autoResizeDimensions': {
+                    'dimensions': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 10,  # After GMS
+                        'endIndex': 26     # Before historical YRS
+                    }
+                }
+            })
+            
+            requests.append({
+                'autoResizeDimensions': {
+                    'dimensions': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 27,  # After historical YRS
+                        'endIndex': 44     # Before playoff YRS
+                    }
+                }
+            })
+            
+            requests.append({
+                'autoResizeDimensions': {
+                    'dimensions': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': 45,  # After playoff YRS
+                        'endIndex': 62     # Before hidden player ID
+                    }
+                }
+            })
+        
+        # Row heights
+        requests.append({
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'dimension': 'ROWS',
+                    'startIndex': 2,
+                    'endIndex': 3
+                },
+                'properties': {
+                    'pixelSize': 15
+                },
+                'fields': 'pixelSize'
+            }
+        })
+        
+        if len(data_rows) > 0:
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'ROWS',
+                        'startIndex': 3,
+                        'endIndex': 3 + len(data_rows)
+                    },
+                    'properties': {
+                        'pixelSize': 21
+                    },
+                    'fields': 'pixelSize'
+                }
+            })
+        
+        # CONFIG-DRIVEN BORDERS for stat sections (only for full syncs)
+        if sync_section in [None, 'all', 'current']:
+            header_rows = SHEET_FORMAT_NBA.get('header_rows', 2)
+            
+            # Add borders based on SECTIONS_NBA config
+            for section_key in ['current', 'historical', 'postseason']:
+                section = SECTIONS_NBA.get(section_key)
+                if not section or not section.get('has_border'):
+                    continue
+                    
+                border_cfg = section.get('border_config', {})
+                start_col = section['columns']['start']
+                end_col = section['columns']['end']
+                weight = border_cfg.get('weight', 2)
+                header_color = COLORS[border_cfg.get('header_color', 'white')]['rgb']
+                data_color = COLORS[border_cfg.get('data_color', 'black')]['rgb']
+                
+                # Left border on FIRST column (if configured)
+                if border_cfg.get('first_column_left'):
+                    # Header rows (white)
+                    requests.append({
+                        'updateBorders': {
+                            'range': {
+                                'sheetId': sheet_id,
+                                'startRowIndex': 0,
+                                'endRowIndex': header_rows + 1,
+                                'startColumnIndex': start_col,
+                                'endColumnIndex': start_col + 1,
+                            },
+                            'left': {
+                                'style': 'SOLID',
+                                'width': weight,
+                                'color': header_color
+                            }
+                        }
+                    })
+                    
+                    # Data rows (black)
+                    requests.append({
+                        'updateBorders': {
+                            'range': {
+                                'sheetId': sheet_id,
+                                'startRowIndex': header_rows + 1,
+                                'endRowIndex': header_rows + 1 + len(data_rows),
+                                'startColumnIndex': start_col,
+                                'endColumnIndex': start_col + 1,
+                            },
+                            'left': {
+                                'style': 'SOLID',
+                                'width': weight,
+                                'color': data_color
+                            }
+                        }
+                    })
+                
+                # Right border on LAST column (if configured)
+                if border_cfg.get('last_column_right'):
+                    # Row 1 only (white, weight 2)
+                    requests.append({
+                        'updateBorders': {
+                            'range': {
+                                'sheetId': sheet_id,
+                                'startRowIndex': 0,
+                                'endRowIndex': 1,
+                                'startColumnIndex': end_col,
+                                'endColumnIndex': end_col + 1,
+                            },
+                            'right': {
+                                'style': 'SOLID',
+                                'width': weight,
+                                'color': header_color
+                            }
+                        }
+                    })
+                    
+                    # Rows 2-3 (header rows, white)
+                    requests.append({
+                        'updateBorders': {
+                            'range': {
+                                'sheetId': sheet_id,
+                                'startRowIndex': 1,
+                                'endRowIndex': header_rows + 1,
+                                'startColumnIndex': end_col,
+                                'endColumnIndex': end_col + 1,
+                            },
+                            'right': {
+                                'style': 'SOLID',
+                                'width': weight,
+                                'color': header_color
+                            }
+                        }
+                    })
+                    
+                    # Data rows (black)
+                    requests.append({
+                        'updateBorders': {
+                            'range': {
+                                'sheetId': sheet_id,
+                                'startRowIndex': header_rows + 1,
+                                'endRowIndex': header_rows + 1 + len(data_rows),
+                                'startColumnIndex': end_col,
+                                'endColumnIndex': end_col + 1,
+                            },
+                            'right': {
+                                'style': 'SOLID',
+                                'width': weight,
+                                'color': data_color
+                            }
+                        }
+                    })
+        
+        # Top border for row 2 (white, across all columns)
+        requests.append({
+            'updateBorders': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 1,
+                    'endRowIndex': 2,
+                    'startColumnIndex': 0,
+                    'endColumnIndex': SHEET_FORMAT_NBA['total_columns']
+                },
+                'top': {
+                    'style': 'SOLID',
+                    'width': 2,
+                    'color': white
+                }
+            }
+        })
+        
+        # WHITE borders between all columns in header rows (rows 2-3)
+        for col_idx in range(1, SHEET_FORMAT_NBA['total_columns'] - 1):
+            requests.append({
+                'updateBorders': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 1,
+                        'endRowIndex': 3,
+                        'startColumnIndex': col_idx,
+                        'endColumnIndex': col_idx + 1,
+                    },
+                    'right': {
+                        'style': 'SOLID',
+                        'width': 2,
+                        'color': white
+                    }
+                }
+            })
+        
+        # WHITE border on left of column I (Notes) in row 1 - shifted by 1
+        requests.append({
+            'updateBorders': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                    'startColumnIndex': 8,  # Column I (+1 from team sheets)
+                    'endColumnIndex': 9,
+                },
+                'left': {
+                    'style': 'SOLID',
+                    'width': 2,
+                    'color': white
+                }
+            }
+        })
+        
+        # BLACK border on right of column H (last player info before Notes) - shifted by 1
+        requests.append({
+            'updateBorders': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 3,
+                    'endRowIndex': 3 + len(data_rows),
+                    'startColumnIndex': 7,  # Column H (+1 from team sheets)
+                    'endColumnIndex': 8,
+                },
+                'right': {
+                    'style': 'SOLID',
+                    'width': 2,
+                    'color': black
+                }
+            }
+        })
+        
+        # Freeze panes
+        requests.append({
+            'updateSheetProperties': {
+                'properties': {
+                    'sheetId': sheet_id,
+                    'gridProperties': {
+                        'frozenRowCount': SHEET_FORMAT_NBA['frozen']['rows'],
+                        'frozenColumnCount': SHEET_FORMAT_NBA['frozen']['columns']
+                    }
+                },
+                'fields': 'gridProperties.frozenRowCount,gridProperties.frozenColumnCount'
+            }
+        })
+        
+        # Hide gridlines
+        requests.append({
+            'updateSheetProperties': {
+                'properties': {
+                    'sheetId': sheet_id,
+                    'gridProperties': {
+                        'hideGridlines': True
+                    }
+                },
+                'fields': 'gridProperties.hideGridlines'
+            }
+        })
+        
+        # Hide player_id column (column BK at index 62 for NBA sheet, +1 from team sheets)
+        nba_player_id_column = 62  # BK column for NBA sheet (+1 from team sheets' BJ)
+        requests.append({
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'dimension': 'COLUMNS',
+                    'startIndex': nba_player_id_column,
+                    'endIndex': nba_player_id_column + 1
+                },
+                'properties': {
+                    'hiddenByUser': True
+                },
+                'fields': 'hiddenByUser'
+            }
+        })
+        
+        # Add filter
+        requests.append({
+            'setBasicFilter': {
+                'filter': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 2,
+                        'endRowIndex': 3 + len(data_rows),
+                        'startColumnIndex': 0,
+                        'endColumnIndex': SHEET_FORMAT_NBA['total_columns']
+                    }
+                }
+            }
+        })
+        
+        # Execute all requests in ONE batch call with retry logic
+        log(f"Executing batch update with {len(requests)} requests for NBA sheet")
+        try:
+            spreadsheet.batch_update({'requests': requests})
+        except Exception as e:
+            log(f"⚠️  Error in batch update for NBA: {type(e).__name__}: {str(e)}")
+            log(f"Error details - Total requests: {len(requests)}")
+            import traceback
+            log(f"Full traceback:\n{traceback.format_exc()}")
+            
+            log("Retrying after delay...")
+            time.sleep(3)
+            try:
+                spreadsheet.batch_update({'requests': requests})
+                log("✅ Retry successful for NBA")
+            except Exception as e2:
+                log(f"❌ Failed batch update for NBA after retry: {e2}")
+                raise
+        
+        log(f"✅ NBA sheet created with {len(data_rows)} players")
+    except Exception as e:
+        log(f"❌ Failed to create NBA sheet: {e}")
+        raise
 
 def main(priority_team=None):
     log("=" * 60)
@@ -2074,7 +3235,7 @@ def main(priority_team=None):
         playoff_players = fetch_playoff_players_data(conn, past_years=25)  # Career = 25 years
     log(f"✅ Fetched playoff data for {len(playoff_players)} players")
     
-    conn.close()
+    # Don't close connection yet - we need it for fetching NBA players data
     
     # Connect to Google Sheets
     spreadsheet_name = GOOGLE_SHEETS_CONFIG['spreadsheet_name']
@@ -2137,7 +3298,7 @@ def main(priority_team=None):
         else:
             historical_players = fetch_historical_players_data(conn, final_past_years, final_include_current)
         
-        conn.close()
+        # Don't close connection yet - we still need it for NBA players
         log(f"✅ Re-fetched historical data for {len(historical_players)} players")
     else:
         log("ℹ️  Using already-fetched historical data (config unchanged)")
@@ -2192,7 +3353,103 @@ def main(priority_team=None):
     all_worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
     log(f"✅ Found {len(all_worksheets)} existing worksheets")
     
+    # Create NBA sheet FIRST with all players including FA
+    log("=" * 60)
+    log("Creating NBA sheet with all players...")
+    log("=" * 60)
+    
+    # Fetch all NBA players including those without teams
+    nba_players = fetch_all_nba_players_data(conn)
+    log(f"✅ Fetched {len(nba_players)} total players for NBA sheet")
+    
+    # Close database connection now that we're done with all queries
+    conn.close()
+    log("✅ Database connection closed")
+    
+    # Add calculated stats to NBA players
+    for player in nba_players:
+        player_id = player['player_id']
+        if player_id in current_stats_by_id:
+            p_with_stats = current_stats_by_id[player_id]
+            player['calculated_stats'] = p_with_stats.get('calculated_stats', {})
+            player['per100'] = p_with_stats.get('per100', {})
+        
+        if player_id in historical_stats_by_id:
+            hist_player = historical_stats_by_id[player_id]
+            player['historical_calculated_stats'] = hist_player.get('calculated_stats', {})
+            player['historical_per100'] = hist_player.get('per100', {})
+            player['seasons_played'] = hist_player.get('seasons_played', 0)
+        
+        if player_id in playoff_stats_by_id:
+            playoff_player = playoff_stats_by_id[player_id]
+            player['playoff_calculated_stats'] = playoff_player.get('calculated_stats', {})
+            player['playoff_per100'] = playoff_player.get('per100', {})
+            player['playoff_seasons_played'] = playoff_player.get('seasons_played', 0)
+    
+    # Get or create NBA worksheet
+    # If NBA sheet already exists, DELETE it and recreate to ensure it appears first
+    if 'NBA' in all_worksheets:
+        log("NBA sheet exists - deleting to recreate in first position...")
+        try:
+            old_nba_sheet = all_worksheets['NBA']
+            spreadsheet.del_worksheet(old_nba_sheet)
+            log("✅ Old NBA sheet deleted")
+            # Remove from cache
+            del all_worksheets['NBA']
+        except Exception as e:
+            log(f"⚠️  Could not delete existing NBA sheet: {e}")
+    
+    # Create new NBA worksheet (will appear at end, but we'll move it to position 0)
+    log("Creating new NBA worksheet...")
+    # Calculate needed rows: 3 header rows + all players + buffer
+    needed_rows = 3 + len(nba_players) + 10
+    nba_worksheet = spreadsheet.add_worksheet(title='NBA', rows=needed_rows, cols=64)
+    all_worksheets['NBA'] = nba_worksheet
+    
+    # Move NBA sheet to position 0 (first position)
+    try:
+        log("Moving NBA sheet to first position...")
+        # Get the sheet ID
+        sheet_id = nba_worksheet.id
+        # Create request to move sheet to index 0
+        spreadsheet.batch_update({
+            'requests': [{
+                'updateSheetProperties': {
+                    'properties': {
+                        'sheetId': sheet_id,
+                        'index': 0
+                    },
+                    'fields': 'index'
+                }
+            }]
+        })
+        log("✅ NBA sheet moved to first position")
+    except Exception as e:
+        log(f"⚠️  Could not move NBA sheet to first position: {e}")
+        log("NBA sheet will appear at the end of sheet list")
+    
+    log("Updating NBA sheet...")
+    # No delay needed for first sheet
+    
+    create_nba_sheet(
+        nba_worksheet, nba_players,
+        percentiles, historical_percentiles,
+        past_years=final_past_years,
+        stats_mode=final_stats_mode,
+        stats_custom_value=final_custom_value,
+        specific_seasons=final_specific_seasons,
+        include_current=final_include_current,
+        sync_section=sync_section,
+        playoff_percentiles=playoff_percentiles,
+        show_percentiles=show_percentiles
+    )
+    log("✅ NBA sheet complete")
+    
     # Create/update sheets for each team
+    log("=" * 60)
+    log("Creating team sheets...")
+    log("=" * 60)
+    
     # Check if there's a priority team to process first (from parameter or env var)
     priority_team_param = priority_team or os.environ.get('PRIORITY_TEAM_ABBR')
     
@@ -2225,7 +3482,6 @@ def main(priority_team=None):
         log(f"Updating {team_name} ({team_abbr})...")
         
         # Add small delay before updating each sheet to avoid API rate limits
-        # Skip delay for first team to start immediately
         if idx > 0:
             time.sleep(0.5)  # 500ms between sheets
         
@@ -2244,7 +3500,7 @@ def main(priority_team=None):
         log(f"✅ {team_name} complete")
     
     log("=" * 60)
-    log("✅ SUCCESS! All teams synced to Google Sheets")
+    log("✅ SUCCESS! All teams and NBA sheet synced to Google Sheets")
     log(f"   View it here: {spreadsheet.url}")
     log("=" * 60)
     
