@@ -1238,8 +1238,14 @@ function toggleCurrentStats() {
   
   Logger.log(`toggleCurrentStats: currentVisible=${currentVisible}, newVisible=${newVisible}`);
   
-  // Get teams from config
-  const nbaTeams = getNbaTeams();
+  // Get teams and column ranges from config
+  const config = loadConfig();
+  const nbaTeams = config.nba_teams || getNbaTeams();
+  const columnRanges = config.column_ranges || {
+    team_sheet: { current: { start: 9, count: 20 } },
+    nba_sheet: { current: { start: 10, count: 20 } }
+  };
+  
   Logger.log(`NBA_TEAMS loaded: ${Object.keys(nbaTeams).length} teams`);
   
   let updatedCount = 0;
@@ -1250,19 +1256,23 @@ function toggleCurrentStats() {
     const isNBA = (sheetName === 'NBA');
     Logger.log(`Checking sheet: ${sheetName}, is team: ${isTeam}, is NBA: ${isNBA}`);
     if (isTeam) {
-      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 9-28`);
+      const start = columnRanges.team_sheet.current.start;
+      const count = columnRanges.team_sheet.current.count;
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
       if (newVisible) {
-        sheet.showColumns(9, 20);  // Show 20 columns starting at I (columns I-AB)
+        sheet.showColumns(start, count);
       } else {
-        sheet.hideColumns(9, 20);  // Hide 20 columns starting at I (columns I-AB)
+        sheet.hideColumns(start, count);
       }
       updatedCount++;
     } else if (isNBA) {
-      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns 10-29`);
+      const start = columnRanges.nba_sheet.current.start;
+      const count = columnRanges.nba_sheet.current.count;
+      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
       if (newVisible) {
-        sheet.showColumns(10, 20);  // Show 20 columns starting at J (columns J-AC, shifted by 1)
+        sheet.showColumns(start, count);
       } else {
-        sheet.hideColumns(10, 20);  // Hide 20 columns starting at J (columns J-AC, shifted by 1)
+        sheet.hideColumns(start, count);
       }
       updatedCount++;
     }
@@ -1286,8 +1296,13 @@ function toggleHistoricalStats() {
   
   Logger.log(`toggleHistoricalStats: historicalVisible=${historicalVisible}, newVisible=${newVisible}`);
   
-  // Get teams from config
-  const nbaTeams = getNbaTeams();
+  // Get teams and column ranges from config
+  const config = loadConfig();
+  const nbaTeams = config.nba_teams || getNbaTeams();
+  const columnRanges = config.column_ranges || {
+    team_sheet: { historical: { start: 29, count: 21 } },
+    nba_sheet: { historical: { start: 30, count: 21 } }
+  };
   
   let updatedCount = 0;
   // Toggle visibility on all team sheets and NBA sheet
@@ -1296,19 +1311,23 @@ function toggleHistoricalStats() {
     const isTeam = nbaTeams.hasOwnProperty(sheetName);
     const isNBA = (sheetName === 'NBA');
     if (isTeam) {
-      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 29-49`);
+      const start = columnRanges.team_sheet.historical.start;
+      const count = columnRanges.team_sheet.historical.count;
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
       if (newVisible) {
-        sheet.showColumns(29, 21);  // Show 21 columns starting at AC (columns AC-AW)
+        sheet.showColumns(start, count);
       } else {
-        sheet.hideColumns(29, 21);  // Hide 21 columns starting at AC (columns AC-AW)
+        sheet.hideColumns(start, count);
       }
       updatedCount++;
     } else if (isNBA) {
-      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns 30-50`);
+      const start = columnRanges.nba_sheet.historical.start;
+      const count = columnRanges.nba_sheet.historical.count;
+      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
       if (newVisible) {
-        sheet.showColumns(30, 21);  // Show 21 columns starting at AD (columns AD-AX, shifted by 1)
+        sheet.showColumns(start, count);
       } else {
-        sheet.hideColumns(30, 21);  // Hide 21 columns starting at AD (columns AD-AX, shifted by 1)
+        sheet.hideColumns(start, count);
       }
       updatedCount++;
     }
@@ -1332,8 +1351,13 @@ function togglePostseasonStats() {
   
   Logger.log(`togglePostseasonStats: postseasonVisible=${postseasonVisible}, newVisible=${newVisible}`);
   
-  // Get teams from config
-  const nbaTeams = getNbaTeams();
+  // Get teams and column ranges from config
+  const config = loadConfig();
+  const nbaTeams = config.nba_teams || getNbaTeams();
+  const columnRanges = config.column_ranges || {
+    team_sheet: { postseason: { start: 50, count: 21 } },
+    nba_sheet: { postseason: { start: 51, count: 21 } }
+  };
   
   let updatedCount = 0;
   // Toggle visibility on all team sheets and NBA sheet
@@ -1342,19 +1366,23 @@ function togglePostseasonStats() {
     const isTeam = nbaTeams.hasOwnProperty(sheetName);
     const isNBA = (sheetName === 'NBA');
     if (isTeam) {
-      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns 50-70`);
+      const start = columnRanges.team_sheet.postseason.start;
+      const count = columnRanges.team_sheet.postseason.count;
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
       if (newVisible) {
-        sheet.showColumns(50, 21);  // Show 21 columns starting at AX (columns AX-BR)
+        sheet.showColumns(start, count);
       } else {
-        sheet.hideColumns(50, 21);  // Hide 21 columns starting at AX (columns AX-BR)
+        sheet.hideColumns(start, count);
       }
       updatedCount++;
     } else if (isNBA) {
-      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns 51-71`);
+      const start = columnRanges.nba_sheet.postseason.start;
+      const count = columnRanges.nba_sheet.postseason.count;
+      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
       if (newVisible) {
-        sheet.showColumns(51, 21);  // Show 21 columns starting at AY (columns AY-BS, shifted by 1)
+        sheet.showColumns(start, count);
       } else {
-        sheet.hideColumns(51, 21);  // Hide 21 columns starting at AY (columns AY-BS, shifted by 1)
+        sheet.hideColumns(start, count);
       }
       updatedCount++;
     }
