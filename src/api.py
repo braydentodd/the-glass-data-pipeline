@@ -12,8 +12,29 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import numpy as np
 
-from src.config import DB_CONFIG, NBA_TEAMS_BY_ID, STAT_COLUMNS, REVERSE_STATS, API_CONFIG, DB_SCHEMA
+from src.config import (
+    DB_CONFIG, API_CONFIG, NBA_TEAMS, COLUMN_DEFINITIONS,
+    get_reverse_stats, get_editable_fields, get_config_for_export,
+    SECTIONS, SECTIONS_NBA
+)
 from src.utils.calculator import calculate_stats_for_team
+
+# Build lookup dicts from NBA_TEAMS list
+NBA_TEAMS_BY_ID = {}
+NBA_TEAMS_BY_ABBR = {}
+for abbr, name in NBA_TEAMS:
+    # NBA team IDs start at 1610612737 (ATL) and increment
+    # This is a simplified mapping - ideally should be in database
+    team_id = 1610612737 + NBA_TEAMS.index((abbr, name))
+    NBA_TEAMS_BY_ID[team_id] = name
+    NBA_TEAMS_BY_ABBR[abbr] = team_id
+
+# Get reverse stats and editable fields from config
+REVERSE_STATS = get_reverse_stats()
+EDITABLE_FIELDS = get_editable_fields()
+
+# Build STAT_COLUMNS list from COLUMN_DEFINITIONS
+STAT_COLUMNS = [col for col, defn in COLUMN_DEFINITIONS.items() if defn.get('is_stat', False)]
 
 app = Flask(__name__)
 
@@ -562,7 +583,7 @@ def update_player(player_id):
         return jsonify({'error': 'No data provided'}), 400
     
     # Build dynamic update query based on provided fields
-    allowed_fields = DB_SCHEMA['editable_fields']
+    allowed_fields = EDITABLE_FIELDS
     updates = []
     values = []
     
@@ -621,8 +642,27 @@ def get_config():
     Provide client configuration for Apps Script.
     Returns configuration values from centralized config.py
     """
-    from src.config import get_config_for_apps_script
-    return jsonify(get_config_for_apps_script())
+    return jsonify(get_config_for_export())
+
+
+@app.route('/api/column-config', methods=['GET'])
+def get_column_config():
+    """
+    Expose complete column configuration for Apps Script.
+    This is the single source of truth for all column definitions,
+    sections, and formatting rules.
+    
+    Response includes:
+    - column_definitions: Complete metadata for every column
+    - stat_order: Left-to-right order of stats
+    - sections: Section configuration with column ranges
+    - sections_nba: Section configuration for NBA sheet (includes TEAM column)
+    - reverse_stats: Stats where lower is better
+    - editable_fields: Fields that can be edited by user
+    - colors: Color scheme for conditional formatting
+    - color_thresholds: Percentile thresholds for each color
+    """
+    return jsonify(get_config_for_export())
 
 
 if __name__ == '__main__':
