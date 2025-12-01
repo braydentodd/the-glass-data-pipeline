@@ -692,9 +692,9 @@ COLUMN_DEFINITIONS = {
     
     # HIDDEN COLUMN
     'player_id': {
-        'display_name': 'ID',
+        'display_name': 'NBA',
         'db_field': 'player_id',
-        'width': 100,
+        'width': 60,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -799,6 +799,7 @@ def build_sections(for_nba_sheet=False):
             'column_count': player_info_count,
             'columns': player_info_cols,
             'is_stat_section': False,
+            'first_column_width': 25,  # Override width for first column in section
         },
         'notes': {
             'name': 'Notes',
@@ -854,6 +855,8 @@ def build_sections(for_nba_sheet=False):
             'columns': ['player_id'],
             'is_stat_section': False,
             'default_visible': False,
+            'header_row_1': 'IDs',
+            'header_row_2': 'NBA',
         }
     }
     
