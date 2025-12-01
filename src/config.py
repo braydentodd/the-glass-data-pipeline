@@ -56,7 +56,7 @@ DB_SCHEMA = {
     -- Player season stats table
     CREATE TABLE IF NOT EXISTS player_season_stats (
         id SERIAL PRIMARY KEY,
-        player_id INTEGER REFERENCES players(player_id),
+        player_id INTEGER REFERENCES players(player_id) ON DELETE CASCADE,
         team_id INTEGER REFERENCES teams(team_id),
         year INTEGER NOT NULL,
         season_type INTEGER NOT NULL DEFAULT 1,
@@ -243,7 +243,7 @@ COLUMN_DEFINITIONS = {
     'team': {
         'display_name': 'TEAM',
         'db_field': 'team_abbr',
-        'width': 40,
+        'width': 200,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -292,7 +292,7 @@ COLUMN_DEFINITIONS = {
     'height': {
         'display_name': 'HT',
         'db_field': 'height_inches',
-        'width': None,
+        'width': 32,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -304,7 +304,7 @@ COLUMN_DEFINITIONS = {
     'wingspan': {
         'display_name': 'WS',
         'db_field': 'wingspan_inches',
-        'width': None,
+        'width': 32,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -328,7 +328,7 @@ COLUMN_DEFINITIONS = {
     'notes': {
         'display_name': 'NOTES',
         'db_field': 'notes',
-        'width': None,
+        'width': 500,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -745,8 +745,8 @@ def get_reverse_stats():
     return {col for col, defn in COLUMN_DEFINITIONS.items() if defn.get('reverse_stat', False)}
 
 def get_editable_fields():
-    """Get fields that can be edited by user"""
-    return [col for col, defn in COLUMN_DEFINITIONS.items() if defn.get('editable', False)]
+    """Get database field names that can be edited by user"""
+    return [defn['db_field'] for col, defn in COLUMN_DEFINITIONS.items() if defn.get('editable', False)]
 
 # ============================================================================
 # SECTIONS CONFIGURATION (DYNAMICALLY GENERATED FROM COLUMN_DEFINITIONS)
@@ -1042,16 +1042,32 @@ HEADERS_NBA = build_headers(for_nba_sheet=True)
 
 def get_config_for_export():
     """Export configuration in a format suitable for API/Apps Script"""
+    # Calculate column indices for Apps Script (1-indexed)
+    wingspan_col = get_column_index('wingspan') + 1
+    notes_col = get_column_index('notes') + 1
+    player_id_col = get_column_index('player_id') + 1
+    stats_start_col = SECTIONS['current']['start_col'] + 1
+    
     return {
+        'api_base_url': 'http://150.136.255.23:5001',
+        'sheet_id': GOOGLE_SHEETS_CONFIG['spreadsheet_id'],
         'column_definitions': COLUMN_DEFINITIONS,
         'stat_order': STAT_ORDER,
         'sections': SECTIONS,
         'sections_nba': SECTIONS_NBA,
-        'nba_teams': dict(NBA_TEAMS),
+        'nba_teams': {abbr: 1610612737 + idx for idx, (abbr, name) in enumerate(NBA_TEAMS)},
+        'stat_columns': [col for col in STAT_ORDER if COLUMN_DEFINITIONS[col]['in_current']],
         'reverse_stats': list(get_reverse_stats()),
         'editable_fields': get_editable_fields(),
         'colors': COLORS,
         'color_thresholds': COLOR_THRESHOLDS,
+        # Column indices for Apps Script (1-indexed)
+        'column_indices': {
+            'wingspan': wingspan_col,
+            'notes': notes_col,
+            'player_id': player_id_col,
+            'stats_start': stats_start_col
+        },
         # Add column ranges for Apps Script visibility toggles
         'column_ranges': {
             'team_sheet': {

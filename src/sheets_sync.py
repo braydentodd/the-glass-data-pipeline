@@ -170,7 +170,7 @@ def fetch_all_nba_players_data(conn):
         s.def_rating_x10
     FROM players p
     LEFT JOIN teams t ON p.team_id = t.team_id
-    LEFT JOIN player_season_stats s 
+    INNER JOIN player_season_stats s 
         ON s.player_id = p.player_id 
         AND s.year = %s 
         AND s.season_type = %s
@@ -785,11 +785,15 @@ def get_color_for_percentile(percentile):
 
 def format_height(inches):
     """Convert inches to feet-inches format"""
-    if not inches:
+    if not inches or inches is None:
         return ""
-    feet = inches // 12
-    remaining_inches = inches % 12
-    return f'{feet}\'{remaining_inches}"'
+    try:
+        inches_int = int(inches)
+        feet = inches_int // 12
+        remaining_inches = inches_int % 12
+        return f'{feet}\'{remaining_inches}"'
+    except (ValueError, TypeError):
+        return ""
 
 def parse_sheet_config(worksheet):
     """
@@ -1387,7 +1391,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     
     # Only apply formatting, merges, and column widths during full syncs
     if sync_section in [None, 'all', 'current']:
-        # 2.5. Set column A to fixed 187px width
+        # 2.5. Set column A (NAME) to width from config
+        name_width = COLUMN_DEFINITIONS['name'].get('width', 187)
         requests.append({
             'updateDimensionProperties': {
                 'range': {
@@ -1397,7 +1402,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'endIndex': 1
                 },
                 'properties': {
-                    'pixelSize': 187
+                    'pixelSize': name_width
                 },
                 'fields': 'pixelSize'
             }
@@ -1752,52 +1757,6 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     
     # End of full-sync-only formatting section
     
-    # CONFIG-DRIVEN COLUMN WIDTHS AND AUTO-RESIZE (only for full syncs)
-    if sync_section in [None, 'all', 'current']:
-        # Process all sections for fixed widths and auto-resize
-        for section_key in ['player_info', 'current', 'historical', 'postseason']:
-            section = SECTIONS.get(section_key)
-            if not section:
-                continue
-            
-            # Apply fixed width columns from resize_rules
-            resize_rules = section.get('resize_rules', {})
-            for field_name, rule in resize_rules.items():
-                if rule.get('fixed'):
-                    # Get column index dynamically
-                    col_idx = get_column_index(field_name)
-                    
-                if col_idx is not None:
-                    requests.append({
-                        'updateDimensionProperties': {
-                            'range': {
-                                'sheetId': sheet_id,
-                                'dimension': 'COLUMNS',
-                                'startIndex': col_idx,
-                                'endIndex': col_idx + 1
-                            },
-                            'properties': {
-                                'pixelSize': rule['width']
-                            },
-                            'fields': 'pixelSize'
-                        }
-                    })
-        
-        # Apply auto-resize if configured
-        if section.get('auto_resize'):
-            start_idx = section.get('auto_resize_start')
-            end_idx = section.get('auto_resize_end')
-            if start_idx is not None and end_idx is not None:
-                requests.append({
-                    'autoResizeDimensions': {
-                        'dimensions': {
-                            'sheetId': sheet_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': start_idx,
-                            'endIndex': end_idx
-                        }
-                    }
-                })
     
     # Row heights - Set row 3 (filter row) to 15 pixels
     requests.append({
@@ -2170,20 +2129,66 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     })
     # End of full-sync-only operations
     
-    # AUTO-RESIZE all columns to fit content
+    # SET COLUMN WIDTHS - Auto-resize or fixed based on config
     for col_idx in range(SHEET_FORMAT['total_columns']):
-        requests.append({
-            'autoResizeDimensions': {
-                'dimensions': {
-                    'sheetId': sheet_id,
-                    'dimension': 'COLUMNS',
-                    'startIndex': col_idx,
-                    'endIndex': col_idx + 1
+        # Determine which column this is
+        col_name = None
+        col_width = None
+        
+        # Check player info section first
+        player_info_section = SECTIONS.get('player_info', {})
+        if player_info_section:
+            section_start = player_info_section['start_col']
+            section_cols = player_info_section['columns']
+            if section_start <= col_idx < section_start + len(section_cols):
+                col_name = section_cols[col_idx - section_start]
+                if col_name in COLUMN_DEFINITIONS:
+                    col_width = COLUMN_DEFINITIONS[col_name].get('width')
+        
+        # Check stat sections
+        if col_name is None:
+            for section_name, section_info in SECTIONS.items():
+                if section_name == 'player_info':
+                    continue
+                section_start = section_info['start_col']
+                section_cols = section_info['columns']
+                if section_start <= col_idx < section_start + len(section_cols):
+                    col_name = section_cols[col_idx - section_start]
+                    if col_name in COLUMN_DEFINITIONS:
+                        col_width = COLUMN_DEFINITIONS[col_name].get('width')
+                    break
+        
+        # Apply width: fixed if specified, auto-resize otherwise
+        if col_width is not None:
+            # Fixed width
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': col_idx,
+                        'endIndex': col_idx + 1
+                    },
+                    'properties': {
+                        'pixelSize': col_width
+                    },
+                    'fields': 'pixelSize'
                 }
-            }
-        })
+            })
+        else:
+            # Auto-resize
+            requests.append({
+                'autoResizeDimensions': {
+                    'dimensions': {
+                        'sheetId': sheet_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': col_idx,
+                        'endIndex': col_idx + 1
+                    }
+                }
+            })
     
-    # OVERRIDE first column width for stat sections (after auto-resize)
+    # OVERRIDE first column width for stat sections (after width setting)
     for section_name, section_info in SECTIONS.items():
         if 'first_column_width' in section_info:
             first_col_idx = section_info['start_col']
@@ -2201,23 +2206,6 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'fields': 'pixelSize'
                 }
             })
-    
-    # Set hidden (IDs) column to fixed width of 60px
-    hidden_col_idx = get_column_index(PLAYER_ID_COLUMN)
-    requests.append({
-        'updateDimensionProperties': {
-            'range': {
-                'sheetId': sheet_id,
-                'dimension': 'COLUMNS',
-                'startIndex': hidden_col_idx,
-                'endIndex': hidden_col_idx + 1
-            },
-            'properties': {
-                'pixelSize': 60
-            },
-            'fields': 'pixelSize'
-        }
-    })
     
     # Execute all requests in ONE batch call with retry logic
     try:
@@ -2581,7 +2569,8 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
         
         # Only apply formatting for full syncs
         if sync_section in [None, 'all', 'current']:
-            # Set column A (Name) to fixed 187px width
+            # Set column A (Name) to width from config
+            name_width = COLUMN_DEFINITIONS['name'].get('width', 187)
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -2591,7 +2580,7 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
                         'endIndex': 1
                     },
                     'properties': {
-                        'pixelSize': 187
+                        'pixelSize': name_width
                     },
                     'fields': 'pixelSize'
                 }
@@ -2933,134 +2922,6 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
                                     'fields': 'userEnteredFormat.backgroundColor'
                                 }
                             })
-        
-        # CONFIG-DRIVEN COLUMN WIDTHS AND AUTO-RESIZE (only for full syncs)
-        if sync_section in [None, 'all', 'current']:
-            # Set column B (Team) to 40px fixed width
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 1,
-                        'endIndex': 2
-                    },
-                    'properties': {
-                        'pixelSize': 40
-                    },
-                    'fields': 'pixelSize'
-                }
-            })
-            
-            # Set column C (Jersey) to 22px
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 2,
-                        'endIndex': 3
-                    },
-                    'properties': {
-                        'pixelSize': 22
-                    },
-                    'fields': 'pixelSize'
-                }
-            })
-            
-            # Set column J (GMS) to 25px - shifted by 1
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 9,  # +1 from team sheets
-                        'endIndex': 10
-                    },
-                    'properties': {
-                        'pixelSize': 25
-                    },
-                    'fields': 'pixelSize'
-                }
-            })
-            
-            # Set column AA (Historical YRS) to 25px - shifted by 1
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 26,  # +1 from team sheets
-                        'endIndex': 27
-                    },
-                    'properties': {
-                        'pixelSize': 25
-                    },
-                    'fields': 'pixelSize'
-                }
-            })
-            
-            # Set column AS (Playoff YRS) to 25px - shifted by 1
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 44,  # +1 from team sheets
-                        'endIndex': 45
-                    },
-                    'properties': {
-                        'pixelSize': 25
-                    },
-                    'fields': 'pixelSize'
-                }
-            })
-            
-            # Auto-resize columns D-I (player info)
-            requests.append({
-                'autoResizeDimensions': {
-                    'dimensions': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 3,  # Column D (Exp)
-                        'endIndex': 9     # Column I (Notes)
-                    }
-                }
-            })
-            
-            # Auto-resize stat columns (J-AC, AA-AR, AS-BK) - shifted by 1
-            requests.append({
-                'autoResizeDimensions': {
-                    'dimensions': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 10,  # After GMS
-                        'endIndex': 26     # Before historical YRS
-                    }
-                }
-            })
-            
-            requests.append({
-                'autoResizeDimensions': {
-                    'dimensions': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 27,  # After historical YRS
-                        'endIndex': 44     # Before playoff YRS
-                    }
-                }
-            })
-            
-            requests.append({
-                'autoResizeDimensions': {
-                    'dimensions': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 45,  # After playoff YRS
-                        'endIndex': 62     # Before hidden player ID
-                    }
-                }
-            })
         
         # Row heights
         requests.append({
@@ -3428,35 +3289,64 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
             }
         })
         
-        # AUTO-RESIZE all columns to fit content
+        # SET COLUMN WIDTHS - Auto-resize or fixed based on config
         for col_idx in range(SHEET_FORMAT_NBA['total_columns']):
-            requests.append({
-                'autoResizeDimensions': {
-                    'dimensions': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': col_idx,
-                        'endIndex': col_idx + 1
+            # Determine which column this is
+            col_name = None
+            col_width = None
+            
+            # Check player info section first (shifted by 1 for team column)
+            player_info_section = SECTIONS_NBA.get('player_info', {})
+            if player_info_section:
+                section_start = player_info_section['start_col']
+                section_cols = player_info_section['columns']
+                if section_start <= col_idx < section_start + len(section_cols):
+                    col_name = section_cols[col_idx - section_start]
+                    if col_name in COLUMN_DEFINITIONS:
+                        col_width = COLUMN_DEFINITIONS[col_name].get('width')
+            
+            # Check stat sections
+            if col_name is None:
+                for section_name, section_info in SECTIONS_NBA.items():
+                    if section_name == 'player_info':
+                        continue
+                    section_start = section_info['start_col']
+                    section_cols = section_info['columns']
+                    if section_start <= col_idx < section_start + len(section_cols):
+                        col_name = section_cols[col_idx - section_start]
+                        if col_name in COLUMN_DEFINITIONS:
+                            col_width = COLUMN_DEFINITIONS[col_name].get('width')
+                        break
+            
+            # Apply width: fixed if specified, auto-resize otherwise
+            if col_width is not None:
+                # Fixed width
+                requests.append({
+                    'updateDimensionProperties': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': col_idx,
+                            'endIndex': col_idx + 1
+                        },
+                        'properties': {
+                            'pixelSize': col_width
+                        },
+                        'fields': 'pixelSize'
                     }
-                }
-            })
-        
-        # Set hidden (IDs) column to fixed width of 60px
-        hidden_col_idx = get_column_index(PLAYER_ID_COLUMN, for_nba_sheet=True)
-        requests.append({
-            'updateDimensionProperties': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'dimension': 'COLUMNS',
-                    'startIndex': hidden_col_idx,
-                    'endIndex': hidden_col_idx + 1
-                },
-                'properties': {
-                    'pixelSize': 60
-                },
-                'fields': 'pixelSize'
-            }
-        })
+                })
+            else:
+                # Auto-resize
+                requests.append({
+                    'autoResizeDimensions': {
+                        'dimensions': {
+                            'sheetId': sheet_id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': col_idx,
+                            'endIndex': col_idx + 1
+                        }
+                    }
+                })
         
         # Execute all requests in ONE batch call with retry logic
         log(f"Executing batch update with {len(requests)} requests for NBA sheet")
