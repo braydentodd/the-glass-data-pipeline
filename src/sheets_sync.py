@@ -1312,17 +1312,27 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     
     # 3. Adjust rows if needed
     # ONLY adjust dimensions when doing a full sync (not partial section updates)
-    if sync_section in [None, 'all', 'current'] and current_row_count > total_rows:
-        requests.append({
-            'deleteDimension': {
-                'range': {
+    if sync_section in [None, 'all', 'current']:
+        if current_row_count > total_rows:
+            requests.append({
+                'deleteDimension': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'dimension': 'ROWS',
+                        'startIndex': total_rows,
+                        'endIndex': current_row_count
+                    }
+                }
+            })
+        elif current_row_count < total_rows:
+            # Add rows if we need more
+            requests.append({
+                'appendDimension': {
                     'sheetId': sheet_id,
                     'dimension': 'ROWS',
-                    'startIndex': total_rows,
-                    'endIndex': current_row_count
+                    'length': total_rows - current_row_count
                 }
-            }
-        })
+            })
     
     # 4. Update cell values (via updateCells instead of separate update call)
     # For partial syncs, only update the relevant column range
@@ -1955,7 +1965,9 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     })
     
     # WHITE borders between all columns in header rows (rows 2-3)
-    for col_idx in range(1, SHEET_FORMAT['total_columns'] - 1):
+    # Skip column 0 (name section) - start from column 1 onwards
+    name_end_col = SECTIONS['name']['end_col']
+    for col_idx in range(name_end_col, SHEET_FORMAT['total_columns'] - 1):
         requests.append({
             'updateBorders': {
                 'range': {
@@ -1978,7 +1990,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     # Also add RIGHT borders for stat sections
     black = {'red': 0, 'green': 0, 'blue': 0}
     for section_name, section_info in SECTIONS.items():
-        if section_name in ['name', 'hidden']:  # Skip first section and hidden column
+        if section_name in ['name', 'player_info', 'hidden']:  # Skip name, player_info, and hidden sections
             continue
         
         section_start_col = section_info['start_col']
@@ -2023,7 +2035,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         
         # RIGHT border for stat sections (notes, current, historical, postseason)
         if section_name in ['notes', 'current', 'historical', 'postseason']:
-            # White border in header rows 1-3
+            # White border in header rows 0-3 (all header rows including row 1)
             requests.append({
                 'updateBorders': {
                     'range': {
@@ -2059,6 +2071,44 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                         }
                     }
                 })
+    
+    # Add LEFT border to hidden column (creates right border for postseason section)
+    hidden_col = SECTIONS['hidden']['start_col']
+    # White border in header rows 0-3
+    requests.append({
+        'updateBorders': {
+            'range': {
+                'sheetId': sheet_id,
+                'startRowIndex': 0,
+                'endRowIndex': 3,
+                'startColumnIndex': hidden_col,
+                'endColumnIndex': hidden_col + 1,
+            },
+            'left': {
+                'style': 'SOLID',
+                'width': 2,
+                'color': white
+            }
+        }
+    })
+    # Black border in data rows
+    if len(data_rows) > 0:
+        requests.append({
+            'updateBorders': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 3,
+                    'endRowIndex': 3 + len(data_rows),
+                    'startColumnIndex': hidden_col,
+                    'endColumnIndex': hidden_col + 1,
+                },
+                'left': {
+                    'style': 'SOLID',
+                    'width': 2,
+                    'color': black
+                }
+            }
+        })
     
     # Freeze panes
     requests.append({
@@ -2151,6 +2201,23 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'fields': 'pixelSize'
                 }
             })
+    
+    # Set hidden (IDs) column to fixed width of 60px
+    hidden_col_idx = get_column_index(PLAYER_ID_COLUMN)
+    requests.append({
+        'updateDimensionProperties': {
+            'range': {
+                'sheetId': sheet_id,
+                'dimension': 'COLUMNS',
+                'startIndex': hidden_col_idx,
+                'endIndex': hidden_col_idx + 1
+            },
+            'properties': {
+                'pixelSize': 60
+            },
+            'fields': 'pixelSize'
+        }
+    })
     
     # Execute all requests in ONE batch call with retry logic
     try:
@@ -2451,17 +2518,27 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
                 })
         
         # 3. Adjust rows if needed
-        if sync_section in [None, 'all', 'current'] and current_row_count > total_rows:
-            requests.append({
-                'deleteDimension': {
-                    'range': {
+        if sync_section in [None, 'all', 'current']:
+            if current_row_count > total_rows:
+                requests.append({
+                    'deleteDimension': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'dimension': 'ROWS',
+                            'startIndex': total_rows,
+                            'endIndex': current_row_count
+                        }
+                    }
+                })
+            elif current_row_count < total_rows:
+                # Add rows if we need more
+                requests.append({
+                    'appendDimension': {
                         'sheetId': sheet_id,
                         'dimension': 'ROWS',
-                        'startIndex': total_rows,
-                        'endIndex': current_row_count
+                        'length': total_rows - current_row_count
                     }
-                }
-            })
+                })
         
         # 4. Update cell values
         rows_data = []
@@ -3147,7 +3224,9 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
         })
         
         # WHITE borders between all columns in header rows (rows 2-3)
-        for col_idx in range(1, SHEET_FORMAT_NBA['total_columns'] - 1):
+        # Skip columns 0-1 (name and team sections) for NBA sheet
+        name_end_col = SECTIONS_NBA['name']['end_col']
+        for col_idx in range(name_end_col, SHEET_FORMAT_NBA['total_columns'] - 1):
             requests.append({
                 'updateBorders': {
                     'range': {
@@ -3168,7 +3247,7 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
         # SECTION BOUNDARIES - Add borders at start of each section (except first)
         # WHITE borders in header rows 2-3, BLACK borders in data rows 4+
         for section_name, section_info in SECTIONS_NBA.items():
-            if section_name in ['name', 'hidden']:  # Skip first section and hidden column
+            if section_name in ['name', 'player_info', 'hidden']:  # Skip name, player_info, and hidden sections
                 continue
             
             section_start_col = section_info['start_col']
@@ -3209,6 +3288,86 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
                         }
                     }
                 })
+        
+        # RIGHT border for stat sections (notes, current, historical, postseason)
+        for section_name, section_info in SECTIONS_NBA.items():
+            if section_name in ['notes', 'current', 'historical', 'postseason']:
+                section_end_col = section_info['end_col']
+                
+                # White border in header rows 0-3 (all header rows including row 1)
+                requests.append({
+                    'updateBorders': {
+                        'range': {
+                            'sheetId': sheet_id,
+                            'startRowIndex': 0,
+                            'endRowIndex': 3,
+                            'startColumnIndex': section_end_col - 1,
+                            'endColumnIndex': section_end_col,
+                        },
+                        'right': {
+                            'style': 'SOLID',
+                            'width': 2,
+                            'color': white
+                        }
+                    }
+                })
+                
+                # Black border from row 4 down (data rows)
+                if len(data_rows) > 0:
+                    requests.append({
+                        'updateBorders': {
+                            'range': {
+                                'sheetId': sheet_id,
+                                'startRowIndex': 3,
+                                'endRowIndex': 3 + len(data_rows),
+                                'startColumnIndex': section_end_col - 1,
+                                'endColumnIndex': section_end_col,
+                            },
+                            'right': {
+                                'style': 'SOLID',
+                                'width': 2,
+                                'color': black
+                            }
+                        }
+                    })
+        
+        # Add LEFT border to hidden column (creates right border for postseason section)
+        hidden_col = SECTIONS_NBA['hidden']['start_col']
+        # White border in header rows 0-3
+        requests.append({
+            'updateBorders': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': 3,
+                    'startColumnIndex': hidden_col,
+                    'endColumnIndex': hidden_col + 1,
+                },
+                'left': {
+                    'style': 'SOLID',
+                    'width': 2,
+                    'color': white
+                }
+            }
+        })
+        # Black border in data rows
+        if len(data_rows) > 0:
+            requests.append({
+                'updateBorders': {
+                    'range': {
+                        'sheetId': sheet_id,
+                        'startRowIndex': 3,
+                        'endRowIndex': 3 + len(data_rows),
+                        'startColumnIndex': hidden_col,
+                        'endColumnIndex': hidden_col + 1,
+                    },
+                    'left': {
+                        'style': 'SOLID',
+                        'width': 2,
+                        'color': black
+                    }
+                }
+            })
         
         # Freeze panes
         requests.append({
@@ -3281,6 +3440,23 @@ def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles
                     }
                 }
             })
+        
+        # Set hidden (IDs) column to fixed width of 60px
+        hidden_col_idx = get_column_index(PLAYER_ID_COLUMN, for_nba_sheet=True)
+        requests.append({
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'dimension': 'COLUMNS',
+                    'startIndex': hidden_col_idx,
+                    'endIndex': hidden_col_idx + 1
+                },
+                'properties': {
+                    'pixelSize': 60
+                },
+                'fields': 'pixelSize'
+            }
+        })
         
         # Execute all requests in ONE batch call with retry logic
         log(f"Executing batch update with {len(requests)} requests for NBA sheet")
