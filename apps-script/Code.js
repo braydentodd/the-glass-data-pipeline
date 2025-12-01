@@ -55,15 +55,15 @@ function loadConfig() {
         'UTA': 1610612762, 'WAS': 1610612764
       },
       stat_columns: [
-        'games', 'minutes', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+        'games', 'minutes', 'possessions', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
         'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 
-        'blocks', 'fouls'
+        'blocks', 'fouls', 'off_rating', 'def_rating'
       ],
       reverse_stats: ['turnovers', 'fouls'],
       column_indices: {
-        wingspan: 6,
+        wingspan: 7,
         notes: 8,
-        player_id: 44,
+        player_id: 71,
         stats_start: 9
       },
       colors: {
@@ -167,7 +167,35 @@ function onOpen() {
       .addItem('Current', 'toggleCurrentStats')
       .addItem('Historical', 'toggleHistoricalStats')
       .addItem('Postseason', 'togglePostseasonStats'))
+    .addSeparator()
+    .addItem('Setup Edit Trigger', 'installEditTrigger')
     .addToUi();
+}
+
+/**
+ * Install the onEdit trigger for tracking wingspan and notes changes
+ * Run this once to enable automatic database updates when editing cells
+ */
+function installEditTrigger() {
+  // Delete any existing onEdit triggers to avoid duplicates
+  const triggers = ScriptApp.getProjectTriggers();
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === 'onEditInstallable') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  }
+  
+  // Create new trigger
+  ScriptApp.newTrigger('onEditInstallable')
+    .forSpreadsheet(SpreadsheetApp.getActive())
+    .onEdit()
+    .create();
+  
+  SpreadsheetApp.getUi().alert(
+    'Edit Trigger Installed',
+    'The edit trigger has been installed. Changes to Wingspan and Notes columns will now be saved to the database automatically.',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
 }
 
 /**
@@ -233,7 +261,7 @@ function onEditInstallable(e) {
         return;
       }
     }
-  } else if (col === colIndices.notes) {
+  } else if (col === notesCol) {
     // Notes column
     fieldName = 'notes';
     displayFieldName = 'notes';
@@ -1197,7 +1225,8 @@ function getPlayerIdByName(playerName, teamAbbr) {
  * Update a player field in the database via API
  */
 function updatePlayerField(playerId, fieldName, fieldValue) {
-  const url = `${API_BASE_URL}/api/player/${playerId}`;
+  const apiBaseUrl = getApiBaseUrl();
+  const url = `${apiBaseUrl}/api/player/${playerId}`;
   
   const payload = {};
   payload[fieldName] = fieldValue;
