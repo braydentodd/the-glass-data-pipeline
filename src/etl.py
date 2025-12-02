@@ -1,17 +1,18 @@
 """
-THE GLASS - Comprehensive Nightly ETL
-Handles all data updates in one consolidated script:
-1. Player roster updates (with deep details: birthdate, draft, school)
-2. Player season statistics (current + historical)
-3. Team season statistics (current + historical)
-4. Optional: Historical backfill to specific date
-5. Auto schema creation on first run
-6. Duplicate prevention
+THE GLASS - Daily ETL (Runs nightly)
+Fast update that handles:
+1. Player season statistics (current + last season) - FAST (2 API calls)
+2. Team rosters + jersey numbers - FAST (30 API calls, ~30 seconds)
+3. Team season statistics (current season) - FAST (6 API calls)
+4. New player details (height, weight, birthdate) - RARE (only for new players)
+5. Optional: Historical backfill
+
+This runs DAILY. Height/weight/birthdate for existing players updated ANNUALLY on August 1st.
 
 Usage:
-    python src/etl/nightly.py                    # Run current season update
-    python src/etl/nightly.py --backfill 2020    # Backfill from 2020 to present
-    python src/etl/nightly.py --backfill 2015 --end 2020  # Backfill 2015-2020 only
+    python src/etl.py                          # Run daily update (fast, ~2-3 minutes)
+    python src/etl.py --backfill 2020          # Backfill from 2020 to present
+    python src/etl.py --backfill 2015 --end 2020  # Backfill 2015-2020 only
 """
 
 import os
@@ -156,29 +157,19 @@ def parse_birthdate(date_str):
         return None
 
 
-def season_exists(cursor, year, season_type=1):
-    """Check if data already exists for a season (prevent duplicates)"""
-    cursor.execute("""
-        SELECT COUNT(*) FROM player_season_stats 
-        WHERE year = %s AND season_type = %s
-    """, (year, season_type))
-    count = cursor.fetchone()[0]
-    return count > 0
-
-
-def update_player_rosters(include_deep_details=True):
+def update_player_rosters():
     """
-    Update player rosters from NBA API.
-    Fetches ALL players who logged stats in current season AND last season.
-    This ensures we capture everyone who played, not just final rosters.
-    Always fetches detailed info (birthdate, draft, school) for complete data.
+    FAST daily roster update:
+    1. Fetch player stats (current + last season) - 2 API calls, very fast
+    2. Fetch team rosters to get team_id + jersey_number - 30 API calls, ~30 seconds
+    3. Only fetch height/weight/birthdate for NEW players (rare)
     
-    Args:
-        include_deep_details: Fetch detailed info (birthdate, draft, school)
+    This completes in ~2-3 minutes instead of 20 minutes.
+    Height/weight/birthdate for existing players updated annually on August 1st.
     """
     log("=" * 70)
-    log("STEP 1: Updating Player List from Stats")
-    log("=" * 70)
+    log("STEP 1: Updating Player Rosters (Fast Mode)")
+    log("="* 70)
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -188,82 +179,128 @@ def update_player_rosters(include_deep_details=True):
     players_updated = 0
     
     current_season = NBA_CONFIG['current_season']
-    current_year = NBA_CONFIG['current_season_year']
-    last_season = f"{current_year-1}-{str(current_year)[2:]}"
     
-    log(f"Fetching ALL players with stats from current ({current_season}) and last ({last_season}) seasons...")
+    log(f"Fetching ALL players with stats from current season ({current_season})...")
     
-    # Fetch players from season stats (not rosters) to get everyone who played
-    for season_name, season_str, year in [("current", current_season, current_year), ("last", last_season, current_year-1)]:
-        log(f"\nFetching {season_name} season ({season_str}) players from stats...")
+    # First, fetch current team rosters to know who's actually on teams RIGHT NOW (Issue #2)
+    log("\nFetching current team rosters from NBA API...")
+    current_rosters = {}  # player_id -> team_id mapping
+    current_jerseys = {}  # player_id -> jersey_number mapping
+    try:
+        from nba_api.stats.static import teams
+        nba_teams = teams.get_teams()
         
-        try:
-            # Fetch player stats to get ALL players who played this season
-            stats = leaguedashplayerstats.LeagueDashPlayerStats(
-                season=season_str,
-                season_type_all_star='Regular Season',
-                per_mode_detailed='Totals',
-                timeout=60
-            )
-            time.sleep(RATE_LIMIT_DELAY)
-            
-            df = stats.get_data_frames()[0]
-            
-            log(f"✓ Found {len(df)} players with stats in {season_name} season")
-            
-            for _, row in df.iterrows():
-                player_id = row['PLAYER_ID']
-                team_id = row['TEAM_ID']
+        for team in nba_teams:
+            time.sleep(1)
+            team_id = team['id']
+            # Retry logic for roster fetching
+            for attempt in range(3):
+                try:
+                    time.sleep(RATE_LIMIT_DELAY)
+                    from nba_api.stats.endpoints import commonteamroster
+                    roster = commonteamroster.CommonTeamRoster(team_id=team_id, season=current_season, timeout=30)
+                    roster_df = roster.get_data_frames()[0]
+                    
+                    for _, player_row in roster_df.iterrows():
+                        player_id = player_row['PLAYER_ID']
+                        current_rosters[player_id] = team_id
+                        # Get jersey number from roster (Issue #1 - fast!)
+                        jersey = safe_str(player_row.get('NUM'))
+                        if jersey:
+                            current_jerseys[player_id] = jersey
+                        
+                    log(f"  ✓ {team['abbreviation']}: {len(roster_df)} players")
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        wait_time = 5 * (attempt + 1)
+                        log(f"  ⚠ Retry {attempt + 1}/3 for {team['abbreviation']} (waiting {wait_time}s)", "WARN")
+                        time.sleep(wait_time)
+                    else:
+                        log(f"  ⚠ Failed to fetch roster for {team['abbreviation']} after 3 attempts: {e}", "WARN")
+                        continue
+        
+        log(f"✓ Fetched current rosters: {len(current_rosters)} players, {len(current_jerseys)} with jersey numbers\n")
+    except Exception as e:
+        log(f"⚠ Failed to fetch current rosters: {e}\", \"WARN")
+        current_rosters = {}
+        current_jerseys = {}
+    
+    # Now fetch players from current season stats
+    log(f"\nFetching current season ({current_season}) players from stats...")
+    
+    try:
+        # Fetch player stats to get ALL players who played this season (with retry)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                stats = leaguedashplayerstats.LeagueDashPlayerStats(
+                    season=current_season,
+                    season_type_all_star='Regular Season',
+                    per_mode_detailed='Totals',
+                    timeout=120
+                )
+                time.sleep(RATE_LIMIT_DELAY)
                 
-                # Add all players from both seasons (union)
-                # Current season data takes precedence for team_id if player appears in both
-                if player_id not in all_players or season_name == "current":
-                    all_players[player_id] = {
-                        'player_id': player_id,
-                        'team_id': team_id,
-                        'name': row.get('PLAYER_NAME', ''),
-                        'jersey': None,  # Not available from stats endpoint
-                        'weight': None   # Not available from stats endpoint
-                    }
+                df = stats.get_data_frames()[0]
+                log(f"✓ Found {len(df)} players with stats in current season")
+                break
+            except Exception as retry_error:
+                if attempt < max_retries - 1:
+                    wait_time = 10 * (attempt + 1)
+                    log(f"⚠ Attempt {attempt + 1}/{max_retries} failed for current season stats, retrying in {wait_time}s...", "WARN")
+                    time.sleep(wait_time)
+                else:
+                    raise retry_error
+        
+        for _, row in df.iterrows():
+            player_id = row['PLAYER_ID']
             
-        except Exception as e:
-            log(f"✗ Error fetching {season_name} stats: {e}", "ERROR")
-            continue
+            # Add player with live roster data
+            all_players[player_id] = {
+                'player_id': player_id,
+                'team_id': current_rosters.get(player_id),  # Use live roster data
+                'name': row.get('PLAYER_NAME', ''),
+                'jersey': current_jerseys.get(player_id),  # Get jersey from roster (FAST!)
+                'weight': None,  # Will get from annual ETL or commonplayerinfo for new players
+                'age': safe_int(row.get('AGE', 0)) if row.get('AGE') else None
+            }
+        
+    except Exception as e:
+        log(f"✗ Error fetching current season stats: {e}", "ERROR")
     
-    log(f"\nTotal unique players from both seasons: {len(all_players)}")
+    log(f"\nTotal players found: {len(all_players)}")
     
-    # Fetch deep details for all players
-    if include_deep_details:
-        total_players = len(all_players)
-        log(f"Fetching deep player details for {total_players} players...")
-        log(f"This will take approximately {int(total_players * RATE_LIMIT_DELAY / 60) + 15} minutes (includes aggressive rate limiting breaks)")
+    # Get existing players from database to identify NEW players
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT player_id FROM players")
+    existing_player_ids = {row[0] for row in cursor.fetchall()}
+    
+    # Identify NEW players (not in database)
+    new_player_ids = [pid for pid in all_players.keys() if pid not in existing_player_ids]
+    
+    if new_player_ids:
+        log(f"\n🆕 Found {len(new_player_ids)} NEW players - fetching height/weight/birthdate...")
+        log(f"⏱ Estimated time: ~{len(new_player_ids) * 1.5 / 60:.1f} minutes")
         
         failed_count = 0
         consecutive_failures = 0
-        requests_since_long_break = 0
         
-        for idx, player_id in enumerate(all_players.keys()):
+        for idx, player_id in enumerate(new_player_ids):
             player_name = all_players[player_id].get('name', 'Unknown')
             
-            # AGGRESSIVE: Take a 2-minute break every 50 players (not 100)
-            if idx > 0 and idx % 50 == 0:
-                log(f"Taking 2-minute cooldown break at {idx}/{total_players} to avoid rate limiting...")
+            # Take breaks if seeing failures
+            if consecutive_failures >= 3:
+                log("⚠ Detected API issues (3 consecutive failures), taking 2-minute emergency break...", "WARN")
                 time.sleep(120)
                 consecutive_failures = 0
-                requests_since_long_break = 0
-            
-            # If we're seeing many consecutive failures, take emergency break
-            if consecutive_failures >= 3:  # Reduced from 5 to 3
-                log("⚠ Detected API rate limiting (3 consecutive failures), taking 3-minute emergency break...", "WARN")
-                time.sleep(180)
-                consecutive_failures = 0
-                requests_since_long_break = 0
             
             # Try to fetch details with exponential backoff
-            for attempt in range(3):  # Try 3 times with increasing delays
+            for attempt in range(3):
                 try:
                     info = commonplayerinfo.CommonPlayerInfo(player_id=player_id, timeout=20)
-                    time.sleep(RATE_LIMIT_DELAY * 1.5)  # Slower rate: 0.9s instead of 0.6s
+                    time.sleep(1.5)
                     
                     player_df = info.get_data_frames()[0]
                     if not player_df.empty:
@@ -271,56 +308,56 @@ def update_player_rosters(include_deep_details=True):
                         all_players[player_id].update({
                             'birthdate': parse_birthdate(pd.get('BIRTHDATE')),
                             'height': parse_height(pd.get('HEIGHT')),
+                            'weight': safe_int(pd.get('WEIGHT')),
+                            'jersey': safe_str(pd.get('JERSEY')),
                             'years_experience': safe_int(pd.get('SEASON_EXP')),
                             'pre_nba_team': safe_str(pd.get('SCHOOL'))
                         })
                     consecutive_failures = 0
-                    requests_since_long_break += 1
                     break
                     
                 except Exception as e:
                     if attempt < 2:
-                        # Exponential backoff: 3s, 6s, then give up
-                        wait_time = 3 * (attempt + 1)
-                        log(f"⚠ Retry {attempt + 1}/3 for {player_name} (waiting {wait_time}s)", "WARN")
+                        wait_time = 5 * (attempt + 1)
+                        log(f"  ⚠ Retry {attempt + 1}/3 for {player_name} (waiting {wait_time}s)", "WARN")
                         time.sleep(wait_time)
                     else:
-                        # All attempts failed
                         failed_count += 1
                         consecutive_failures += 1
-                        if failed_count <= 3:
-                            log(f"⚠ Failed to fetch {player_name} after 3 attempts: {str(e)[:100]}", "WARN")
-                        elif failed_count == 4:
-                            log("⚠ ... suppressing further error details (will report count at end)", "WARN")
+                        log(f"  ✗ Failed to fetch {player_name}: {e}", "ERROR")
             
-            # Log every 10 players to show progress
-            if (idx + 1) % 10 == 0:
+            # Log progress every 5 new players
+            if (idx + 1) % 5 == 0 or (idx + 1) == len(new_player_ids):
                 status = f"(✓ {idx + 1 - failed_count} success, ✗ {failed_count} failed)" if failed_count > 0 else ""
-                log(f"Progress: {idx + 1}/{total_players} players {status}")
+                log(f"Progress: {idx + 1}/{len(new_player_ids)} new players {status}")
         
         if failed_count > 0:
-            log(f"⚠ Could not fetch details for {failed_count}/{total_players} players due to API issues", "WARN")
-            log("  These players will still be added with basic info (name, team)", "WARN")
+            log(f"⚠ Could not fetch details for {failed_count}/{len(new_player_ids)} new players", "WARN")
+            log("  These players will still be added with basic info (name, team, jersey from roster)", "WARN")
+    else:
+        log("\n✓ No new players found - all players already in database")
     
-    # Update database
+    # Update database with all players
+    log(f"\nUpdating database with {len(all_players)} players...")
+    
     for player_id, player_data in all_players.items():
         try:
             cursor.execute("SELECT team_id FROM players WHERE player_id = %s", (player_id,))
             existing = cursor.fetchone()
             
             if existing:
-                # Update existing player
-                if include_deep_details and 'birthdate' in player_data:
+                # Update existing player (jersey and team_id only - height/weight/birthdate updated annually)
+                if 'birthdate' in player_data:
                     cursor.execute("""
                         UPDATE players SET
                             team_id = %s, jersey_number = %s, 
-                            weight_lbs = %s, height_inches = %s, wingspan_inches = %s,
+                            weight_lbs = %s, height_inches = %s,
                             years_experience = %s, pre_nba_team = %s, birthdate = %s, 
                             updated_at = NOW()
                         WHERE player_id = %s
                     """, (
                         player_data['team_id'], player_data['jersey'],
-                        player_data.get('weight'), player_data.get('height'), player_data.get('wingspan'),
+                        player_data.get('weight'), player_data.get('height'),
                         player_data.get('years_experience'), player_data.get('pre_nba_team'),
                         player_data.get('birthdate'),
                         player_id
@@ -336,18 +373,18 @@ def update_player_rosters(include_deep_details=True):
                     players_updated += 1
                     log(f"Updated: {player_data['name']} → Team {player_data['team_id']}")
             else:
-                # Insert new player
-                if include_deep_details and 'birthdate' in player_data:
+                # Insert new player (with height/weight/birthdate if fetched)
+                if 'birthdate' in player_data:
                     cursor.execute("""
                         INSERT INTO players (
                             player_id, name, team_id, jersey_number,
-                            weight_lbs, height_inches, wingspan_inches,
+                            weight_lbs, height_inches,
                             years_experience, pre_nba_team, birthdate
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         player_id, player_data['name'], player_data['team_id'],
                         player_data['jersey'], player_data.get('weight'),
-                        player_data.get('height'), player_data.get('wingspan'),
+                        player_data.get('height'),
                         player_data.get('years_experience'), player_data.get('pre_nba_team'),
                         player_data.get('birthdate')
                     ))
@@ -365,41 +402,12 @@ def update_player_rosters(include_deep_details=True):
             log(f"✗ Error updating player {player_id}: {e}", "ERROR")
             continue
     
-    # Delete players who are no longer in the current or last season
-    log("\nCleaning up players no longer in current/last season...")
-    valid_player_ids = tuple(all_players.keys())
-    
-    cursor.execute("""
-        SELECT player_id, name 
-        FROM players 
-        WHERE player_id NOT IN %s
-    """, (valid_player_ids,))
-    
-    players_to_delete = cursor.fetchall()
-    
-    if players_to_delete:
-        log(f"Found {len(players_to_delete)} players to remove:")
-        for player_id, name in players_to_delete[:10]:  # Show first 10
-            log(f"  - {name} (ID: {player_id})")
-        if len(players_to_delete) > 10:
-            log(f"  ... and {len(players_to_delete) - 10} more")
-        
-        # Delete them (will cascade to player_season_stats)
-        cursor.execute("""
-            DELETE FROM players 
-            WHERE player_id NOT IN %s
-        """, (valid_player_ids,))
-        
-        deleted_count = cursor.rowcount
-        log(f"✓ Deleted {deleted_count} players and their stats (cascaded)")
-    else:
-        log("✓ No outdated players to remove")
-    
     conn.commit()
     cursor.close()
     conn.close()
     
-    log(f"✓ Roster complete: {players_added} added, {players_updated} updated, {len(players_to_delete) if players_to_delete else 0} deleted")
+    log(f"✓ Roster update complete: {players_added} added, {players_updated} updated")
+    
     return True
 
 
@@ -429,32 +437,52 @@ def update_player_stats():
     
     for season_type_name, season_type_code in season_types:
         try:
-            # Fetch basic stats
-            stats = leaguedashplayerstats.LeagueDashPlayerStats(
-                season=current_season,
-                season_type_all_star=season_type_name,
-                per_mode_detailed='Totals',
-                timeout=60
-            )
-            time.sleep(RATE_LIMIT_DELAY)
-            
-            df = stats.get_data_frames()[0]
+            # Fetch basic stats (with retry)
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    stats = leaguedashplayerstats.LeagueDashPlayerStats(
+                        season=current_season,
+                        season_type_all_star=season_type_name,
+                        per_mode_detailed='Totals',
+                        timeout=120  # Increased timeout
+                    )
+                    time.sleep(RATE_LIMIT_DELAY)
+                    df = stats.get_data_frames()[0]
+                    break
+                except Exception as retry_error:
+                    if attempt < max_retries - 1:
+                        wait_time = 10 * (attempt + 1)
+                        log(f"⚠ Attempt {attempt + 1}/{max_retries} failed for {season_type_name} basic stats, retrying in {wait_time}s...", "WARN")
+                        time.sleep(wait_time)
+                    else:
+                        raise retry_error
             
             if df.empty:
                 log(f"No {season_type_name} data for {current_season}")
                 continue
             
-            # Fetch advanced stats
+            # Fetch advanced stats (with retry)
             try:
-                adv_stats = leaguedashplayerstats.LeagueDashPlayerStats(
-                    season=current_season,
-                    season_type_all_star=season_type_name,
-                    measure_type_detailed_defense='Advanced',
-                    per_mode_detailed='Totals',
-                    timeout=60
-                )
-                time.sleep(RATE_LIMIT_DELAY)
-                adv_df = adv_stats.get_data_frames()[0]
+                for attempt in range(max_retries):
+                    try:
+                        adv_stats = leaguedashplayerstats.LeagueDashPlayerStats(
+                            season=current_season,
+                            season_type_all_star=season_type_name,
+                            measure_type_detailed_defense='Advanced',
+                            per_mode_detailed='Totals',
+                            timeout=120
+                        )
+                        time.sleep(RATE_LIMIT_DELAY)
+                        adv_df = adv_stats.get_data_frames()[0]
+                        break
+                    except Exception as retry_error:
+                        if attempt < max_retries - 1:
+                            wait_time = 10 * (attempt + 1)
+                            log(f"⚠ Attempt {attempt + 1}/{max_retries} failed for {season_type_name} advanced stats, retrying in {wait_time}s...", "WARN")
+                            time.sleep(wait_time)
+                        else:
+                            raise retry_error
                 
                 if not adv_df.empty:
                     df = df.merge(
@@ -591,32 +619,52 @@ def update_team_stats():
     
     for season_type_name, season_type_code in season_types:
         try:
-            # Fetch basic stats
-            stats = leaguedashteamstats.LeagueDashTeamStats(
-                season=current_season,
-                season_type_all_star=season_type_name,
-                per_mode_detailed='Totals',
-                timeout=60
-            )
-            time.sleep(RATE_LIMIT_DELAY)
-            
-            df = stats.get_data_frames()[0]
+            # Fetch basic stats (with retry)
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    stats = leaguedashteamstats.LeagueDashTeamStats(
+                        season=current_season,
+                        season_type_all_star=season_type_name,
+                        per_mode_detailed='Totals',
+                        timeout=120  # Increased timeout
+                    )
+                    time.sleep(RATE_LIMIT_DELAY)
+                    df = stats.get_data_frames()[0]
+                    break
+                except Exception as retry_error:
+                    if attempt < max_retries - 1:
+                        wait_time = 10 * (attempt + 1)
+                        log(f"⚠ Attempt {attempt + 1}/{max_retries} failed for {season_type_name} team stats, retrying in {wait_time}s...", "WARN")
+                        time.sleep(wait_time)
+                    else:
+                        raise retry_error
             
             if df.empty:
                 log(f"No {season_type_name} data for {current_season}")
                 continue
             
-            # Fetch advanced stats
+            # Fetch advanced stats (with retry)
             try:
-                adv_stats = leaguedashteamstats.LeagueDashTeamStats(
-                    season=current_season,
-                    season_type_all_star=season_type_name,
-                    measure_type_detailed_defense='Advanced',
-                    per_mode_detailed='Totals',
-                    timeout=60
-                )
-                time.sleep(RATE_LIMIT_DELAY)
-                adv_df = adv_stats.get_data_frames()[0]
+                for attempt in range(max_retries):
+                    try:
+                        adv_stats = leaguedashteamstats.LeagueDashTeamStats(
+                            season=current_season,
+                            season_type_all_star=season_type_name,
+                            measure_type_detailed_defense='Advanced',
+                            per_mode_detailed='Totals',
+                            timeout=120
+                        )
+                        time.sleep(RATE_LIMIT_DELAY)
+                        adv_df = adv_stats.get_data_frames()[0]
+                        break
+                    except Exception as retry_error:
+                        if attempt < max_retries - 1:
+                            wait_time = 10 * (attempt + 1)
+                            log(f"⚠ Attempt {attempt + 1}/{max_retries} failed for {season_type_name} team advanced stats, retrying in {wait_time}s...", "WARN")
+                            time.sleep(wait_time)
+                        else:
+                            raise retry_error
                 
                 if not adv_df.empty:
                     df = df.merge(
@@ -726,279 +774,10 @@ def update_team_stats():
     return True
 
 
-def check_missing_data():
-    """Check for missing historical seasons"""
-    log("=" * 70)
-    log("STEP 4: Checking for Missing Data")
-    log("=" * 70)
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    current_year = NBA_CONFIG['current_season_year']
-    missing_seasons = []
-    
-    # Check last 5 seasons
-    for year in range(current_year - 5, current_year + 1):
-        season = f"{year-1}-{str(year)[2:]}"
-        cursor.execute("SELECT COUNT(*) FROM player_season_stats WHERE year = %s", (year,))
-        count = cursor.fetchone()[0]
-        
-        if count == 0:
-            missing_seasons.append(season)
-            log(f"⚠ Missing: {season}")
-        else:
-            log(f"✓ {season}: {count} records")
-    
-    cursor.close()
-    conn.close()
-    
-    if missing_seasons:
-        log(f"⚠ Found {len(missing_seasons)} missing seasons: {missing_seasons}")
-        log("💡 Run with --backfill <start_year> to fill historical data")
-    else:
-        log("✓ All recent seasons have data")
-    
-    return missing_seasons
-
-
-def backfill_historical_stats(start_year, end_year=None):
-    """
-    Backfill historical statistics from start_year to end_year.
-    Includes duplicate prevention.
-    
-    Args:
-        start_year: Starting year (e.g., 2020 for 2019-20 season)
-        end_year: Ending year (defaults to current season)
-    """
-    if end_year is None:
-        end_year = NBA_CONFIG['current_season_year']
-    
-    log("=" * 70)
-    log(f"BACKFILL: {start_year} to {end_year}")
-    log("=" * 70)
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Get valid IDs
-    cursor.execute("SELECT player_id FROM players")
-    valid_player_ids = {row[0] for row in cursor.fetchall()}
-    log(f"Found {len(valid_player_ids)} players in database")
-    
-    valid_team_ids = set(TEAM_IDS)
-    log(f"Processing {len(valid_team_ids)} teams")
-    
-    season_types = [
-        ('Regular Season', 1),
-        ('Playoffs', 2),
-        ('PlayIn', 3),
-    ]
-    
-    for year in range(start_year, end_year + 1):
-        season = f"{year-1}-{str(year)[2:]}"
-        
-        log("")
-        log("=" * 70)
-        log(f"Processing {season} (year={year})")
-        log("=" * 70)
-        
-        for season_type_name, season_type_code in season_types:
-            # Check if data already exists (prevent duplicates)
-            if season_exists(cursor, year, season_type_code):
-                log(f"✓ {season_type_name} data already exists for {year}, skipping")
-                continue
-            
-            # Fetch player stats
-            try:
-                log(f"Fetching {season_type_name} player stats...")
-                stats = leaguedashplayerstats.LeagueDashPlayerStats(
-                    season=season,
-                    season_type_all_star=season_type_name,
-                    per_mode_detailed='Totals',
-                    timeout=60
-                )
-                time.sleep(RATE_LIMIT_DELAY)
-                
-                df = stats.get_data_frames()[0]
-                
-                if df.empty:
-                    log(f"No {season_type_name} player data for {season}")
-                else:
-                    # Fetch advanced stats
-                    try:
-                        adv_stats = leaguedashplayerstats.LeagueDashPlayerStats(
-                            season=season,
-                            season_type_all_star=season_type_name,
-                            measure_type_detailed_defense='Advanced',
-                            per_mode_detailed='Totals',
-                            timeout=60
-                        )
-                        time.sleep(RATE_LIMIT_DELAY)
-                        adv_df = adv_stats.get_data_frames()[0]
-                        
-                        if not adv_df.empty:
-                            df = df.merge(
-                                adv_df[['PLAYER_ID', 'TEAM_ID', 'OFF_RATING', 'DEF_RATING', 'POSS', 'OREB_PCT', 'DREB_PCT']], 
-                                on=['PLAYER_ID', 'TEAM_ID'], 
-                                how='left'
-                            )
-                    except Exception as e:
-                        log(f"Warning: Could not fetch advanced stats: {e}", "WARN")
-                    
-                    # Prepare records
-                    records = []
-                    for _, row in df.iterrows():
-                        player_id = row['PLAYER_ID']
-                        
-                        if player_id not in valid_player_ids:
-                            continue
-                        
-                        fgm = safe_int(row.get('FGM', 0))
-                        fga = safe_int(row.get('FGA', 0))
-                        fg3m = safe_int(row.get('FG3M', 0))
-                        fg3a = safe_int(row.get('FG3A', 0))
-                        
-                        fg2m = max(0, fgm - fg3m)
-                        fg2a = max(0, fga - fg3a)
-                        
-                        record = (
-                            player_id, year, safe_int(row.get('TEAM_ID', 0)), season_type_code,
-                            safe_int(row.get('GP', 0)), safe_int(row.get('MIN', 0), 10),
-                            safe_int(row.get('POSS', 0)), fg2m, fg2a, fg3m, fg3a,
-                            safe_int(row.get('FTM', 0)), safe_int(row.get('FTA', 0)),
-                            safe_int(row.get('OREB', 0)), safe_int(row.get('DREB', 0)),
-                            safe_float(row.get('OREB_PCT', 0), 1000), safe_float(row.get('DREB_PCT', 0), 1000),
-                            safe_int(row.get('AST', 0)), safe_int(row.get('TOV', 0)),
-                            safe_int(row.get('STL', 0)), safe_int(row.get('BLK', 0)),
-                            safe_int(row.get('PF', 0)),
-                            safe_float(row.get('OFF_RATING', 0), 10), safe_float(row.get('DEF_RATING', 0), 10)
-                        )
-                        records.append(record)
-                    
-                    if records:
-                        execute_values(
-                            cursor,
-                            """
-                            INSERT INTO player_season_stats (
-                                player_id, year, team_id, season_type,
-                                games_played, minutes_x10, possessions,
-                                fg2m, fg2a, fg3m, fg3a, ftm, fta,
-                                off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
-                                assists, turnovers, steals, blocks, fouls,
-                                off_rating_x10, def_rating_x10
-                            ) VALUES %s
-                            ON CONFLICT (player_id, year, season_type) DO NOTHING
-                            """,
-                            records
-                        )
-                        conn.commit()
-                        log(f"✓ Inserted {len(records)} {season_type_name} player records")
-            
-            except Exception as e:
-                log(f"✗ Error fetching {season_type_name} player stats: {e}", "ERROR")
-            
-            # Fetch team stats
-            try:
-                log(f"Fetching {season_type_name} team stats...")
-                stats = leaguedashteamstats.LeagueDashTeamStats(
-                    season=season,
-                    season_type_all_star=season_type_name,
-                    per_mode_detailed='Totals',
-                    timeout=60
-                )
-                time.sleep(RATE_LIMIT_DELAY)
-                
-                df = stats.get_data_frames()[0]
-                
-                if df.empty:
-                    log(f"No {season_type_name} team data for {season}")
-                else:
-                    # Fetch advanced stats
-                    try:
-                        adv_stats = leaguedashteamstats.LeagueDashTeamStats(
-                            season=season,
-                            season_type_all_star=season_type_name,
-                            measure_type_detailed_defense='Advanced',
-                            per_mode_detailed='Totals',
-                            timeout=60
-                        )
-                        time.sleep(RATE_LIMIT_DELAY)
-                        adv_df = adv_stats.get_data_frames()[0]
-                        
-                        if not adv_df.empty:
-                            df = df.merge(
-                                adv_df[['TEAM_ID', 'OFF_RATING', 'DEF_RATING', 'POSS', 'OREB_PCT', 'DREB_PCT']], 
-                                on='TEAM_ID', 
-                                how='left'
-                            )
-                    except Exception as e:
-                        log(f"Warning: Could not fetch advanced stats: {e}", "WARN")
-                    
-                    # Prepare records
-                    records = []
-                    for _, row in df.iterrows():
-                        team_id = row['TEAM_ID']
-                        
-                        if team_id not in valid_team_ids:
-                            continue
-                        
-                        fgm = safe_int(row.get('FGM', 0))
-                        fga = safe_int(row.get('FGA', 0))
-                        fg3m = safe_int(row.get('FG3M', 0))
-                        fg3a = safe_int(row.get('FG3A', 0))
-                        
-                        fg2m = max(0, fgm - fg3m)
-                        fg2a = max(0, fga - fg3a)
-                        
-                        record = (
-                            team_id, year, season_type_code,
-                            safe_int(row.get('GP', 0)), safe_int(row.get('MIN', 0), 10),
-                            safe_int(row.get('POSS', 0)), fg2m, fg2a, fg3m, fg3a,
-                            safe_int(row.get('FTM', 0)), safe_int(row.get('FTA', 0)),
-                            safe_int(row.get('OREB', 0)), safe_int(row.get('DREB', 0)),
-                            safe_float(row.get('OREB_PCT', 0), 1000), safe_float(row.get('DREB_PCT', 0), 1000),
-                            safe_int(row.get('AST', 0)), safe_int(row.get('TOV', 0)),
-                            safe_int(row.get('STL', 0)), safe_int(row.get('BLK', 0)),
-                            safe_int(row.get('PF', 0)),
-                            safe_float(row.get('OFF_RATING', 0), 10), safe_float(row.get('DEF_RATING', 0), 10)
-                        )
-                        records.append(record)
-                    
-                    if records:
-                        execute_values(
-                            cursor,
-                            """
-                            INSERT INTO team_season_stats (
-                                team_id, year, season_type,
-                                games_played, minutes_x10, possessions,
-                                fg2m, fg2a, fg3m, fg3a, ftm, fta,
-                                off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
-                                assists, turnovers, steals, blocks, fouls,
-                                off_rating_x10, def_rating_x10
-                            ) VALUES %s
-                            ON CONFLICT (team_id, year, season_type) DO NOTHING
-                            """,
-                            records
-                        )
-                        conn.commit()
-                        log(f"✓ Inserted {len(records)} {season_type_name} team records")
-            
-            except Exception as e:
-                log(f"✗ Error fetching {season_type_name} team stats: {e}", "ERROR")
-    
-    cursor.close()
-    conn.close()
-    
-    log("")
-    log("=" * 70)
-    log("✅ BACKFILL COMPLETE")
-    log("=" * 70)
-
-
 def run_nightly_etl(backfill_start=None, backfill_end=None, check_missing=True):
     """
-    Main ETL orchestrator.
+    Main daily ETL orchestrator.
+    Fast update (~2-3 minutes) that handles stats + rosters.
     
     Args:
         backfill_start: Start year for historical backfill (None = no backfill)
@@ -1006,7 +785,7 @@ def run_nightly_etl(backfill_start=None, backfill_end=None, check_missing=True):
         check_missing: Check for missing data after update
     """
     log("=" * 70)
-    log("🏀 THE GLASS - ETL STARTED")
+    log("🏀 THE GLASS - DAILY ETL STARTED")
     log("=" * 70)
     start_time = time.time()
     
@@ -1014,35 +793,27 @@ def run_nightly_etl(backfill_start=None, backfill_end=None, check_missing=True):
         # Ensure schema exists (first-time setup)
         ensure_schema_exists()
         
-        # Backfill historical data if requested
-        if backfill_start:
-            backfill_historical_stats(backfill_start, backfill_end)
-        else:
-            # Normal nightly update (current season only)
-            update_player_rosters(include_deep_details=True)
-            update_player_stats()
-            update_team_stats()
-        
-        # Check for missing data
-        if check_missing and not backfill_start:
-            check_missing_data()
+        # Run fast daily updates
+        update_player_rosters()
+        update_player_stats()
+        update_team_stats()
         
         elapsed = time.time() - start_time
         log("=" * 70)
-        log(f"✅ ETL COMPLETE - {elapsed:.1f}s")
+        log(f"✅ DAILY ETL COMPLETE - {elapsed:.1f}s ({elapsed / 60:.1f} min)")
         log("=" * 70)
         
     except Exception as e:
         elapsed = time.time() - start_time
         log("=" * 70)
-        log(f"❌ ETL FAILED - {elapsed:.1f}s", "ERROR")
+        log(f"❌ DAILY ETL FAILED - {elapsed:.1f}s", "ERROR")
         log(f"Error: {e}", "ERROR")
         log("=" * 70)
         raise
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='The Glass ETL - Update NBA player and team data')
+    parser = argparse.ArgumentParser(description='The Glass Daily ETL - Fast nightly update')
     parser.add_argument('--backfill', type=int, help='Backfill from this year (e.g., 2020 for 2019-20 season)')
     parser.add_argument('--end', type=int, help='Backfill end year (defaults to current season)')
     parser.add_argument('--no-check', action='store_true', help='Skip missing data check')

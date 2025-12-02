@@ -3,7 +3,7 @@ Shared formatting utilities for The Glass Data Pipeline.
 Used by both sheets_sync.py and Apps Script to ensure consistent formatting.
 """
 
-from config import COLORS, SHEET_FORMAT, COLUMN_DEFINITIONS
+from src.config import COLORS, SHEET_FORMAT, COLUMN_DEFINITIONS
 
 
 def get_color_dict(color_name):

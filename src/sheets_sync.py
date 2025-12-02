@@ -85,7 +85,10 @@ def get_google_sheets_client():
     return client
 
 def fetch_all_players_data(conn):
-    """Fetch all players (with or without stats) for percentile calculation"""
+    """Fetch all players (with or without stats) for percentile calculation - CURRENT SEASON ONLY"""
+    current_year = NBA_CONFIG['current_season_year']
+    season_type = NBA_CONFIG['season_type']
+    
     query = """
     SELECT 
         p.player_id,
@@ -122,20 +125,23 @@ def fetch_all_players_data(conn):
     INNER JOIN players p ON p.team_id = t.team_id
     LEFT JOIN player_season_stats s 
         ON s.player_id = p.player_id 
-        AND s.year = %s 
+        AND s.year = %s
         AND s.season_type = %s
     WHERE p.team_id IS NOT NULL
     ORDER BY t.team_abbr, COALESCE(s.minutes_x10, 0) DESC, p.name
     """
     
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(query, (NBA_CONFIG['current_season_year'], NBA_CONFIG['season_type']))
+        cur.execute(query, (current_year, season_type))
         rows = cur.fetchall()
     
     return [dict(row) for row in rows]
 
 def fetch_all_nba_players_data(conn):
-    """Fetch ALL players in the database including those without teams (marked as FA)"""
+    """Fetch ALL players in the database including those without teams (marked as FA) - CURRENT SEASON ONLY"""
+    current_year = NBA_CONFIG['current_season_year']
+    season_type = NBA_CONFIG['season_type']
+    
     query = """
     SELECT 
         p.player_id,
@@ -172,13 +178,13 @@ def fetch_all_nba_players_data(conn):
     LEFT JOIN teams t ON p.team_id = t.team_id
     INNER JOIN player_season_stats s 
         ON s.player_id = p.player_id 
-        AND s.year = %s 
+        AND s.year = %s
         AND s.season_type = %s
     ORDER BY COALESCE(t.team_abbr, 'FA'), COALESCE(s.minutes_x10, 0) DESC, p.name
     """
     
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(query, (NBA_CONFIG['current_season_year'], NBA_CONFIG['season_type']))
+        cur.execute(query, (current_year, season_type))
         rows = cur.fetchall()
     
     return [dict(row) for row in rows]
@@ -444,10 +450,9 @@ def calculate_totals_stats(player):
     fg3_pct = ((player.get('fg3m', 0) or 0) / (player.get('fg3a', 0) or 1)) if player.get('fg3a', 0) else 0
     ft_pct = ((player.get('ftm', 0) or 0) / (player.get('fta', 0) or 1)) if player.get('fta', 0) else 0
     
-    # For totals, OR% and DR% become ORS and DRS (actual rebound counts)
-    # These are stored as percentages (0-1), so multiply by 100 to get raw counts
-    ors = (player.get('oreb_pct', 0) or 0) * 100
-    drs = (player.get('dreb_pct', 0) or 0) * 100
+    # For totals, OR% and DR% become ORS and DRS (actual rebound counts from database)
+    ors = player.get('off_rebounds', 0) or 0
+    drs = player.get('def_rebounds', 0) or 0
     
     return {
         'games': player.get('games_played', 0),
@@ -3397,8 +3402,8 @@ def main(priority_team=None):
     all_players = fetch_all_players_data(conn)
     log(f"✅ Fetched {len(all_players)} total players")
     
-    # Read stats mode from environment
-    stats_mode = os.environ.get('STATS_MODE', 'per_36')  # Default to per_36
+    # Read stats mode from environment (Issue #5: Fix defaults)
+    stats_mode = os.environ.get('STATS_MODE', 'per_100')  # DEFAULT: per 100 possessions
     stats_custom_value = os.environ.get('STATS_CUSTOM_VALUE')
     sync_section = os.environ.get('SYNC_SECTION')  # None = full sync, 'historical' or 'postseason' for partial
     show_percentiles = os.environ.get('SHOW_PERCENTILES', 'false').lower() == 'true'
@@ -3406,14 +3411,16 @@ def main(priority_team=None):
     log(f"Sync section: {sync_section}")
     log(f"Show percentiles: {show_percentiles}")
     
-    # Parse historical stats configuration from environment variables
+    # Parse historical stats configuration from environment variables (Issue #5: Fix defaults)
     past_years = 25  # Default to career (25 years)
-    include_current = True  # Default to include current season
+    include_current = False  # DEFAULT: exclude current season from career stats
     specific_seasons = None
     
     historical_mode = os.environ.get('HISTORICAL_MODE', 'career')  # Default to career mode
-    include_current_env = os.environ.get('INCLUDE_CURRENT_YEAR', 'true')  # Default to true
+    include_current_env = os.environ.get('INCLUDE_CURRENT_YEAR', 'false')  # DEFAULT: 'false'
     include_current = (include_current_env.lower() == 'true')
+    
+    log(f"Historical mode: {historical_mode}, include_current={include_current}")
     
     if historical_mode == 'seasons':
         # Parse specific seasons

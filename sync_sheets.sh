@@ -13,6 +13,9 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
+# Set default stats mode if not already set
+export STATS_MODE="${STATS_MODE:-per_100}"
+
 # Activate virtual environment if it exists
 if [ -d venv ]; then
     source venv/bin/activate

@@ -6,6 +6,110 @@ import os
 from datetime import datetime
 
 # ============================================================================
+# NBA API FIELD MAPPINGS
+# ============================================================================
+# Documents which NBA API endpoints provide which fields
+
+NBA_API_FIELDS = {
+    'commonteamroster': {
+        'endpoint': 'CommonTeamRoster',
+        'purpose': 'Get current team rosters (who is on which team RIGHT NOW)',
+        'fields': ['PLAYER_ID', 'PLAYER', 'NUM', 'POSITION', 'HEIGHT', 'WEIGHT', 'BIRTH_DATE', 'AGE', 'EXP', 'SCHOOL'],
+        'rate_limit_safe': True,
+        'timeout': 30,
+    },
+    'leaguedashplayerstats': {
+        'endpoint': 'LeagueDashPlayerStats',
+        'purpose': 'Get player season statistics (basic counting stats)',
+        'per_mode': 'Totals',
+        'fields': ['PLAYER_ID', 'PLAYER_NAME', 'TEAM_ID', 'AGE', 'GP', 'MIN', 'FGM', 'FGA', 'FG3M', 'FG3A', 
+                   'FTM', 'FTA', 'OREB', 'DREB', 'AST', 'TOV', 'STL', 'BLK', 'PF'],
+        'rate_limit_safe': False,  # Can timeout on large requests
+        'timeout': 120,
+    },
+    'leaguedashplayerstats_advanced': {
+        'endpoint': 'LeagueDashPlayerStats',
+        'purpose': 'Get advanced player stats (ORtg, DRtg, possessions, rebound %)',
+        'measure_type': 'Advanced',
+        'per_mode': 'Totals',
+        'fields': ['PLAYER_ID', 'TEAM_ID', 'OFF_RATING', 'DEF_RATING', 'POSS', 'OREB_PCT', 'DREB_PCT'],
+        'rate_limit_safe': False,
+        'timeout': 120,
+    },
+    'commonplayerinfo': {
+        'endpoint': 'CommonPlayerInfo',
+        'purpose': 'Get detailed player info (birthdate, height, weight, jersey, school, draft)',
+        'fields': ['PLAYER_ID', 'DISPLAY_FIRST_LAST', 'BIRTHDATE', 'SCHOOL', 'SEASON_EXP', 'JERSEY', 'HEIGHT', 'WEIGHT'],
+        'rate_limit_safe': False,  # SLOW - must be called per player (640 calls for full roster)
+        'timeout': 20,
+        'notes': 'This is the bottleneck - no bulk endpoint available. Use batching to manage per-session rate limits.',
+    },
+    'leaguedashteamstats': {
+        'endpoint': 'LeagueDashTeamStats',
+        'purpose': 'Get team season statistics',
+        'per_mode': 'Totals',
+        'fields': ['TEAM_ID', 'GP', 'MIN', 'FGM', 'FGA', 'FG3M', 'FG3A', 'FTM', 'FTA', 
+                   'OREB', 'DREB', 'AST', 'TOV', 'STL', 'BLK', 'PF'],
+        'rate_limit_safe': True,
+        'timeout': 120,
+    },
+    'leaguedashteamstats_advanced': {
+        'endpoint': 'LeagueDashTeamStats',
+        'purpose': 'Get advanced team stats',
+        'measure_type': 'Advanced',
+        'per_mode': 'Totals',
+        'fields': ['TEAM_ID', 'OFF_RATING', 'DEF_RATING', 'POSS', 'OREB_PCT', 'DREB_PCT'],
+        'rate_limit_safe': True,
+        'timeout': 120,
+    },
+}
+
+# ETL Data Requirements
+ETL_DATA_REQUIREMENTS = {
+    'player_roster': {
+        'sources': ['commonteamroster', 'leaguedashplayerstats', 'commonplayerinfo'],
+        'fields': {
+            'player_id': 'All endpoints',
+            'name': 'leaguedashplayerstats.PLAYER_NAME',
+            'team_id': 'commonteamroster (live roster) or leaguedashplayerstats.TEAM_ID',
+            'jersey_number': 'commonplayerinfo.JERSEY',
+            'height_inches': 'commonplayerinfo.HEIGHT (format: "6-8")',
+            'weight_lbs': 'commonplayerinfo.WEIGHT',
+            'birthdate': 'commonplayerinfo.BIRTHDATE',
+            'years_experience': 'commonplayerinfo.SEASON_EXP',
+            'pre_nba_team': 'commonplayerinfo.SCHOOL',
+        },
+        'bottleneck': 'commonplayerinfo - must call per player (640 API calls for full update)',
+    },
+    'player_stats': {
+        'sources': ['leaguedashplayerstats', 'leaguedashplayerstats_advanced'],
+        'fields': {
+            'games_played': 'GP',
+            'minutes': 'MIN (scaled x10 in DB)',
+            'possessions': 'POSS (from advanced stats)',
+            'fg2m/fg2a': 'Calculated: FGM-FG3M, FGA-FG3A',
+            'fg3m/fg3a': 'FG3M, FG3A',
+            'ftm/fta': 'FTM, FTA',
+            'rebounds': 'OREB, DREB, plus OREB_PCT/DREB_PCT from advanced',
+            'assists': 'AST',
+            'turnovers': 'TOV',
+            'steals': 'STL',
+            'blocks': 'BLK',
+            'fouls': 'PF',
+            'ratings': 'OFF_RATING, DEF_RATING (from advanced stats, scaled x10 in DB)',
+        },
+        'seasons': 'Current + last 2 seasons',
+        'season_types': ['Regular Season', 'Playoffs'],
+    },
+    'team_stats': {
+        'sources': ['leaguedashteamstats', 'leaguedashteamstats_advanced'],
+        'fields': 'Same as player_stats',
+        'seasons': 'Current season',
+        'season_types': ['Regular Season', 'Playoffs', 'PlayIn'],
+    },
+}
+
+# ============================================================================
 # DATABASE CONFIGURATION
 # ============================================================================
 
@@ -175,7 +279,7 @@ NBA_CONFIG = {
     'current_season_year': get_current_season_year(),
     'current_season': get_current_season(),
     'season_type': int(os.getenv('SEASON_TYPE', '1')),  # 1=regular, 2=playoffs, 3=play-in
-    'api_rate_limit_delay': float(os.getenv('API_RATE_LIMIT_DELAY', '0.6')),
+    'api_rate_limit_delay': float(os.getenv('API_RATE_LIMIT_DELAY', '0')),
 }
 
 # ============================================================================
@@ -685,7 +789,7 @@ COLUMN_DEFINITIONS = {
         'is_stat': True,
         'editable': False,
         'hidden': False,
-        'reverse_stat': False,
+        'reverse_stat': True,
         'format_as_percentage': False,
         'decimal_places': 1,
     },
