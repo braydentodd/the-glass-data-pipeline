@@ -167,35 +167,7 @@ function onOpen() {
       .addItem('Current', 'toggleCurrentStats')
       .addItem('Historical', 'toggleHistoricalStats')
       .addItem('Postseason', 'togglePostseasonStats'))
-    .addSeparator()
-    .addItem('Setup Edit Trigger', 'installEditTrigger')
     .addToUi();
-}
-
-/**
- * Install the onEdit trigger for tracking wingspan and notes changes
- * Run this once to enable automatic database updates when editing cells
- */
-function installEditTrigger() {
-  // Delete any existing onEdit triggers to avoid duplicates
-  const triggers = ScriptApp.getProjectTriggers();
-  for (const trigger of triggers) {
-    if (trigger.getHandlerFunction() === 'onEditInstallable') {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  }
-  
-  // Create new trigger
-  ScriptApp.newTrigger('onEditInstallable')
-    .forSpreadsheet(SpreadsheetApp.getActive())
-    .onEdit()
-    .create();
-  
-  SpreadsheetApp.getUi().alert(
-    'Edit Trigger Installed',
-    'The edit trigger has been installed. Changes to Wingspan and Notes columns will now be saved to the database automatically.',
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
 }
 
 /**
@@ -1278,8 +1250,43 @@ function toggleCurrentStats() {
   Logger.log(`NBA_TEAMS loaded: ${Object.keys(nbaTeams).length} teams`);
   
   let updatedCount = 0;
-  // Toggle visibility on all team sheets and NBA sheet
+  
+  // Get current sheet and prioritize it
+  const currentSheet = ss.getActiveSheet();
+  const currentSheetName = currentSheet.getName().toUpperCase();
+  const isCurrentTeam = nbaTeams.hasOwnProperty(currentSheetName);
+  const isCurrentNBA = (currentSheetName === 'NBA');
+  
+  // Process current sheet first if it's a team or NBA sheet
+  if (isCurrentTeam) {
+    const start = columnRanges.team_sheet.current.start;
+    const count = columnRanges.team_sheet.current.count;
+    Logger.log(`[PRIORITY] Toggling columns on ${currentSheetName}: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
+    if (newVisible) {
+      currentSheet.showColumns(start, count);
+    } else {
+      currentSheet.hideColumns(start, count);
+    }
+    updatedCount++;
+  } else if (isCurrentNBA) {
+    const start = columnRanges.nba_sheet.current.start;
+    const count = columnRanges.nba_sheet.current.count;
+    Logger.log(`[PRIORITY] Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
+    if (newVisible) {
+      currentSheet.showColumns(start, count);
+    } else {
+      currentSheet.hideColumns(start, count);
+    }
+    updatedCount++;
+  }
+  
+  // Toggle visibility on all other team sheets and NBA sheet
   for (const sheet of sheets) {
+    // Skip the current sheet since we already processed it
+    if (sheet.getSheetId() === currentSheet.getSheetId()) {
+      continue;
+    }
+    
     const sheetName = sheet.getName().toUpperCase();
     const isTeam = nbaTeams.hasOwnProperty(sheetName);
     const isNBA = (sheetName === 'NBA');
@@ -1334,8 +1341,43 @@ function toggleHistoricalStats() {
   };
   
   let updatedCount = 0;
-  // Toggle visibility on all team sheets and NBA sheet
+  
+  // Get current sheet and prioritize it
+  const currentSheet = ss.getActiveSheet();
+  const currentSheetName = currentSheet.getName().toUpperCase();
+  const isCurrentTeam = nbaTeams.hasOwnProperty(currentSheetName);
+  const isCurrentNBA = (currentSheetName === 'NBA');
+  
+  // Process current sheet first if it's a team or NBA sheet
+  if (isCurrentTeam) {
+    const start = columnRanges.team_sheet.historical.start;
+    const count = columnRanges.team_sheet.historical.count;
+    Logger.log(`[PRIORITY] Toggling columns on ${currentSheetName}: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
+    if (newVisible) {
+      currentSheet.showColumns(start, count);
+    } else {
+      currentSheet.hideColumns(start, count);
+    }
+    updatedCount++;
+  } else if (isCurrentNBA) {
+    const start = columnRanges.nba_sheet.historical.start;
+    const count = columnRanges.nba_sheet.historical.count;
+    Logger.log(`[PRIORITY] Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
+    if (newVisible) {
+      currentSheet.showColumns(start, count);
+    } else {
+      currentSheet.hideColumns(start, count);
+    }
+    updatedCount++;
+  }
+  
+  // Toggle visibility on all other team sheets and NBA sheet
   for (const sheet of sheets) {
+    // Skip the current sheet since we already processed it
+    if (sheet.getSheetId() === currentSheet.getSheetId()) {
+      continue;
+    }
+    
     const sheetName = sheet.getName().toUpperCase();
     const isTeam = nbaTeams.hasOwnProperty(sheetName);
     const isNBA = (sheetName === 'NBA');
@@ -1389,8 +1431,43 @@ function togglePostseasonStats() {
   };
   
   let updatedCount = 0;
-  // Toggle visibility on all team sheets and NBA sheet
+  
+  // Get current sheet and prioritize it
+  const currentSheet = ss.getActiveSheet();
+  const currentSheetName = currentSheet.getName().toUpperCase();
+  const isCurrentTeam = nbaTeams.hasOwnProperty(currentSheetName);
+  const isCurrentNBA = (currentSheetName === 'NBA');
+  
+  // Process current sheet first if it's a team or NBA sheet
+  if (isCurrentTeam) {
+    const start = columnRanges.team_sheet.postseason.start;
+    const count = columnRanges.team_sheet.postseason.count;
+    Logger.log(`[PRIORITY] Toggling columns on ${currentSheetName}: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
+    if (newVisible) {
+      currentSheet.showColumns(start, count);
+    } else {
+      currentSheet.hideColumns(start, count);
+    }
+    updatedCount++;
+  } else if (isCurrentNBA) {
+    const start = columnRanges.nba_sheet.postseason.start;
+    const count = columnRanges.nba_sheet.postseason.count;
+    Logger.log(`[PRIORITY] Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
+    if (newVisible) {
+      currentSheet.showColumns(start, count);
+    } else {
+      currentSheet.hideColumns(start, count);
+    }
+    updatedCount++;
+  }
+  
+  // Toggle visibility on all other team sheets and NBA sheet
   for (const sheet of sheets) {
+    // Skip the current sheet since we already processed it
+    if (sheet.getSheetId() === currentSheet.getSheetId()) {
+      continue;
+    }
+    
     const sheetName = sheet.getName().toUpperCase();
     const isTeam = nbaTeams.hasOwnProperty(sheetName);
     const isNBA = (sheetName === 'NBA');

@@ -1,4 +1,4 @@
-name: Nightly Data Update
+name: Daily Data Update
 
 on:
   schedule:
@@ -20,9 +20,9 @@ on:
         default: ''
 
 jobs:
-  # Job 1: Update database with latest NBA data
+  # Job 1: Fast daily update (stats + rosters, ~2-3 minutes)
   etl:
-    name: ETL - Update Database
+    name: Daily ETL - Fast Update
     runs-on: [self-hosted, Linux, X64]
     
     steps:
@@ -36,7 +36,7 @@ jobs:
         pip install --upgrade pip
         pip install -r requirements.txt
     
-    - name: Run nightly ETL
+    - name: Run daily ETL (fast update - stats + rosters)
       env:
         DB_HOST: ${{ secrets.DB_HOST }}
         DB_NAME: ${{ secrets.DB_NAME }}
