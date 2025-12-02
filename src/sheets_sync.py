@@ -96,7 +96,11 @@ def fetch_all_players_data(conn):
         p.team_id,
         t.team_abbr,
         p.jersey_number,
-        p.years_experience,
+        (SELECT COUNT(DISTINCT year) 
+         FROM player_season_stats 
+         WHERE player_id = p.player_id 
+         AND season_type = 1
+         AND minutes_x10 > 0) AS years_experience,
         EXTRACT(YEAR FROM AGE(p.birthdate)) + 
             (EXTRACT(MONTH FROM AGE(p.birthdate)) / 12.0) + 
             (EXTRACT(DAY FROM AGE(p.birthdate)) / 365.25) AS age,
@@ -149,7 +153,11 @@ def fetch_all_nba_players_data(conn):
         p.team_id,
         COALESCE(t.team_abbr, 'FA') AS team_abbr,
         p.jersey_number,
-        p.years_experience,
+        (SELECT COUNT(DISTINCT year) 
+         FROM player_season_stats 
+         WHERE player_id = p.player_id 
+         AND season_type = 1
+         AND minutes_x10 > 0) AS years_experience,
         EXTRACT(YEAR FROM AGE(p.birthdate)) + 
             (EXTRACT(MONTH FROM AGE(p.birthdate)) / 12.0) + 
             (EXTRACT(DAY FROM AGE(p.birthdate)) / 365.25) AS age,
@@ -885,21 +893,27 @@ def parse_sheet_config(worksheet):
 
 def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles, historical_percentiles, 
                       past_years=3, stats_mode='per_36', stats_custom_value=None, specific_seasons=None, 
-                      include_current=False, sync_section=None, show_percentiles=False, playoff_percentiles=None):
+                      include_current=False, sync_section=None, show_percentiles=False, playoff_percentiles=None,
+                      for_nba_sheet=False):
     """Create/update a team sheet with formatting and color coding (including historical/playoff stats)
     
     Args:
         sync_section: 'historical' or 'playoff' - determines which columns to write to
         show_percentiles: If True, display percentile values instead of stat values
         playoff_percentiles: Percentiles for playoff stats (when sync_section='playoff')
+        for_nba_sheet: If True, include team column and use NBA sheet configuration
     """
-    log(f"Creating {team_name} sheet with stats mode: {stats_mode}, section: {sync_section}, show_percentiles: {show_percentiles}...")
+    log(f"Creating {team_name} sheet with stats mode: {stats_mode}, section: {sync_section}, show_percentiles: {show_percentiles}, for_nba_sheet: {for_nba_sheet}...")
     
     # Get current season dynamically
     current_season = get_current_season()
     
-    # Build headers dynamically based on stats_mode
-    HEADERS = build_headers(for_nba_sheet=False, stats_mode=stats_mode)
+    # Select appropriate configuration based on sheet type
+    SECTIONS_CONFIG = SECTIONS_NBA if for_nba_sheet else SECTIONS
+    SHEET_FORMAT_CONFIG = SHEET_FORMAT_NBA if for_nba_sheet else SHEET_FORMAT
+    
+    # Build headers dynamically based on stats_mode and sheet type
+    HEADERS = build_headers(for_nba_sheet=for_nba_sheet, stats_mode=stats_mode)
     
     # Header row 1 - replace placeholders
     header_row_1 = []
@@ -965,7 +979,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             
         # Handle team_name placeholder
         elif '{team_name}' in h:
-            header_row_1.append(h.replace('{team_name}', team_name.upper()))
+            # Always use "PLAYERS" for the name section header
+            header_row_1.append('PLAYERS')
             
         # Handle season placeholder
         elif '{season}' in h:
@@ -978,7 +993,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     header_row_2 = list(HEADERS['row_2'])  # Headers already have OR%/DR% or ORS/DRS based on mode
     
     # Filter row
-    filter_row = [""] * SHEET_FORMAT['total_columns']
+    filter_row = [""] * SHEET_FORMAT_CONFIG['total_columns']
     
     # Prepare data rows with percentile tracking
     data_rows = []
@@ -1171,6 +1186,10 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             # Handle percentage stats
             is_pct = col_def.get('format_as_percentage', False)
             
+            # In totals mode, oreb_pct and dreb_pct are actually counts (ORS/DRS), not percentages
+            if stats_mode == 'totals' and col_name in ['oreb_pct', 'dreb_pct']:
+                is_pct = False
+            
             # Special handling for shooting percentages (allow_zero)
             allow_zero = False
             if col_name == 'fg2_pct' and (fg2a if season_type == 'current' else (hist_fg2a if season_type == 'historical' else playoff_fg2a)) > 0:
@@ -1185,14 +1204,14 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             return get_display_value(value, percentile_val, col_idx, is_pct=is_pct, allow_zero=allow_zero)
         
         # Build name section
-        for col_name in SECTIONS['name']['columns']:
+        for col_name in SECTIONS_CONFIG['name']['columns']:
             if col_name == 'name':
                 row.append(player['player_name'])
             elif col_name == 'team':
                 row.append(player.get('team_abbr', ''))
         
         # Build player_info section
-        for col_name in SECTIONS['player_info']['columns']:
+        for col_name in SECTIONS_CONFIG['player_info']['columns']:
             if col_name == 'jersey':
                 row.append(player.get('jersey_number', ''))
             elif col_name == 'age':
@@ -1207,19 +1226,19 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 row.append(format_height(player.get('wingspan_inches')))
         
         # Build notes section (AFTER player_info, BEFORE current stats)
-        for col_name in SECTIONS['notes']['columns']:
+        for col_name in SECTIONS_CONFIG['notes']['columns']:
             if col_name == 'notes':
                 row.append(player.get('notes', ''))
         
         # Build current stats section
-        for col_name in SECTIONS['current']['columns']:
+        for col_name in SECTIONS_CONFIG['current']['columns']:
             if col_name == 'games':
                 row.append(calculated_stats.get('games', 0) if calculated_stats.get('games', 0) and has_minutes else '')
             else:
                 row.append(get_stat_value(col_name, calculated_stats, has_minutes, 'current'))
         
         # Build historical stats section
-        for col_name in SECTIONS['historical']['columns']:
+        for col_name in SECTIONS_CONFIG['historical']['columns']:
             if col_name == 'years':
                 row.append(seasons_played)
             elif col_name == 'games':
@@ -1231,13 +1250,13 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 row.append(get_stat_value(col_name, historical_calculated_stats, has_historical_minutes, 'historical'))
         
         # Build postseason stats section
-        for col_name in SECTIONS['postseason']['columns']:
+        for col_name in SECTIONS_CONFIG['postseason']['columns']:
             if col_name == 'years':
                 row.append(playoff_seasons_played)
             elif col_name == 'games':
                 # For non-totals modes, show games per season; for totals show total games
                 games_val = playoff_calculated_stats.get('games', 0) / playoff_seasons_played if playoff_seasons_played and playoff_seasons_played > 0 and stats_mode != 'totals' else playoff_calculated_stats.get('games', 0)
-                col_idx = get_column_index(col_name, section='postseason')
+                col_idx = get_column_index(col_name, section='postseason', for_nba_sheet=for_nba_sheet)
                 row.append(get_display_value(games_val, player_percentiles.get(col_idx), col_idx) if has_playoff_minutes else '')
             else:
                 row.append(get_stat_value(col_name, playoff_calculated_stats, has_playoff_minutes, 'postseason'))
@@ -1253,7 +1272,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     
     spreadsheet = worksheet.spreadsheet
     total_rows = 3 + len(data_rows)
-    total_cols = SHEET_FORMAT['total_columns']
+    total_cols = SHEET_FORMAT_CONFIG['total_columns']
     
     # Build ONE mega batch request with ALL operations
     # This reduces from 6+ API calls per sheet to just 1!
@@ -1349,11 +1368,11 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     start_col_idx = 0
     
     if sync_section == 'historical':
-        start_col_idx = SECTIONS['historical']['columns']['start']
-        end_col_idx = SECTIONS['historical']['columns']['end'] + 1  # +1 for exclusive end
+        start_col_idx = SECTIONS_CONFIG['historical']['columns']['start']
+        end_col_idx = SECTIONS_CONFIG['historical']['columns']['end'] + 1  # +1 for exclusive end
     elif sync_section == 'postseason':
-        start_col_idx = SECTIONS['postseason']['columns']['start']
-        end_col_idx = SECTIONS['postseason']['columns']['end'] + 1  # +1 for exclusive end
+        start_col_idx = SECTIONS_CONFIG['postseason']['columns']['start']
+        end_col_idx = SECTIONS_CONFIG['postseason']['columns']['end'] + 1  # +1 for exclusive end
     else:
         # Full sync - write all columns
         end_col_idx = total_cols
@@ -1433,7 +1452,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         
         # 5. Merge cells for section headers (row 1)
         # Player info section - merge header
-        player_info_cols = SECTIONS['player_info']['column_count']
+        player_info_cols = SECTIONS_CONFIG['player_info']['column_count']
         if player_info_cols > 1:
             requests.append({
                 'mergeCells': {
@@ -1441,8 +1460,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                         'sheetId': sheet_id,
                         'startRowIndex': 0,
                         'endRowIndex': 1,
-                        'startColumnIndex': SECTIONS['player_info']['start_col'],
-                        'endColumnIndex': SECTIONS['player_info']['end_col'],
+                        'startColumnIndex': SECTIONS_CONFIG['player_info']['start_col'],
+                        'endColumnIndex': SECTIONS_CONFIG['player_info']['end_col'],
                     },
                     'mergeType': 'MERGE_ALL'
                 }
@@ -1455,8 +1474,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'sheetId': sheet_id,
                     'startRowIndex': 0,
                     'endRowIndex': 1,
-                    'startColumnIndex': SECTIONS['current']['start_col'],
-                    'endColumnIndex': SECTIONS['current']['end_col'],
+                    'startColumnIndex': SECTIONS_CONFIG['current']['start_col'],
+                    'endColumnIndex': SECTIONS_CONFIG['current']['end_col'],
                 },
                 'mergeType': 'MERGE_ALL'
             }
@@ -1469,8 +1488,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'sheetId': sheet_id,
                     'startRowIndex': 0,
                     'endRowIndex': 1,
-                    'startColumnIndex': SECTIONS['historical']['start_col'],
-                    'endColumnIndex': SECTIONS['historical']['end_col'],
+                    'startColumnIndex': SECTIONS_CONFIG['historical']['start_col'],
+                    'endColumnIndex': SECTIONS_CONFIG['historical']['end_col'],
                 },
                 'mergeType': 'MERGE_ALL'
             }
@@ -1483,15 +1502,15 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'sheetId': sheet_id,
                     'startRowIndex': 0,
                     'endRowIndex': 1,
-                    'startColumnIndex': SECTIONS['postseason']['start_col'],
-                    'endColumnIndex': SECTIONS['postseason']['end_col'],
+                    'startColumnIndex': SECTIONS_CONFIG['postseason']['start_col'],
+                    'endColumnIndex': SECTIONS_CONFIG['postseason']['end_col'],
                 },
                 'mergeType': 'MERGE_ALL'
             }
         })
         
         # Notes section - merge header
-        notes_cols = SECTIONS['notes']['column_count']
+        notes_cols = SECTIONS_CONFIG['notes']['column_count']
         if notes_cols > 1:
             requests.append({
                 'mergeCells': {
@@ -1499,8 +1518,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                         'sheetId': sheet_id,
                         'startRowIndex': 0,
                         'endRowIndex': 1,
-                        'startColumnIndex': SECTIONS['notes']['start_col'],
-                        'endColumnIndex': SECTIONS['notes']['end_col'],
+                        'startColumnIndex': SECTIONS_CONFIG['notes']['start_col'],
+                        'endColumnIndex': SECTIONS_CONFIG['notes']['end_col'],
                     },
                     'mergeType': 'MERGE_ALL'
                 }
@@ -1524,7 +1543,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'backgroundColor': black,
                     'textFormat': {
                         'foregroundColor': white,
-                        'fontFamily': SHEET_FORMAT['fonts']['header_primary']['family'],
+                        'fontFamily': SHEET_FORMAT_CONFIG['fonts']['header_primary']['family'],
                         'fontSize': 12,  # Row 1 is always 12
                         'bold': True
                     },
@@ -1550,7 +1569,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'backgroundColor': black,
                     'textFormat': {
                         'foregroundColor': white,
-                        'fontFamily': SHEET_FORMAT['fonts']['header_secondary']['family'],
+                        'fontFamily': SHEET_FORMAT_CONFIG['fonts']['header_secondary']['family'],
                         'fontSize': 10,  # Row 2 is 10
                         'bold': True
                     },
@@ -1578,7 +1597,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'backgroundColor': black,
                     'textFormat': {
                         'foregroundColor': white,
-                        'fontFamily': SHEET_FORMAT['fonts']['team_name']['family'],
+                        'fontFamily': SHEET_FORMAT_CONFIG['fonts']['team_name']['family'],
                         'fontSize': 15,  # A1 is 15 (team name)
                         'bold': True
                     },
@@ -1604,7 +1623,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'backgroundColor': black,
                     'textFormat': {
                         'foregroundColor': white,
-                        'fontFamily': SHEET_FORMAT['fonts']['header_primary']['family'],
+                        'fontFamily': SHEET_FORMAT_CONFIG['fonts']['header_primary']['family'],
                         'fontSize': 10,  # Row 3 is 10
                         'bold': True
                     },
@@ -1630,7 +1649,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 'cell': {
                     'userEnteredFormat': {
                         'textFormat': {
-                            'fontFamily': SHEET_FORMAT['fonts']['data']['family'],
+                            'fontFamily': SHEET_FORMAT_CONFIG['fonts']['data']['family'],
                             'fontSize': 10  # Changed from SHEET_FORMAT size (9) to 10
                         },
                         'wrapStrategy': 'CLIP',
@@ -1697,7 +1716,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'userEnteredFormat': {
                         'textFormat': {
                             'bold': True,
-                            'fontFamily': SHEET_FORMAT['fonts']['player_names']['family'],  # Sofia Sans
+                            'fontFamily': SHEET_FORMAT_CONFIG['fonts']['player_names']['family'],  # Sofia Sans
                             'fontSize': 10  # Column A font size 10 (player names)
                         }
                     }
@@ -1716,7 +1735,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                             'startRowIndex': 3,
                             'endRowIndex': 3 + len(data_rows),
                             'startColumnIndex': 0,
-                            'endColumnIndex': SHEET_FORMAT['total_columns']
+                            'endColumnIndex': SHEET_FORMAT_CONFIG['total_columns']
                         },
                         'rowProperties': {
                             'firstBandColor': white,
@@ -1918,7 +1937,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 'startRowIndex': 1,
                 'endRowIndex': 2,
                 'startColumnIndex': 0,
-                'endColumnIndex': SHEET_FORMAT['total_columns']
+                'endColumnIndex': SHEET_FORMAT_CONFIG['total_columns']
             },
             'top': {
                 'style': 'SOLID',
@@ -1930,8 +1949,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     
     # WHITE borders between all columns in header rows (rows 2-3)
     # Skip column 0 (name section) - start from column 1 onwards
-    name_end_col = SECTIONS['name']['end_col']
-    for col_idx in range(name_end_col, SHEET_FORMAT['total_columns'] - 1):
+    name_end_col = SECTIONS_CONFIG['name']['end_col']
+    for col_idx in range(name_end_col, SHEET_FORMAT_CONFIG['total_columns'] - 1):
         requests.append({
             'updateBorders': {
                 'range': {
@@ -1953,7 +1972,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     # WHITE borders in header rows 2-3, BLACK borders in data rows 4+
     # Also add RIGHT borders for stat sections
     black = {'red': 0, 'green': 0, 'blue': 0}
-    for section_name, section_info in SECTIONS.items():
+    for section_name, section_info in SECTIONS_CONFIG.items():
         if section_name in ['name', 'player_info', 'hidden']:  # Skip name, player_info, and hidden sections
             continue
         
@@ -2037,7 +2056,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 })
     
     # Add LEFT border to hidden column (creates right border for postseason section)
-    hidden_col = SECTIONS['hidden']['start_col']
+    hidden_col = SECTIONS_CONFIG['hidden']['start_col']
     # White border in header rows 0-3
     requests.append({
         'updateBorders': {
@@ -2080,8 +2099,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             'properties': {
                 'sheetId': sheet_id,
                 'gridProperties': {
-                    'frozenRowCount': SHEET_FORMAT['frozen']['rows'],
-                    'frozenColumnCount': SHEET_FORMAT['frozen']['columns']
+                    'frozenRowCount': SHEET_FORMAT_CONFIG['frozen']['rows'],
+                    'frozenColumnCount': SHEET_FORMAT_CONFIG['frozen']['columns']
                 }
             },
             'fields': 'gridProperties.frozenRowCount,gridProperties.frozenColumnCount'
@@ -2127,7 +2146,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'startRowIndex': 2,
                     'endRowIndex': 3 + len(data_rows),
                     'startColumnIndex': 0,
-                    'endColumnIndex': SHEET_FORMAT['total_columns']
+                    'endColumnIndex': SHEET_FORMAT_CONFIG['total_columns']
                 }
             }
         }
@@ -2135,7 +2154,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
     # End of full-sync-only operations
     
     # SET COLUMN WIDTHS - Auto-resize or fixed based on config
-    for col_idx in range(SHEET_FORMAT['total_columns']):
+    for col_idx in range(SHEET_FORMAT_CONFIG['total_columns']):
         # Determine which column this is
         col_name = None
         col_width = None
@@ -2152,7 +2171,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         
         # Check stat sections
         if col_name is None:
-            for section_name, section_info in SECTIONS.items():
+            for section_name, section_info in SECTIONS_CONFIG.items():
                 if section_name == 'player_info':
                     continue
                 section_start = section_info['start_col']
@@ -2194,7 +2213,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             })
     
     # OVERRIDE first column width for stat sections (after width setting)
-    for section_name, section_info in SECTIONS.items():
+    for section_name, section_info in SECTIONS_CONFIG.items():
         if 'first_column_width' in section_info:
             first_col_idx = section_info['start_col']
             requests.append({
@@ -2237,1145 +2256,30 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
 def create_nba_sheet(worksheet, nba_players, percentiles, historical_percentiles,
                      past_years=3, stats_mode='per_36', stats_custom_value=None, specific_seasons=None,
                      include_current=False, sync_section=None, show_percentiles=False, playoff_percentiles=None):
-    """Create/update the NBA sheet with all players including FA with Team column
+    """Create/update the NBA sheet with all players - wrapper around create_team_sheet with for_nba_sheet=True
     
-    This is similar to create_team_sheet but with:
-    - Team column added as column B
-    - All other columns shifted right by 1
+    This uses the same logic as team sheets but with:
+    - Team column added after name column  
     - Uses SECTIONS_NBA, HEADERS_NBA, and SHEET_FORMAT_NBA configurations
     """
-    log(f"Creating NBA sheet with {len(nba_players)} total players (stats mode: {stats_mode}, show_percentiles: {show_percentiles})...")
-    
-    # Get current season dynamically
-    current_season = get_current_season()
-    
-    # Build headers dynamically based on stats_mode for NBA sheet
-    HEADERS_NBA = build_headers(for_nba_sheet=True, stats_mode=stats_mode)
-    
-    # Header row 1 - replace placeholders
-    header_row_1 = []
-    mode_display = {
-        'totals': 'Totals',
-        'per_game': 'Per Game',
-        'per_36': 'Per 36 Mins',
-        'per_100_poss': 'Per 100 Poss',
-        'per_minutes': f'Per {stats_custom_value} Mins' if stats_custom_value else 'Per Minute'
-    }
-    mode_text = mode_display.get(stats_mode, 'Per 36 Mins')
-    
-    for i, h in enumerate(HEADERS_NBA['row_1']):
-        # Handle historical_years placeholder
-        if '{historical_years}' in h:
-            if specific_seasons:
-                start_year = min(specific_seasons)
-                start_season_text = f"{start_year-1}-{str(start_year)[2:]}"
-                if include_current:
-                    historical_text = f'Stats since {start_season_text} {mode_text}'
-                else:
-                    historical_text = f'Prev stats since {start_season_text} {mode_text}'
-            elif past_years >= 25:
-                if include_current:
-                    historical_text = f'Career Stats {mode_text}'
-                else:
-                    historical_text = f'Career Prev Season Stats {mode_text}'
-            else:
-                if include_current:
-                    historical_text = f'Last {past_years} Seasons {mode_text}'
-                else:
-                    historical_text = f'Prev {past_years} Seasons {mode_text}'
-            header_row_1.append(h.replace('{historical_years}', historical_text))
-            
-        # Handle postseason_years placeholder
-        elif '{postseason_years}' in h:
-            if specific_seasons:
-                start_year = min(specific_seasons)
-                start_season_text = f"{start_year-1}-{str(start_year)[2:]}"
-                if include_current:
-                    postseason_text = f'Postseason Stats since {start_season_text} {mode_text}'
-                else:
-                    postseason_text = f'Prev Postseason Stats since {start_season_text} {mode_text}'
-            elif past_years >= 25:
-                if include_current:
-                    postseason_text = f'Career Postseason Stats {mode_text}'
-                else:
-                    postseason_text = f'Career Prev Season Postseason Stats {mode_text}'
-            else:
-                if include_current:
-                    postseason_text = f'Last {past_years} Postseason Seasons {mode_text}'
-                else:
-                    postseason_text = f'Prev {past_years} Postseason Seasons {mode_text}'
-            header_row_1.append(h.replace('{postseason_years}', postseason_text))
-        
-        # Handle team_name placeholder (for NBA sheet, replace with 'NBA')
-        elif '{team_name}' in h:
-            header_row_1.append(h.replace('{team_name}', 'NBA'))
-            
-        # Handle season placeholder
-        elif '{season}' in h:
-            header_row_1.append(h.replace('{season}', f'{current_season} Stats {mode_text}'))
-        else:
-            header_row_1.append(h)
-    
-    # Header row 2 - already built dynamically with correct headers based on stats_mode
-    header_row_2 = list(HEADERS_NBA['row_2'])  # Headers already have OR%/DR% or ORS/DRS based on mode
-    
-    # Filter row
-    filter_row = [""] * SHEET_FORMAT_NBA['total_columns']
-    
-    # NOTE: The rest of the logic is identical to create_team_sheet,
-    # but we need to insert team abbreviation in column B (index 1)
-    # For simplicity, I'll reuse create_team_sheet's data row logic inline here
-    
-    # Prepare data rows with percentile tracking
-    data_rows = []
-    percentile_data = []
-    
-    for player in nba_players:
-        calculated_stats = player.get('calculated_stats', {})
-        
-        exp = player.get('years_experience')
-        exp_display = 0 if exp == 0 else (exp if exp else '')
-        
-        # Format functions (same as in create_team_sheet)
-        def format_stat(value, decimals=1):
-            if value is None or value == 0:
-                return 0
-            rounded = round(value, decimals)
-            if rounded == int(rounded):
-                return int(rounded)
-            return rounded
-        
-        def format_pct(value, decimals=1, allow_zero=False):
-            if value is None:
-                return ''
-            if value == 0:
-                return 0 if allow_zero else ''
-            result = value * 100
-            rounded = round(result, decimals)
-            if rounded == int(rounded):
-                return int(rounded)
-            return rounded
-        
-        def get_display_value(stat_value, percentile_value, col_idx, is_pct=False, allow_zero=False):
-            if show_percentiles and percentile_value is not None:
-                return int(round(percentile_value))
-            elif is_pct:
-                return format_pct(stat_value, allow_zero=allow_zero)
-            else:
-                return format_stat(stat_value)
-        
-        # Skip if no minutes
-        games_played = calculated_stats.get('games', 0)
-        minutes_played = calculated_stats.get('minutes', 0)
-        has_stats = games_played and minutes_played
-        
-        # Get percentiles for this player
-        player_id = player['player_id']
-        player_percentiles = percentiles.get(player_id, {})
-        
-        # Helper function to get stat value dynamically based on column name
-        def get_stat_value(col_name, section_key):
-            """Get stat value for a given column dynamically"""
-            col_def = COLUMN_DEFINITIONS.get(col_name, {})
-            
-            # Get value directly from calculated_stats using column name (not db_field)
-            # because calculated_stats already has keys like 'points', 'ts_pct', etc.
-            stat_value = calculated_stats.get(col_name, 0)
-            
-            # Get column index for percentile lookup
-            col_idx = get_column_index(col_name, for_nba_sheet=True)
-            percentile_value = player_percentiles.get(col_name) if col_idx is not None else None
-            
-            # Determine if this is a percentage stat
-            is_pct = col_def.get('format') == 'percentage'
-            
-            # Handle special cases - only show percentage if attempts exist
-            if col_name in ['fg2_pct', 'fg3_pct', 'ft_pct']:
-                attempts_field = col_name.replace('_pct', 'a')
-                if not calculated_stats.get(attempts_field, 0):
-                    stat_value = 0
-            
-            return get_display_value(stat_value, percentile_value, col_idx, is_pct=is_pct, 
-                                   allow_zero=(col_name in ['oreb_pct', 'dreb_pct']))
-        
-        # BUILD ROW DYNAMICALLY FROM SECTIONS_NBA
-        row = []
-        
-        # Name section (name, team for NBA sheet)
-        for col_name in SECTIONS_NBA['name']['columns']:
-            if col_name == 'name':
-                row.append(player.get('player_name', ''))
-            elif col_name == 'team':
-                row.append(player.get('team_abbr', 'FA'))
-        
-        # Player Info section (jersey, age, experience, height, weight, wingspan)
-        for col_name in SECTIONS_NBA['player_info']['columns']:
-            if col_name == 'jersey':
-                row.append(player.get('jersey_number', ''))
-            elif col_name == 'age':
-                row.append(round(float(player.get('age', 0)), 1) if player.get('age') else '')
-            elif col_name == 'experience':
-                row.append(exp_display)
-            elif col_name == 'height':
-                row.append(format_height(player.get('height_inches')))
-            elif col_name == 'weight':
-                row.append(int(player.get('weight_lbs', 0)) if player.get('weight_lbs') else '')
-            elif col_name == 'wingspan':
-                row.append(format_height(player.get('wingspan_inches')))
-        
-        # Notes section
-        for col_name in SECTIONS_NBA['notes']['columns']:
-            if col_name == 'notes':
-                row.append(player.get('notes', ''))
-        
-        # Current stats section
-        if has_stats and not sync_section:
-            for col_name in SECTIONS_NBA['current']['columns']:
-                row.append(get_stat_value(col_name, 'current'))
-        else:
-            row.extend([''] * SECTIONS_NBA['current']['column_count'])
-        
-        # Historical stats section (placeholder - will be filled later if data exists)
-        row.extend([''] * SECTIONS_NBA['historical']['column_count'])
-        
-        # Postseason stats section (placeholder - will be filled later if data exists)
-        row.extend([''] * SECTIONS_NBA['postseason']['column_count'])
-        
-        # Hidden section (player_id)
-        for col_name in SECTIONS_NBA['hidden']['columns']:
-            if col_name == 'player_id':
-                row.append(player_id)
-        
-        data_rows.append(row)
-        
-        # Track percentiles for color coding (only if showing values, not percentiles)
-        if not show_percentiles:
-            percentile_data.append(player_percentiles)
-    
-    # Write data to sheet with full formatting (similar to create_team_sheet)
-    try:
-        all_data = [header_row_1, header_row_2, filter_row] + data_rows
-        total_rows = len(all_data)
-        total_cols = SHEET_FORMAT_NBA['total_columns']
-        
-        # Get spreadsheet object for batch updates
-        spreadsheet = worksheet.spreadsheet
-        
-        # Build ONE mega batch request with ALL operations
-        requests = []
-        
-        # 1. Get current sheet metadata
-        try:
-            sheet_metadata = spreadsheet.fetch_sheet_metadata({'includeGridData': False})
-            current_row_count = 1000
-            current_col_count = 27  # NBA sheet has +1 columns vs team sheets
-            sheet_id = worksheet.id
-            
-            for sheet in sheet_metadata.get('sheets', []):
-                if sheet['properties']['sheetId'] == sheet_id:
-                    current_row_count = sheet['properties']['gridProperties'].get('rowCount', 1000)
-                    current_col_count = sheet['properties']['gridProperties'].get('columnCount', 27)
-                    
-                    # Delete any existing banding
-                    banded_ranges = sheet.get('bandedRanges', [])
-                    if banded_ranges:
-                        for br in banded_ranges:
-                            requests.append({'deleteBanding': {'bandedRangeId': br['bandedRangeId']}})
-                    break
-        except Exception as e:
-            log(f"⚠️  Warning: Could not fetch sheet metadata for NBA: {e}")
-            sheet_id = worksheet.id
-            current_row_count = 1000
-            current_col_count = 27
-        
-        # 2. Adjust columns if needed
-        if sync_section in [None, 'all', 'current']:
-            if current_col_count > total_cols:
-                requests.append({
-                    'deleteDimension': {
-                        'range': {
-                            'sheetId': sheet_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': total_cols,
-                            'endIndex': current_col_count
-                        }
-                    }
-                })
-            elif current_col_count < total_cols:
-                requests.append({
-                    'appendDimension': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'length': total_cols - current_col_count
-                    }
-                })
-        
-        # 3. Adjust rows if needed
-        if sync_section in [None, 'all', 'current']:
-            if current_row_count > total_rows:
-                requests.append({
-                    'deleteDimension': {
-                        'range': {
-                            'sheetId': sheet_id,
-                            'dimension': 'ROWS',
-                            'startIndex': total_rows,
-                            'endIndex': current_row_count
-                        }
-                    }
-                })
-            elif current_row_count < total_rows:
-                # Add rows if we need more
-                requests.append({
-                    'appendDimension': {
-                        'sheetId': sheet_id,
-                        'dimension': 'ROWS',
-                        'length': total_rows - current_row_count
-                    }
-                })
-        
-        # 4. Update cell values
-        rows_data = []
-        start_col_idx = 0
-        
-        if sync_section == 'historical':
-            start_col_idx = SECTIONS_NBA['historical']['columns']['start']
-            end_col_idx = SECTIONS_NBA['historical']['columns']['end'] + 1
-        elif sync_section == 'postseason':
-            start_col_idx = SECTIONS_NBA['postseason']['columns']['start']
-            end_col_idx = SECTIONS_NBA['postseason']['columns']['end'] + 1
-        else:
-            # Full sync - write all columns
-            end_col_idx = total_cols
-        
-        for row_idx, row_data in enumerate(all_data):
-            row_values = []
-            for col_idx in range(start_col_idx, end_col_idx):
-                cell_value = row_data[col_idx] if col_idx < len(row_data) else ''
-                
-                if cell_value is None or cell_value == '':
-                    str_value = ''
-                else:
-                    str_value = str(cell_value)
-                
-                row_values.append({
-                    'userEnteredValue': {
-                        'stringValue': str_value
-                    }
-                })
-            rows_data.append({'values': row_values})
-        
-        requests.append({
-            'updateCells': {
-                'rows': rows_data,
-                'fields': 'userEnteredValue',
-                'start': {'sheetId': sheet_id, 'rowIndex': 0, 'columnIndex': start_col_idx}
-            }
-        })
-        
-        # Only apply formatting for full syncs
-        if sync_section in [None, 'all', 'current']:
-            # Set column A (Name) to width from config
-            name_width = COLUMN_DEFINITIONS['name'].get('width', 187)
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': 0,
-                        'endIndex': 1
-                    },
-                    'properties': {
-                        'pixelSize': name_width
-                    },
-                    'fields': 'pixelSize'
-                }
-            })
-            
-            # Set column A text wrapping to CLIP
-            requests.append({
-                'repeatCell': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 3,
-                        'startColumnIndex': 0,
-                        'endColumnIndex': 1
-                    },
-                    'cell': {
-                        'userEnteredFormat': {
-                            'wrapStrategy': 'CLIP'
-                        }
-                    },
-                    'fields': 'userEnteredFormat.wrapStrategy'
-                }
-            })
-            
-            # 5. Merge cells
-            # Player Info header
-            requests.append({
-                'mergeCells': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 0,
-                        'endRowIndex': 1,
-                        'startColumnIndex': SECTIONS_NBA['player_info']['start_col'],
-                        'endColumnIndex': SECTIONS_NBA['player_info']['end_col'],
-                    },
-                    'mergeType': 'MERGE_ALL'
-                }
-            })
-            
-            # Current season stats header
-            requests.append({
-                'mergeCells': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 0,
-                        'endRowIndex': 1,
-                        'startColumnIndex': SECTIONS_NBA['current']['start_col'],
-                        'endColumnIndex': SECTIONS_NBA['current']['end_col'],
-                    },
-                    'mergeType': 'MERGE_ALL'
-                }
-            })
-        
-            # Historical stats header
-            requests.append({
-                'mergeCells': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 0,
-                        'endRowIndex': 1,
-                        'startColumnIndex': SECTIONS_NBA['historical']['start_col'],
-                        'endColumnIndex': SECTIONS_NBA['historical']['end_col'],
-                    },
-                    'mergeType': 'MERGE_ALL'
-                }
-            })
-            
-            # Postseason stats header
-            requests.append({
-                'mergeCells': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 0,
-                        'endRowIndex': 1,
-                        'startColumnIndex': SECTIONS_NBA['postseason']['start_col'],
-                        'endColumnIndex': SECTIONS_NBA['postseason']['end_col'],
-                    },
-                    'mergeType': 'MERGE_ALL'
-                }
-            })
-            
-            # Notes section header
-            requests.append({
-                'mergeCells': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 0,
-                        'endRowIndex': 1,
-                        'startColumnIndex': SECTIONS_NBA['notes']['start_col'],
-                        'endColumnIndex': SECTIONS_NBA['notes']['end_col'],
-                    },
-                    'mergeType': 'MERGE_ALL'
-                }
-            })
-        
-        # Format row 1 - PRIMARY HEADER (font 12)
-        black = COLORS['black']
-        white = COLORS['white']
-        light_gray = COLORS['light_gray']
-        
-        requests.append({
-            'repeatCell': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'startRowIndex': 0,
-                    'endRowIndex': 1,
-                },
-                'cell': {
-                    'userEnteredFormat': {
-                        'backgroundColor': black,
-                        'textFormat': {
-                            'foregroundColor': white,
-                            'fontFamily': SHEET_FORMAT['fonts']['header_primary']['family'],
-                            'fontSize': 12,  # Row 1 is always 12
-                            'bold': True
-                        },
-                        'horizontalAlignment': 'CENTER',
-                        'verticalAlignment': 'MIDDLE',
-                        'wrapStrategy': 'CLIP'
-                    }
-                },
-                'fields': 'userEnteredFormat'
-            }
-        })
-        
-        # Format row 2 - SECONDARY HEADER (font 10)
-        requests.append({
-            'repeatCell': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'startRowIndex': 1,
-                    'endRowIndex': 2,
-                },
-                'cell': {
-                    'userEnteredFormat': {
-                        'backgroundColor': black,
-                        'textFormat': {
-                            'foregroundColor': white,
-                            'fontFamily': SHEET_FORMAT['fonts']['header_secondary']['family'],
-                            'fontSize': 10,  # Row 2 is 10
-                            'bold': True
-                        },
-                        'horizontalAlignment': 'CENTER',
-                        'verticalAlignment': 'MIDDLE',
-                        'wrapStrategy': 'CLIP'
-                    }
-                },
-                'fields': 'userEnteredFormat'
-            }
-        })
-        
-        # Format A1 (NBA text) - (font 12)
-        requests.append({
-            'repeatCell': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'startRowIndex': 0,
-                    'endRowIndex': 1,
-                    'startColumnIndex': 0,
-                    'endColumnIndex': 1
-                },
-                'cell': {
-                    'userEnteredFormat': {
-                        'backgroundColor': black,
-                        'textFormat': {
-                            'foregroundColor': white,
-                            'fontFamily': SHEET_FORMAT['fonts']['team_name']['family'],
-                            'fontSize': 15,  # A1 is 15 (NBA)
-                            'bold': True
-                        },
-                        'horizontalAlignment': 'CENTER',
-                        'verticalAlignment': 'MIDDLE',
-                        'wrapStrategy': 'CLIP'
-                    }
-                },
-                'fields': 'userEnteredFormat'
-            }
-        })
-        
-        # Format filter row (row 3) - (font 10)
-        requests.append({
-            'repeatCell': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'startRowIndex': 2,
-                    'endRowIndex': 3,
-                },
-                'cell': {
-                    'userEnteredFormat': {
-                        'backgroundColor': black,
-                        'textFormat': {
-                            'foregroundColor': white,
-                            'fontFamily': SHEET_FORMAT['fonts']['header_primary']['family'],
-                            'fontSize': 10,  # Row 3 is 10
-                            'bold': True
-                        },
-                        'horizontalAlignment': 'CENTER',
-                        'verticalAlignment': 'MIDDLE',
-                        'wrapStrategy': 'CLIP'
-                    }
-                },
-                'fields': 'userEnteredFormat'
-            }
-        })
-        
-        # Format data rows (font 10, Sofia Sans)
-        if len(data_rows) > 0:
-            requests.append({
-                'repeatCell': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 3,
-                        'endRowIndex': 3 + len(data_rows),
-                    },
-                    'cell': {
-                        'userEnteredFormat': {
-                            'textFormat': {
-                                'fontFamily': SHEET_FORMAT['fonts']['data']['family'],
-                                'fontSize': 10  # Data rows are 10
-                            },
-                            'wrapStrategy': 'CLIP',
-                            'verticalAlignment': 'TOP',
-                            'horizontalAlignment': 'CENTER'
-                        }
-                    },
-                    'fields': 'userEnteredFormat.textFormat,userEnteredFormat.wrapStrategy,userEnteredFormat.verticalAlignment,userEnteredFormat.horizontalAlignment'
-                }
-            })
-            
-            # Left-align column A (Name)
-            requests.append({
-                'repeatCell': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 3,
-                        'endRowIndex': 3 + len(data_rows),
-                        'startColumnIndex': 0,
-                        'endColumnIndex': 1
-                    },
-                    'cell': {
-                        'userEnteredFormat': {
-                            'horizontalAlignment': 'LEFT'
-                        }
-                    },
-                    'fields': 'userEnteredFormat.horizontalAlignment'
-                }
-            })
-            
-            # Left-align column I (Notes) - shifted by 1 from team sheets
-            requests.append({
-                'repeatCell': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 3,
-                        'endRowIndex': 3 + len(data_rows),
-                        'startColumnIndex': get_column_index('notes', for_nba_sheet=True),
-                        'endColumnIndex': get_column_index('notes', for_nba_sheet=True) + 1
-                    },
-                    'cell': {
-                        'userEnteredFormat': {
-                            'horizontalAlignment': 'LEFT',
-                            'wrapStrategy': 'CLIP'
-                        }
-                    },
-                    'fields': 'userEnteredFormat.horizontalAlignment,userEnteredFormat.wrapStrategy'
-                }
-            })
-        
-        # Bold column A (with Sofia Sans font, size 10)
-        if len(data_rows) > 0:
-            requests.append({
-                'repeatCell': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 2,
-                        'endRowIndex': 3 + len(data_rows),
-                        'startColumnIndex': 0,
-                        'endColumnIndex': 1,
-                    },
-                    'cell': {
-                        'userEnteredFormat': {
-                            'textFormat': {
-                                'bold': True,
-                                'fontFamily': SHEET_FORMAT['fonts']['player_names']['family'],  # Sofia Sans
-                                'fontSize': 10  # Column A font size 10 (player names)
-                            }
-                        }
-                    },
-                    'fields': 'userEnteredFormat.textFormat'
-                }
-            })
-            
-            # Apply banding
-            requests.append({
-                'addBanding': {
-                    'bandedRange': {
-                        'range': {
-                            'sheetId': sheet_id,
-                            'startRowIndex': 3,
-                            'endRowIndex': 3 + len(data_rows),
-                            'startColumnIndex': 0,
-                            'endColumnIndex': SHEET_FORMAT_NBA['total_columns']
-                        },
-                        'rowProperties': {
-                            'firstBandColor': white,
-                            'secondBandColor': light_gray
-                        }
-                    }
-                }
-            })
-            
-        # Apply percentile colors (if not showing percentiles)
-        if len(data_rows) > 0 and not show_percentiles:
-            for row_idx, player_percentiles in enumerate(percentile_data):
-                for col_idx, percentile in player_percentiles.items():
-                    if sync_section == 'historical':
-                        if not (start_col_idx <= col_idx < end_col_idx):
-                            continue
-                    elif sync_section == 'postseason':
-                        if not (start_col_idx <= col_idx < end_col_idx):
-                            continue
-                    
-                    if percentile is not None:
-                        color = get_color_for_percentile(percentile)
-                        if color:
-                            requests.append({
-                                'repeatCell': {
-                                    'range': {
-                                        'sheetId': sheet_id,
-                                        'startRowIndex': 3 + row_idx,
-                                        'endRowIndex': 3 + row_idx + 1,
-                                        'startColumnIndex': col_idx,
-                                        'endColumnIndex': col_idx + 1
-                                    },
-                                    'cell': {
-                                        'userEnteredFormat': {
-                                            'backgroundColor': color
-                                        }
-                                    },
-                                    'fields': 'userEnteredFormat.backgroundColor'
-                                }
-                            })
-        
-        # Row heights
-        requests.append({
-            'updateDimensionProperties': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'dimension': 'ROWS',
-                    'startIndex': 2,
-                    'endIndex': 3
-                },
-                'properties': {
-                    'pixelSize': 15
-                },
-                'fields': 'pixelSize'
-            }
-        })
-        
-        if len(data_rows) > 0:
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'dimension': 'ROWS',
-                        'startIndex': 3,
-                        'endIndex': 3 + len(data_rows)
-                    },
-                    'properties': {
-                        'pixelSize': 21
-                    },
-                    'fields': 'pixelSize'
-                }
-            })
-        
-        # CONFIG-DRIVEN BORDERS for stat sections (only for full syncs)
-        if sync_section in [None, 'all', 'current']:
-            header_rows = SHEET_FORMAT_NBA.get('header_rows', 2)
-            
-            # Add borders based on SECTIONS_NBA config
-            for section_key in ['current', 'historical', 'postseason']:
-                section = SECTIONS_NBA.get(section_key)
-                if not section or not section.get('has_border'):
-                    continue
-                    
-                border_cfg = section.get('border_config', {})
-                start_col = section['columns']['start']
-                end_col = section['columns']['end']
-                weight = border_cfg.get('weight', 2)
-                header_color = COLORS[border_cfg.get('header_color', 'white')]
-                data_color = COLORS[border_cfg.get('data_color', 'black')]
-                
-                # Left border on FIRST column (if configured)
-                if border_cfg.get('first_column_left'):
-                    # Header rows (white)
-                    requests.append({
-                        'updateBorders': {
-                            'range': {
-                                'sheetId': sheet_id,
-                                'startRowIndex': 0,
-                                'endRowIndex': header_rows + 1,
-                                'startColumnIndex': start_col,
-                                'endColumnIndex': start_col + 1,
-                            },
-                            'left': {
-                                'style': 'SOLID',
-                                'width': weight,
-                                'color': header_color
-                            }
-                        }
-                    })
-                    
-                    # Data rows (black)
-                    requests.append({
-                        'updateBorders': {
-                            'range': {
-                                'sheetId': sheet_id,
-                                'startRowIndex': header_rows + 1,
-                                'endRowIndex': header_rows + 1 + len(data_rows),
-                                'startColumnIndex': start_col,
-                                'endColumnIndex': start_col + 1,
-                            },
-                            'left': {
-                                'style': 'SOLID',
-                                'width': weight,
-                                'color': data_color
-                            }
-                        }
-                    })
-                
-                # Right border on LAST column (if configured)
-                if border_cfg.get('last_column_right'):
-                    # Row 1 only (white, weight 2)
-                    requests.append({
-                        'updateBorders': {
-                            'range': {
-                                'sheetId': sheet_id,
-                                'startRowIndex': 0,
-                                'endRowIndex': 1,
-                                'startColumnIndex': end_col,
-                                'endColumnIndex': end_col + 1,
-                            },
-                            'right': {
-                                'style': 'SOLID',
-                                'width': weight,
-                                'color': header_color
-                            }
-                        }
-                    })
-                    
-                    # Rows 2-3 (header rows, white)
-                    requests.append({
-                        'updateBorders': {
-                            'range': {
-                                'sheetId': sheet_id,
-                                'startRowIndex': 1,
-                                'endRowIndex': header_rows + 1,
-                                'startColumnIndex': end_col,
-                                'endColumnIndex': end_col + 1,
-                            },
-                            'right': {
-                                'style': 'SOLID',
-                                'width': weight,
-                                'color': header_color
-                            }
-                        }
-                    })
-                    
-                    # Data rows (black)
-                    requests.append({
-                        'updateBorders': {
-                            'range': {
-                                'sheetId': sheet_id,
-                                'startRowIndex': header_rows + 1,
-                                'endRowIndex': header_rows + 1 + len(data_rows),
-                                'startColumnIndex': end_col,
-                                'endColumnIndex': end_col + 1,
-                            },
-                            'right': {
-                                'style': 'SOLID',
-                                'width': weight,
-                                'color': data_color
-                            }
-                        }
-                    })
-        
-        # Top border for row 2 (white, across all columns)
-        requests.append({
-            'updateBorders': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'startRowIndex': 1,
-                    'endRowIndex': 2,
-                    'startColumnIndex': 0,
-                    'endColumnIndex': SHEET_FORMAT_NBA['total_columns']
-                },
-                'top': {
-                    'style': 'SOLID',
-                    'width': 2,
-                    'color': white
-                }
-            }
-        })
-        
-        # WHITE borders between all columns in header rows (rows 2-3)
-        # Skip columns 0-1 (name and team sections) for NBA sheet
-        name_end_col = SECTIONS_NBA['name']['end_col']
-        for col_idx in range(name_end_col, SHEET_FORMAT_NBA['total_columns'] - 1):
-            requests.append({
-                'updateBorders': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 1,
-                        'endRowIndex': 3,
-                        'startColumnIndex': col_idx,
-                        'endColumnIndex': col_idx + 1,
-                    },
-                    'right': {
-                        'style': 'SOLID',
-                        'width': 2,
-                        'color': white
-                    }
-                }
-            })
-        
-        # SECTION BOUNDARIES - Add borders at start of each section (except first)
-        # WHITE borders in header rows 2-3, BLACK borders in data rows 4+
-        for section_name, section_info in SECTIONS_NBA.items():
-            if section_name in ['name', 'player_info', 'hidden']:  # Skip name, player_info, and hidden sections
-                continue
-            
-            section_start_col = section_info['start_col']
-            
-            # White border in row 1
-            requests.append({
-                'updateBorders': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 0,
-                        'endRowIndex': 1,
-                        'startColumnIndex': section_start_col,
-                        'endColumnIndex': section_start_col + 1,
-                    },
-                    'left': {
-                        'style': 'SOLID',
-                        'width': 2,
-                        'color': white
-                    }
-                }
-            })
-            
-            # Black border from row 4 down (data rows)
-            if len(data_rows) > 0:
-                requests.append({
-                    'updateBorders': {
-                        'range': {
-                            'sheetId': sheet_id,
-                            'startRowIndex': 3,  # Row 4 (data starts)
-                            'endRowIndex': 3 + len(data_rows),
-                            'startColumnIndex': section_start_col,
-                            'endColumnIndex': section_start_col + 1,
-                        },
-                        'left': {
-                            'style': 'SOLID',
-                            'width': 2,
-                            'color': black
-                        }
-                    }
-                })
-        
-        # RIGHT border for stat sections (notes, current, historical, postseason)
-        for section_name, section_info in SECTIONS_NBA.items():
-            if section_name in ['notes', 'current', 'historical', 'postseason']:
-                section_end_col = section_info['end_col']
-                
-                # White border in header rows 0-3 (all header rows including row 1)
-                requests.append({
-                    'updateBorders': {
-                        'range': {
-                            'sheetId': sheet_id,
-                            'startRowIndex': 0,
-                            'endRowIndex': 3,
-                            'startColumnIndex': section_end_col - 1,
-                            'endColumnIndex': section_end_col,
-                        },
-                        'right': {
-                            'style': 'SOLID',
-                            'width': 2,
-                            'color': white
-                        }
-                    }
-                })
-                
-                # Black border from row 4 down (data rows)
-                if len(data_rows) > 0:
-                    requests.append({
-                        'updateBorders': {
-                            'range': {
-                                'sheetId': sheet_id,
-                                'startRowIndex': 3,
-                                'endRowIndex': 3 + len(data_rows),
-                                'startColumnIndex': section_end_col - 1,
-                                'endColumnIndex': section_end_col,
-                            },
-                            'right': {
-                                'style': 'SOLID',
-                                'width': 2,
-                                'color': black
-                            }
-                        }
-                    })
-        
-        # Add LEFT border to hidden column (creates right border for postseason section)
-        hidden_col = SECTIONS_NBA['hidden']['start_col']
-        # White border in header rows 0-3
-        requests.append({
-            'updateBorders': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'startRowIndex': 0,
-                    'endRowIndex': 3,
-                    'startColumnIndex': hidden_col,
-                    'endColumnIndex': hidden_col + 1,
-                },
-                'left': {
-                    'style': 'SOLID',
-                    'width': 2,
-                    'color': white
-                }
-            }
-        })
-        # Black border in data rows
-        if len(data_rows) > 0:
-            requests.append({
-                'updateBorders': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 3,
-                        'endRowIndex': 3 + len(data_rows),
-                        'startColumnIndex': hidden_col,
-                        'endColumnIndex': hidden_col + 1,
-                    },
-                    'left': {
-                        'style': 'SOLID',
-                        'width': 2,
-                        'color': black
-                    }
-                }
-            })
-        
-        # Freeze panes
-        requests.append({
-            'updateSheetProperties': {
-                'properties': {
-                    'sheetId': sheet_id,
-                    'gridProperties': {
-                        'frozenRowCount': SHEET_FORMAT_NBA['frozen']['rows'],
-                        'frozenColumnCount': SHEET_FORMAT_NBA['frozen']['columns']
-                    }
-                },
-                'fields': 'gridProperties.frozenRowCount,gridProperties.frozenColumnCount'
-            }
-        })
-        
-        # Hide gridlines
-        requests.append({
-            'updateSheetProperties': {
-                'properties': {
-                    'sheetId': sheet_id,
-                    'gridProperties': {
-                        'hideGridlines': True
-                    }
-                },
-                'fields': 'gridProperties.hideGridlines'
-            }
-        })
-        
-        # Hide player_id column
-        nba_player_id_column = get_column_index(PLAYER_ID_COLUMN, for_nba_sheet=True)
-        requests.append({
-            'updateDimensionProperties': {
-                'range': {
-                    'sheetId': sheet_id,
-                    'dimension': 'COLUMNS',
-                    'startIndex': nba_player_id_column,
-                    'endIndex': nba_player_id_column + 1
-                },
-                'properties': {
-                    'hiddenByUser': True
-                },
-                'fields': 'hiddenByUser'
-            }
-        })
-        
-        # Add filter
-        requests.append({
-            'setBasicFilter': {
-                'filter': {
-                    'range': {
-                        'sheetId': sheet_id,
-                        'startRowIndex': 2,
-                        'endRowIndex': 3 + len(data_rows),
-                        'startColumnIndex': 0,
-                        'endColumnIndex': SHEET_FORMAT_NBA['total_columns']
-                    }
-                }
-            }
-        })
-        
-        # SET COLUMN WIDTHS - Auto-resize or fixed based on config
-        for col_idx in range(SHEET_FORMAT_NBA['total_columns']):
-            # Determine which column this is
-            col_name = None
-            col_width = None
-            
-            # Check player info section first (shifted by 1 for team column)
-            player_info_section = SECTIONS_NBA.get('player_info', {})
-            if player_info_section:
-                section_start = player_info_section['start_col']
-                section_cols = player_info_section['columns']
-                if section_start <= col_idx < section_start + len(section_cols):
-                    col_name = section_cols[col_idx - section_start]
-                    if col_name in COLUMN_DEFINITIONS:
-                        col_width = COLUMN_DEFINITIONS[col_name].get('width')
-            
-            # Check stat sections
-            if col_name is None:
-                for section_name, section_info in SECTIONS_NBA.items():
-                    if section_name == 'player_info':
-                        continue
-                    section_start = section_info['start_col']
-                    section_cols = section_info['columns']
-                    if section_start <= col_idx < section_start + len(section_cols):
-                        col_name = section_cols[col_idx - section_start]
-                        if col_name in COLUMN_DEFINITIONS:
-                            col_width = COLUMN_DEFINITIONS[col_name].get('width')
-                        break
-            
-            # Apply width: fixed if specified, auto-resize otherwise
-            if col_width is not None:
-                # Fixed width
-                requests.append({
-                    'updateDimensionProperties': {
-                        'range': {
-                            'sheetId': sheet_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': col_idx,
-                            'endIndex': col_idx + 1
-                        },
-                        'properties': {
-                            'pixelSize': col_width
-                        },
-                        'fields': 'pixelSize'
-                    }
-                })
-            else:
-                # Auto-resize
-                requests.append({
-                    'autoResizeDimensions': {
-                        'dimensions': {
-                            'sheetId': sheet_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': col_idx,
-                            'endIndex': col_idx + 1
-                        }
-                    }
-                })
-        
-        # Execute all requests in ONE batch call with retry logic
-        log(f"Executing batch update with {len(requests)} requests for NBA sheet")
-        try:
-            spreadsheet.batch_update({'requests': requests})
-        except Exception as e:
-            log(f"⚠️  Error in batch update for NBA: {type(e).__name__}: {str(e)}")
-            log(f"Error details - Total requests: {len(requests)}")
-            import traceback
-            log(f"Full traceback:\n{traceback.format_exc()}")
-            
-            log("Retrying after delay...")
-            time.sleep(3)
-            try:
-                spreadsheet.batch_update({'requests': requests})
-                log("✅ Retry successful for NBA")
-            except Exception as e2:
-                log(f"❌ Failed batch update for NBA after retry: {e2}")
-                raise
-        
-        log(f"✅ NBA sheet created with {len(data_rows)} players")
-    except Exception as e:
-        log(f"❌ Failed to create NBA sheet: {e}")
-        raise
+    # Simply call create_team_sheet with for_nba_sheet=True
+    return create_team_sheet(
+        worksheet=worksheet,
+        team_abbr='NBA',
+        team_name='NBA',
+        team_players=nba_players,
+        percentiles=percentiles,
+        historical_percentiles=historical_percentiles,
+        past_years=past_years,
+        stats_mode=stats_mode,
+        stats_custom_value=stats_custom_value,
+        specific_seasons=specific_seasons,
+        include_current=include_current,
+        sync_section=sync_section,
+        show_percentiles=show_percentiles,
+        playoff_percentiles=playoff_percentiles,
+        for_nba_sheet=True
+    )
 
 def main(priority_team=None):
     log("=" * 60)

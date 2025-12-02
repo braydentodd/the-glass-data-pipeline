@@ -257,7 +257,7 @@ SERVER_CONFIG = {
     'production_host': '150.136.255.23',
     'production_port': 5001,
     'ssh_user': 'ubuntu',
-    'remote_dir': '/home/ubuntu/the-glass-data-pipeline',
+    'remote_dir': '/home/ubuntu/the-glass-api',
     'systemd_service': 'flask-api',
 }
 
@@ -345,9 +345,9 @@ COLUMN_DEFINITIONS = {
         'hidden': False,
     },
     'team': {
-        'display_name': 'TEAM',
+        'display_name': 'TM',
         'db_field': 'team_abbr',
-        'width': 200,
+        'width': 25,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -371,7 +371,7 @@ COLUMN_DEFINITIONS = {
     'experience': {
         'display_name': 'EXP',
         'db_field': 'years_experience',
-        'width': None,  # Auto-resize
+        'width': 32,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -420,7 +420,7 @@ COLUMN_DEFINITIONS = {
     'weight': {
         'display_name': 'WT',
         'db_field': 'weight_lbs',
-        'width': None,
+        'width': 32,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -1065,6 +1065,13 @@ SHEET_FORMAT_NBA = {
     'current_stats_columns': SECTIONS_NBA['current']['column_count'],
     'historical_stats_columns': SECTIONS_NBA['historical']['column_count'],
     'playoff_stats_columns': SECTIONS_NBA['postseason']['column_count'],
+    'fonts': {
+        'header_primary': {'family': 'Staatliches', 'size': 11},
+        'header_secondary': {'family': 'Staatliches', 'size': 10},
+        'team_name': {'family': 'Staatliches', 'size': 15},
+        'player_names': {'family': 'Sofia Sans', 'size': 10},
+        'data': {'family': 'Sofia Sans', 'size': 9},
+    },
     'frozen': {
         'rows': 3,
         'columns': 1,  # Freeze only column A

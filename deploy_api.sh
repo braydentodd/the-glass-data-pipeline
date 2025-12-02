@@ -21,13 +21,16 @@ ssh $SERVER "cd $REMOTE_DIR && [ -d src ] && cp -r src src.backup || true"
 
 # Upload all Python files in src/ using tar (more reliable than individual scp)
 echo "  - Creating archive..."
-tar czf /tmp/src.tar.gz --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' ./src/
+tar czf /tmp/src.tar.gz --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' -C . src/
 
 echo "  - Uploading archive..."
 scp /tmp/src.tar.gz $SERVER:$REMOTE_DIR/
 
 echo "  - Extracting on server..."
 ssh $SERVER "cd $REMOTE_DIR && rm -rf src && tar xzf src.tar.gz && rm src.tar.gz"
+
+echo "  - Verifying update timestamp..."
+ssh $SERVER "stat -c '%y' $REMOTE_DIR/src/sheets_sync.py"
 
 # Verify critical files are present
 echo "  - Verifying upload..."

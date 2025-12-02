@@ -182,12 +182,12 @@ def update_player_rosters():
     
     log(f"Fetching ALL players with stats from current season ({current_season})...")
     
-    # First, fetch current team rosters to know who's actually on teams RIGHT NOW (Issue #2)
+    # First, fetch current team rosters to know who's actually on teams RIGHT NOW
+    # This is the SOURCE OF TRUTH for current team assignments
     log("\nFetching current team rosters from NBA API...")
-    current_rosters = {}  # player_id -> team_id mapping
-    current_jerseys = {}  # player_id -> jersey_number mapping
     try:
         from nba_api.stats.static import teams
+        from nba_api.stats.endpoints import commonteamroster
         nba_teams = teams.get_teams()
         
         for team in nba_teams:
@@ -197,17 +197,22 @@ def update_player_rosters():
             for attempt in range(3):
                 try:
                     time.sleep(RATE_LIMIT_DELAY)
-                    from nba_api.stats.endpoints import commonteamroster
                     roster = commonteamroster.CommonTeamRoster(team_id=team_id, season=current_season, timeout=30)
                     roster_df = roster.get_data_frames()[0]
                     
                     for _, player_row in roster_df.iterrows():
                         player_id = player_row['PLAYER_ID']
-                        current_rosters[player_id] = team_id
-                        # Get jersey number from roster (Issue #1 - fast!)
-                        jersey = safe_str(player_row.get('NUM'))
-                        if jersey:
-                            current_jerseys[player_id] = jersey
+                        player_name = player_row['PLAYER']
+                        
+                        # Add player from roster (SOURCE OF TRUTH)
+                        all_players[player_id] = {
+                            'player_id': player_id,
+                            'team_id': team_id,  # Use team from roster
+                            'name': player_name,
+                            'jersey': safe_str(player_row.get('NUM')),
+                            'weight': None,  # Will get from annual ETL or commonplayerinfo for new players
+                            'age': None
+                        }
                         
                     log(f"  ✓ {team['abbreviation']}: {len(roster_df)} players")
                     break
@@ -220,56 +225,11 @@ def update_player_rosters():
                         log(f"  ⚠ Failed to fetch roster for {team['abbreviation']} after 3 attempts: {e}", "WARN")
                         continue
         
-        log(f"✓ Fetched current rosters: {len(current_rosters)} players, {len(current_jerseys)} with jersey numbers\n")
+        log(f"✓ Fetched current rosters: {len(all_players)} players\n")
     except Exception as e:
-        log(f"⚠ Failed to fetch current rosters: {e}\", \"WARN")
-        current_rosters = {}
-        current_jerseys = {}
+        log(f"⚠ Failed to fetch current rosters: {e}", "WARN")
     
-    # Now fetch players from current season stats
-    log(f"\nFetching current season ({current_season}) players from stats...")
-    
-    try:
-        # Fetch player stats to get ALL players who played this season (with retry)
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                stats = leaguedashplayerstats.LeagueDashPlayerStats(
-                    season=current_season,
-                    season_type_all_star='Regular Season',
-                    per_mode_detailed='Totals',
-                    timeout=120
-                )
-                time.sleep(RATE_LIMIT_DELAY)
-                
-                df = stats.get_data_frames()[0]
-                log(f"✓ Found {len(df)} players with stats in current season")
-                break
-            except Exception as retry_error:
-                if attempt < max_retries - 1:
-                    wait_time = 10 * (attempt + 1)
-                    log(f"⚠ Attempt {attempt + 1}/{max_retries} failed for current season stats, retrying in {wait_time}s...", "WARN")
-                    time.sleep(wait_time)
-                else:
-                    raise retry_error
-        
-        for _, row in df.iterrows():
-            player_id = row['PLAYER_ID']
-            
-            # Add player with live roster data
-            all_players[player_id] = {
-                'player_id': player_id,
-                'team_id': current_rosters.get(player_id),  # Use live roster data
-                'name': row.get('PLAYER_NAME', ''),
-                'jersey': current_jerseys.get(player_id),  # Get jersey from roster (FAST!)
-                'weight': None,  # Will get from annual ETL or commonplayerinfo for new players
-                'age': safe_int(row.get('AGE', 0)) if row.get('AGE') else None
-            }
-        
-    except Exception as e:
-        log(f"✗ Error fetching current season stats: {e}", "ERROR")
-    
-    log(f"\nTotal players found: {len(all_players)}")
+    log(f"\nTotal players found from rosters: {len(all_players)}")
     
     # Get existing players from database to identify NEW players
     conn = get_db_connection()
@@ -352,13 +312,13 @@ def update_player_rosters():
                         UPDATE players SET
                             team_id = %s, jersey_number = %s, 
                             weight_lbs = %s, height_inches = %s,
-                            years_experience = %s, pre_nba_team = %s, birthdate = %s, 
+                            pre_nba_team = %s, birthdate = %s, 
                             updated_at = NOW()
                         WHERE player_id = %s
                     """, (
                         player_data['team_id'], player_data['jersey'],
                         player_data.get('weight'), player_data.get('height'),
-                        player_data.get('years_experience'), player_data.get('pre_nba_team'),
+                        player_data.get('pre_nba_team'),
                         player_data.get('birthdate'),
                         player_id
                     ))
@@ -379,13 +339,13 @@ def update_player_rosters():
                         INSERT INTO players (
                             player_id, name, team_id, jersey_number,
                             weight_lbs, height_inches,
-                            years_experience, pre_nba_team, birthdate
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            pre_nba_team, birthdate
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         player_id, player_data['name'], player_data['team_id'],
                         player_data['jersey'], player_data.get('weight'),
                         player_data.get('height'),
-                        player_data.get('years_experience'), player_data.get('pre_nba_team'),
+                        player_data.get('pre_nba_team'),
                         player_data.get('birthdate')
                     ))
                 else:
@@ -422,9 +382,10 @@ def update_player_stats():
     current_season = NBA_CONFIG['current_season']
     current_year = NBA_CONFIG['current_season_year']
     
-    # Get valid player IDs from database
-    cursor.execute("SELECT player_id FROM players")
-    valid_player_ids = {row[0] for row in cursor.fetchall()}
+    # Get valid player IDs from database (all players on rosters)
+    cursor.execute("SELECT player_id, team_id FROM players")
+    all_players = cursor.fetchall()
+    valid_player_ids = {row[0] for row in all_players}
     log(f"Found {len(valid_player_ids)} players in database")
     
     # Process all season types
@@ -495,6 +456,9 @@ def update_player_stats():
             
             log(f"Fetched {season_type_name} stats for {len(df)} players")
             
+            # Track which players have stats from API
+            players_with_stats = set()
+            
             # Prepare bulk insert data
             records = []
             for _, row in df.iterrows():
@@ -503,6 +467,8 @@ def update_player_stats():
                 # Skip if not in our database
                 if player_id not in valid_player_ids:
                     continue
+                
+                players_with_stats.add(player_id)
                 
                 # Calculate 2FG from total FG
                 fgm = safe_int(row.get('FGM', 0))
@@ -540,6 +506,34 @@ def update_player_stats():
                     safe_float(row.get('DEF_RATING', 0), 10)
                 )
                 records.append(record)
+            
+            # Add zero-stat records for players on rosters who didn't play (Regular Season only)
+            if season_type_code == 1:  # Regular Season
+                players_without_stats = valid_player_ids - players_with_stats
+                if players_without_stats:
+                    log(f"  Adding {len(players_without_stats)} roster players with no stats yet")
+                    skipped = 0
+                    for player_id in players_without_stats:
+                        # Get team_id from players table
+                        team_id = next((t for p, t in all_players if p == player_id), None)
+                        # Skip if no valid team_id (shouldn't happen, but safety check)
+                        if not team_id:
+                            skipped += 1
+                            continue
+                        record = (
+                            player_id,
+                            current_year,
+                            team_id,
+                            season_type_code,
+                            0, 0, 0,  # games_played, minutes, possessions
+                            0, 0, 0, 0, 0, 0,  # shooting stats
+                            0, 0, None, None,  # rebounds
+                            0, 0, 0, 0, 0,  # assists, turnovers, steals, blocks, fouls
+                            None, None  # ratings
+                        )
+                        records.append(record)
+                    if skipped > 0:
+                        log(f"  ⚠ Skipped {skipped} players without valid team_id", "WARN")
             
             # Bulk insert
             if records:
