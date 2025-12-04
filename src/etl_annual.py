@@ -280,7 +280,7 @@ def run_annual_etl(name_range=None):
             deleted_count = cleanup_inactive_players()
         else:
             deleted_count = 0
-            log(f"Skipping cleanup (only runs on first batch)")
+            log("Skipping cleanup (only runs on first batch)")
         
         # Step 2: Update height, weight, birthdate for all remaining players
         updated_count, failed_count = update_all_player_details(name_range)

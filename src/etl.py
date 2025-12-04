@@ -21,7 +21,6 @@ import time
 import argparse
 import psycopg2
 from datetime import datetime
-import pandas as pd
 from psycopg2.extras import execute_values
 from nba_api.stats.endpoints import (
     commonplayerinfo,
@@ -297,8 +296,14 @@ def update_player_rosters():
     else:
         log("\n✓ No new players found - all players already in database")
     
+    # First, clear team_id for all players (they'll be re-assigned if still on roster)
+    log("\nClearing team assignments for all players...")
+    cursor.execute("UPDATE players SET team_id = NULL, updated_at = NOW()")
+    conn.commit()
+    log("✓ Cleared all team assignments")
+    
     # Update database with all players
-    log(f"\nUpdating database with {len(all_players)} players...")
+    log(f"\nUpdating database with {len(all_players)} players currently on rosters...")
     
     for player_id, player_data in all_players.items():
         try:
@@ -599,8 +604,8 @@ def update_team_stats():
     current_season = NBA_CONFIG['current_season']
     current_year = NBA_CONFIG['current_season_year']
     
-    # Get valid team IDs from config
-    valid_team_ids = set(TEAM_IDS)
+    # Get valid team IDs from config (numeric IDs, not abbreviations)
+    valid_team_ids = set(TEAM_IDS.values())
     
     # Process all season types
     season_types = [
@@ -669,6 +674,41 @@ def update_team_stats():
             except Exception as e:
                 log(f"Warning: Could not fetch advanced stats: {e}", "WARN")
             
+            # Fetch opponent stats (what opponents did against each team)
+            try:
+                for attempt in range(max_retries):
+                    try:
+                        opp_stats = leaguedashteamstats.LeagueDashTeamStats(
+                            season=current_season,
+                            season_type_all_star=season_type_name,
+                            measure_type_detailed_defense='Opponent',
+                            per_mode_detailed='Totals',
+                            timeout=120
+                        )
+                        time.sleep(RATE_LIMIT_DELAY)
+                        opp_df = opp_stats.get_data_frames()[0]
+                        break
+                    except Exception as retry_error:
+                        if attempt < max_retries - 1:
+                            wait_time = 10 * (attempt + 1)
+                            log(f"⚠ Attempt {attempt + 1}/{max_retries} failed for {season_type_name} team opponent stats, retrying in {wait_time}s...", "WARN")
+                            time.sleep(wait_time)
+                        else:
+                            raise retry_error
+                
+                if not opp_df.empty:
+                    # API returns columns with OPP_ prefix already
+                    opp_columns = ['TEAM_ID', 'OPP_FGM', 'OPP_FGA', 'OPP_FG3M', 'OPP_FG3A', 'OPP_FTM', 'OPP_FTA', 
+                                   'OPP_OREB', 'OPP_DREB', 'OPP_AST', 'OPP_TOV', 'OPP_STL', 'OPP_BLK', 'OPP_PF']
+                    opp_df = opp_df[opp_columns]
+                    df = df.merge(opp_df, on='TEAM_ID', how='left')
+                    log(f"✓ Fetched opponent stats for {len(opp_df)} teams")
+            except Exception as e:
+                log(f"Warning: Could not fetch opponent stats: {e}", "WARN")
+            
+            # Remove duplicates (some seasons return duplicate team entries)
+            df = df.drop_duplicates(subset=['TEAM_ID'], keep='first')
+            
             log(f"Fetched {season_type_name} stats for {len(df)} teams")
             
             # Prepare bulk insert data
@@ -688,6 +728,15 @@ def update_team_stats():
                 
                 fg2m = max(0, fgm - fg3m)
                 fg2a = max(0, fga - fg3a)
+                
+                # Calculate opponent 2FG from total FG
+                opp_fgm = safe_int(row.get('OPP_FGM', 0))
+                opp_fga = safe_int(row.get('OPP_FGA', 0))
+                opp_fg3m = safe_int(row.get('OPP_FG3M', 0))
+                opp_fg3a = safe_int(row.get('OPP_FG3A', 0))
+                
+                opp_fg2m = max(0, opp_fgm - opp_fg3m)
+                opp_fg2a = max(0, opp_fga - opp_fg3a)
                 
                 record = (
                     team_id,
@@ -712,7 +761,20 @@ def update_team_stats():
                     safe_int(row.get('BLK', 0)),
                     safe_int(row.get('PF', 0)),
                     safe_float(row.get('OFF_RATING', 0), 10),
-                    safe_float(row.get('DEF_RATING', 0), 10)
+                    safe_float(row.get('DEF_RATING', 0), 10),
+                    opp_fg2m,
+                    opp_fg2a,
+                    opp_fg3m,
+                    opp_fg3a,
+                    safe_int(row.get('OPP_FTM', 0)),
+                    safe_int(row.get('OPP_FTA', 0)),
+                    safe_int(row.get('OPP_OREB', 0)),
+                    safe_int(row.get('OPP_DREB', 0)),
+                    safe_int(row.get('OPP_AST', 0)),
+                    safe_int(row.get('OPP_TOV', 0)),
+                    safe_int(row.get('OPP_STL', 0)),
+                    safe_int(row.get('OPP_BLK', 0)),
+                    safe_int(row.get('OPP_PF', 0))
                 )
                 records.append(record)
             
@@ -727,7 +789,10 @@ def update_team_stats():
                         fg2m, fg2a, fg3m, fg3a, ftm, fta,
                         off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
                         assists, turnovers, steals, blocks, fouls,
-                        off_rating_x10, def_rating_x10
+                        off_rating_x10, def_rating_x10,
+                        opp_fg2m, opp_fg2a, opp_fg3m, opp_fg3a, opp_ftm, opp_fta,
+                        opp_off_rebounds, opp_def_rebounds, opp_assists, opp_turnovers,
+                        opp_steals, opp_blocks, opp_fouls
                     ) VALUES %s
                     ON CONFLICT (team_id, year, season_type) DO UPDATE SET
                         games_played = EXCLUDED.games_played,
@@ -750,6 +815,19 @@ def update_team_stats():
                         fouls = EXCLUDED.fouls,
                         off_rating_x10 = EXCLUDED.off_rating_x10,
                         def_rating_x10 = EXCLUDED.def_rating_x10,
+                        opp_fg2m = EXCLUDED.opp_fg2m,
+                        opp_fg2a = EXCLUDED.opp_fg2a,
+                        opp_fg3m = EXCLUDED.opp_fg3m,
+                        opp_fg3a = EXCLUDED.opp_fg3a,
+                        opp_ftm = EXCLUDED.opp_ftm,
+                        opp_fta = EXCLUDED.opp_fta,
+                        opp_off_rebounds = EXCLUDED.opp_off_rebounds,
+                        opp_def_rebounds = EXCLUDED.opp_def_rebounds,
+                        opp_assists = EXCLUDED.opp_assists,
+                        opp_turnovers = EXCLUDED.opp_turnovers,
+                        opp_steals = EXCLUDED.opp_steals,
+                        opp_blocks = EXCLUDED.opp_blocks,
+                        opp_fouls = EXCLUDED.opp_fouls,
                         updated_at = NOW()
                     """,
                     records

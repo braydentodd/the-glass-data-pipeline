@@ -14,7 +14,7 @@ if [ -f .env ]; then
 fi
 
 # Set default stats mode if not already set
-export STATS_MODE="${STATS_MODE:-per_100}"
+export STATS_MODE="${STATS_MODE:-per_100_poss}"
 
 # Activate virtual environment if it exists
 if [ -d venv ]; then

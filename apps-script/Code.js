@@ -164,6 +164,8 @@ function onOpen() {
       .addSeparator()
       .addItem('Historical Timeframe', 'showHistoricalStatsDialog'))
     .addSubMenu(ui.createMenu('Show/Hide')
+      .addItem('Player Info', 'togglePlayerInfo')
+      .addItem('Notes', 'toggleNotes')
       .addItem('Current', 'toggleCurrentStats')
       .addItem('Historical', 'toggleHistoricalStats')
       .addItem('Postseason', 'togglePostseasonStats'))
@@ -298,7 +300,7 @@ function switchToPerMinute() {
     SpreadsheetApp.getActiveSpreadsheet().toast(
       `Switching to Per ${minutes} Minutes`,
       'Updating Stats',
-      -1
+      5
     );
     updateAllSheets('per_minutes', minutes);
   }
@@ -323,9 +325,9 @@ function switchToPerPossession() {
     SpreadsheetApp.getActiveSpreadsheet().toast(
       `Switching to Per ${possessions} Possessions`,
       'Updating Stats',
-      -1
+      5
     );
-    updateAllSheets('per_possessions', possessions);
+    updateAllSheets('per_100_poss', possessions);
   }
 }
 
@@ -335,10 +337,6 @@ function switchToPerPossession() {
 function togglePercentileDisplay() {
   const ui = SpreadsheetApp.getUi();
   const props = PropertiesService.getDocumentProperties();
-  const currentMode = props.getProperty('SHOW_PERCENTILES') || 'false';
-  
-  const newMode = (currentMode === 'true') ? 'false' : 'true';
-  props.setProperty('SHOW_PERCENTILES', newMode);
   
   // Show loading message
   SpreadsheetApp.getActiveSpreadsheet().toast(
@@ -351,7 +349,7 @@ function togglePercentileDisplay() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const activeSheet = ss.getActiveSheet();
   const activeSheetName = activeSheet.getName().toUpperCase();
-  const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
+  const priorityTeam = (NBA_TEAMS.hasOwnProperty(activeSheetName) || activeSheetName === 'NBA') ? activeSheetName : null;
   
   // Check if historical or postseason stats are configured
   const historicalMode = props.getProperty('HISTORICAL_MODE');
@@ -377,11 +375,11 @@ function togglePercentileDisplay() {
       value = parseInt(historicalYears) || 3;
     }
     
-    // Call full sync (updates current, historical, and postseason)
-    syncFullStatsUpdate(syncMode, value, includeCurrent, priorityTeam);
+    // Call full sync with toggle flag (updates current, historical, and postseason)
+    syncFullStatsUpdate(syncMode, value, includeCurrent, priorityTeam, true);
   } else {
     // No historical/postseason configured, just update current season
-    const statsMode = props.getProperty('STATS_MODE') || 'totals';
+    const statsMode = props.getProperty('STATS_MODE') || 'per_36';
     const customValue = props.getProperty('STATS_CUSTOM_VALUE');
     updateAllSheets(statsMode, customValue ? parseFloat(customValue) : null);
   }
@@ -515,21 +513,33 @@ function saveHistoricalStatsConfig(input, includeCurrentYear) {
     props.setProperty('HISTORICAL_MODE', 'career');
     props.setProperty('HISTORICAL_YEARS', '25');
     props.deleteProperty('HISTORICAL_SEASONS');
+    // Also update postseason properties to match
+    props.setProperty('POSTSEASON_MODE', 'career');
+    props.setProperty('POSTSEASON_YEARS', '25');
+    props.deleteProperty('POSTSEASON_SEASONS');
   } else if (parsed.mode === 'years') {
     props.setProperty('HISTORICAL_MODE', 'years');
     props.setProperty('HISTORICAL_YEARS', parsed.value.toString());
     props.deleteProperty('HISTORICAL_SEASONS');
+    // Also update postseason properties to match
+    props.setProperty('POSTSEASON_MODE', 'years');
+    props.setProperty('POSTSEASON_YEARS', parsed.value.toString());
+    props.deleteProperty('POSTSEASON_SEASONS');
   } else if (parsed.mode === 'season') {
     props.setProperty('HISTORICAL_MODE', 'season');
     props.setProperty('HISTORICAL_SEASONS', parsed.value);
     props.deleteProperty('HISTORICAL_YEARS');
+    // Also update postseason properties to match
+    props.setProperty('POSTSEASON_MODE', 'season');
+    props.setProperty('POSTSEASON_SEASONS', parsed.value);
+    props.deleteProperty('POSTSEASON_YEARS');
   }
   
   // Get the active sheet to set as priority team
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const activeSheet = ss.getActiveSheet();
   const activeSheetName = activeSheet.getName().toUpperCase();
-  const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
+  const priorityTeam = (NBA_TEAMS.hasOwnProperty(activeSheetName) || activeSheetName === 'NBA') ? activeSheetName : null;
   
   // Execute sync directly (synchronous) - user waits but gets immediate results
   try {
@@ -595,7 +605,7 @@ function savePostseasonStatsConfig(input) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const activeSheet = ss.getActiveSheet();
   const activeSheetName = activeSheet.getName().toUpperCase();
-  const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
+  const priorityTeam = (NBA_TEAMS.hasOwnProperty(activeSheetName) || activeSheetName === 'NBA') ? activeSheetName : null;
   
   // Execute sync directly (synchronous) - user waits but gets immediate results
   try {
@@ -605,7 +615,7 @@ function savePostseasonStatsConfig(input) {
     SpreadsheetApp.getActiveSpreadsheet().toast(
       'Postseason stats timeframe',
       'Updating Stats',
-      -1  // -1 means toast stays until manually dismissed or replaced
+      5  // -1 means toast stays until manually dismissed or replaced
     );
     
     // Execute the sync directly
@@ -642,14 +652,13 @@ function syncStatsSection(section, mode, value, includeCurrentYear, priorityTeam
   const props = PropertiesService.getDocumentProperties();
   const statsMode = props.getProperty('STATS_MODE') || 'per_36';
   const statsCustomValue = props.getProperty('STATS_CUSTOM_VALUE');
-  const showPercentiles = props.getProperty('SHOW_PERCENTILES') === 'true';
   
   const payload = {
     mode: mode,
     include_current: includeCurrentYear,
     stats_mode: statsMode,  // Pass current stats mode to sync
-    show_percentiles: showPercentiles,  // Pass percentile preference
     sync_section: section  // Tell API which section to update ('historical' or 'postseason')
+    // NOTE: NO show_percentiles parameter - Python will parse from sheet header
   };
   
   // Add custom value if it exists
@@ -722,22 +731,27 @@ function syncHistoricalStats(mode, value, includeCurrentYear, priorityTeam) {
  * Trigger FULL stats sync via API (updates current, historical, and postseason)
  * This is used when changing stats modes to ensure all sections update together
  */
-function syncFullStatsUpdate(mode, value, includeCurrentYear, priorityTeam) {
+function syncFullStatsUpdate(mode, value, includeCurrentYear, priorityTeam, togglePercentiles) {
   const url = `${API_BASE_URL}/api/sync-historical-stats`;
   
   // Get current stats mode from document properties
   const props = PropertiesService.getDocumentProperties();
   const statsMode = props.getProperty('STATS_MODE') || 'per_36';
   const statsCustomValue = props.getProperty('STATS_CUSTOM_VALUE');
-  const showPercentiles = props.getProperty('SHOW_PERCENTILES') === 'true';
   
   const payload = {
     mode: mode,
     include_current: includeCurrentYear,
-    stats_mode: statsMode,
-    show_percentiles: showPercentiles
+    stats_mode: statsMode
     // NOTE: NO sync_section parameter - this triggers a FULL sync of all sections
+    // NOTE: NO show_percentiles parameter - Python will parse from sheet header
+    // NOTE: toggle_percentiles flag tells Python to flip the current state
   };
+  
+  // Add toggle flag if requested
+  if (togglePercentiles) {
+    payload.toggle_percentiles = true;
+  }
   
   // Add custom value if it exists
   if (statsCustomValue) {
@@ -820,14 +834,8 @@ function updateAllSheets(mode, customValue) {
     // If historical or postseason stats are configured, trigger full sync
     // This ensures current, historical, and postseason stats all update together
     
-    SpreadsheetApp.getActiveSpreadsheet().toast(
-      'Stats Mode',
-      'Updating Stats',
-      -1
-    );
-    
-    // Pass the active sheet as priority team if it's a team sheet
-    const priorityTeam = NBA_TEAMS.hasOwnProperty(activeSheetName) ? activeSheetName : null;
+    // Pass the active sheet as priority team if it's a team sheet or NBA sheet
+    const priorityTeam = (NBA_TEAMS.hasOwnProperty(activeSheetName) || activeSheetName === 'NBA') ? activeSheetName : null;
     
     // When changing stats mode, we need to update ALL sections (current, historical, postseason)
     // This is done by calling the historical sync endpoint WITHOUT setting SYNC_SECTION
@@ -1498,6 +1506,124 @@ function togglePostseasonStats() {
   props.setProperty('POSTSEASON_VISIBLE', newVisible.toString());
   SpreadsheetApp.getActiveSpreadsheet().toast(
     newVisible ? `Postseason stats shown on ${updatedCount} sheets` : `Postseason stats hidden on ${updatedCount} sheets`,
+    'Column Visibility',
+    3
+  );
+}
+
+/**
+ * Toggle Player Info section visibility
+ */
+function togglePlayerInfo() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getDocumentProperties();
+  const currentlyVisible = props.getProperty('PLAYER_INFO_VISIBLE') !== 'false';
+  const newVisible = !currentlyVisible;
+  
+  // Column ranges for Player Info section (1-indexed)
+  // Team sheets: B-G (Jersey, Exp, Age, Height, Weight, Wingspan) - 6 columns
+  // NBA sheet: B-H (Team, Jersey, Exp, Age, Height, Weight, Wingspan) - 7 columns
+  const columnRanges = {
+    team_sheet: {
+      player_info: { start: 2, count: 6 }  // B-G (columns 2-7)
+    },
+    nba_sheet: {
+      player_info: { start: 2, count: 7 }  // B-H (columns 2-8) - includes Team column
+    }
+  };
+  
+  let updatedCount = 0;
+  const sheets = ss.getSheets();
+  
+  for (const sheet of sheets) {
+    const sheetName = sheet.getName().toUpperCase();
+    
+    if (sheetName === 'NBA') {
+      const start = columnRanges.nba_sheet.player_info.start;
+      const count = columnRanges.nba_sheet.player_info.count;
+      Logger.log(`Toggling columns on NBA: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
+      if (newVisible) {
+        sheet.showColumns(start, count);
+      } else {
+        sheet.hideColumns(start, count);
+      }
+      updatedCount++;
+    } else if (NBA_TEAMS.hasOwnProperty(sheetName)) {
+      const start = columnRanges.team_sheet.player_info.start;
+      const count = columnRanges.team_sheet.player_info.count;
+      Logger.log(`Toggling columns on ${sheetName}: ${newVisible ? 'show' : 'hide'} columns ${start}-${start+count-1}`);
+      if (newVisible) {
+        sheet.showColumns(start, count);
+      } else {
+        sheet.hideColumns(start, count);
+      }
+      updatedCount++;
+    }
+  }
+  
+  Logger.log(`Updated ${updatedCount} sheets`);
+  props.setProperty('PLAYER_INFO_VISIBLE', newVisible.toString());
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    newVisible ? `Player Info shown on ${updatedCount} sheets` : `Player Info hidden on ${updatedCount} sheets`,
+    'Column Visibility',
+    3
+  );
+}
+
+/**
+ * Toggle Notes column visibility
+ */
+function toggleNotes() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getDocumentProperties();
+  const currentlyVisible = props.getProperty('NOTES_VISIBLE') !== 'false';
+  const newVisible = !currentlyVisible;
+  
+  // Column index for Notes section (1-indexed)
+  // Team sheets: H (column 8) - after Player Info (B-G)
+  // NBA sheet: I (column 9) - shifted by 1 due to Team column at B
+  const columnRanges = {
+    team_sheet: {
+      notes: { start: 8, count: 1 }  // H (column 8)
+    },
+    nba_sheet: {
+      notes: { start: 9, count: 1 }  // I (column 9)
+    }
+  };
+  
+  let updatedCount = 0;
+  const sheets = ss.getSheets();
+  
+  for (const sheet of sheets) {
+    const sheetName = sheet.getName().toUpperCase();
+    
+    if (sheetName === 'NBA') {
+      const start = columnRanges.nba_sheet.notes.start;
+      const count = columnRanges.nba_sheet.notes.count;
+      Logger.log(`Toggling Notes on NBA: ${newVisible ? 'show' : 'hide'} column ${start}`);
+      if (newVisible) {
+        sheet.showColumns(start, count);
+      } else {
+        sheet.hideColumns(start, count);
+      }
+      updatedCount++;
+    } else if (NBA_TEAMS.hasOwnProperty(sheetName)) {
+      const start = columnRanges.team_sheet.notes.start;
+      const count = columnRanges.team_sheet.notes.count;
+      Logger.log(`Toggling Notes on ${sheetName}: ${newVisible ? 'show' : 'hide'} column ${start}`);
+      if (newVisible) {
+        sheet.showColumns(start, count);
+      } else {
+        sheet.hideColumns(start, count);
+      }
+      updatedCount++;
+    }
+  }
+  
+  Logger.log(`Updated ${updatedCount} sheets`);
+  props.setProperty('NOTES_VISIBLE', newVisible.toString());
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    newVisible ? `Notes shown on ${updatedCount} sheets` : `Notes hidden on ${updatedCount} sheets`,
     'Column Visibility',
     3
   );
