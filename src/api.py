@@ -15,9 +15,9 @@ import numpy as np
 from src.config import (
     DB_CONFIG, API_CONFIG, NBA_TEAMS, COLUMN_DEFINITIONS,
     get_reverse_stats, get_editable_fields, get_config_for_export,
-    SECTIONS, SECTIONS_NBA
+    STAT_ORDER
 )
-from src.utils.calculator import calculate_stats_for_team
+from src.stat_engine import calculate_entity_stats
 
 # Build lookup dicts from NBA_TEAMS list
 NBA_TEAMS_BY_ID = {}
@@ -128,7 +128,8 @@ def sync_historical_stats():
         include_current = data.get('include_current', False)
         stats_mode = data.get('stats_mode', 'per_36')  # Get stats mode from request
         stats_custom_value = data.get('stats_custom_value')  # Get custom value if present
-        show_percentiles = data.get('show_percentiles', False)  # Get percentile preference
+        toggle_percentiles = data.get('toggle_percentiles', False)  # Toggle flag from Apps Script
+        # Note: show_percentiles is parsed from sheet header, not passed as parameter
         priority_team = data.get('priority_team')  # Optional: team to process first
         sync_section = data.get('sync_section')  # Optional: 'historical', 'postseason', or None for full sync (default: None)
         
@@ -137,7 +138,11 @@ def sync_historical_stats():
         env['HISTORICAL_MODE'] = mode
         env['INCLUDE_CURRENT_YEAR'] = 'true' if include_current else 'false'
         env['STATS_MODE'] = stats_mode  # Pass stats mode to sync script
-        env['SHOW_PERCENTILES'] = 'true' if show_percentiles else 'false'
+        # Note: SHOW_PERCENTILES removed - Python will parse from sheet header
+        
+        # Pass toggle flag if requested
+        if toggle_percentiles:
+            env['TOGGLE_PERCENTILES'] = 'true'
         
         # Only set SYNC_SECTION if explicitly requested (for partial syncs)
         # If not set, Python script will do a FULL sync (current + historical + postseason)
@@ -180,6 +185,12 @@ def sync_historical_stats():
             env=env,
             timeout=600  # Increased to 10 minutes for all 30 teams
         )
+        
+        # Log subprocess output for debugging
+        if result.stdout:
+            print(f"[SYNC OUTPUT] {result.stdout}", file=sys.stderr, flush=True)
+        if result.stderr:
+            print(f"[SYNC STDERR] {result.stderr}", file=sys.stderr, flush=True)
         
         if result.returncode == 0:
             return jsonify({
@@ -234,7 +245,7 @@ def sync_postseason_stats():
         seasons = data.get('seasons', [])
         stats_mode = data.get('stats_mode', 'per_36')
         stats_custom_value = data.get('stats_custom_value')
-        show_percentiles = data.get('show_percentiles', False)
+        # Note: show_percentiles is parsed from sheet header, not passed as parameter
         priority_team = data.get('priority_team')
         
         # Build environment variables for sync script
@@ -243,7 +254,7 @@ def sync_postseason_stats():
         env['INCLUDE_CURRENT_YEAR'] = 'false'  # Postseason never includes current
         env['STATS_MODE'] = stats_mode
         env['SEASON_TYPE'] = '2,3'  # 2 = Playoffs, 3 = Play-in
-        env['SHOW_PERCENTILES'] = 'true' if show_percentiles else 'false'
+        # Note: SHOW_PERCENTILES removed - Python will parse from sheet header
         env['SYNC_SECTION'] = 'postseason'  # Tell sync script to write to postseason columns
         
         if stats_custom_value:
@@ -421,14 +432,13 @@ def calculate_stats():
         players_with_stats = [p for p in players_list if p.get('games')]
         players_without_stats = [p for p in players_list if not p.get('games')]
         
-        # Calculate stats for players with data
+        # Calculate stats for players with data using generic engine
         calculated_players = []
         if players_with_stats:
-            calculated_players = calculate_stats_for_team(
-                players_with_stats,
-                mode=mode,
-                custom_value=custom_value
-            )
+            for player in players_with_stats:
+                calculated_stats = calculate_entity_stats(player, STAT_ORDER, mode=mode, custom_value=custom_value)
+                player['calculated_stats'] = calculated_stats
+                calculated_players.append(player)
         
         # Add players without stats with empty calculated_stats
         for player in players_without_stats:
@@ -543,15 +553,12 @@ def get_player_stats(player_id):
         
         player_dict = dict(player)
         
-        # Calculate stats in all modes
-        from src.utils.calculator import StatCalculator
-        calc = StatCalculator(player_dict)
-        
+        # Calculate stats in all modes using generic engine
         modes = {
-            'totals': calc.calculate_totals(),
-            'per_game': calc.calculate_per_game(),
-            'per_100': calc.calculate_per_100(),
-            'per_36': calc.calculate_per_36(),
+            'totals': calculate_entity_stats(player_dict, STAT_ORDER, mode='totals'),
+            'per_game': calculate_entity_stats(player_dict, STAT_ORDER, mode='per_game'),
+            'per_100': calculate_entity_stats(player_dict, STAT_ORDER, mode='per_100_poss'),
+            'per_36': calculate_entity_stats(player_dict, STAT_ORDER, mode='per_36'),
         }
         
         return jsonify({
@@ -630,6 +637,75 @@ def update_player(player_id):
             'name': updated_player[1],
             'wingspan_inches': updated_player[2],
             'notes': updated_player[3]
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/teams/<int:team_id>', methods=['PUT'])
+def update_team(team_id):
+    """
+    Update team information (notes, etc.)
+    
+    Request body:
+    {
+        "notes": "Championship contenders"  // Optional
+    }
+    """
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+    
+    # Build dynamic update query based on provided fields
+    allowed_fields = ['notes']  # Only notes is editable for teams
+    updates = []
+    values = []
+    
+    for field in allowed_fields:
+        if field in data:
+            updates.append(f"{field} = %s")
+            values.append(data[field])
+    
+    if not updates:
+        return jsonify({'error': 'No valid fields to update'}), 400
+    
+    # Add updated_at timestamp
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    
+    # Add team_id for WHERE clause
+    values.append(team_id)
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        query = f"""
+            UPDATE teams 
+            SET {', '.join(updates)}
+            WHERE team_id = %s
+            RETURNING team_id, abbreviation, full_name, notes
+        """
+        
+        cursor.execute(query, values)
+        updated_team = cursor.fetchone()
+        
+        if not updated_team:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Team not found'}), 404
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'team_id': updated_team[0],
+            'abbreviation': updated_team[1],
+            'full_name': updated_team[2],
+            'notes': updated_team[3]
         })
     
     except Exception as e:

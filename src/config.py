@@ -134,6 +134,7 @@ DB_SCHEMA = {
         city VARCHAR(100),
         state VARCHAR(50),
         year_founded INTEGER,
+        notes TEXT,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
     );
@@ -215,6 +216,21 @@ DB_SCHEMA = {
         fouls INTEGER DEFAULT 0,
         off_rating_x10 INTEGER,
         def_rating_x10 INTEGER,
+        -- Opponent statistics (what opponents did against this team)
+        opp_fg2m INTEGER DEFAULT 0,
+        opp_fg2a INTEGER DEFAULT 0,
+        opp_fg3m INTEGER DEFAULT 0,
+        opp_fg3a INTEGER DEFAULT 0,
+        opp_ftm INTEGER DEFAULT 0,
+        opp_fta INTEGER DEFAULT 0,
+        opp_off_rebounds INTEGER DEFAULT 0,
+        opp_def_rebounds INTEGER DEFAULT 0,
+        opp_assists INTEGER DEFAULT 0,
+        opp_turnovers INTEGER DEFAULT 0,
+        opp_steals INTEGER DEFAULT 0,
+        opp_blocks INTEGER DEFAULT 0,
+        opp_fouls INTEGER DEFAULT 0,
+        opp_possessions INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(team_id, year, season_type)
@@ -262,18 +278,34 @@ SERVER_CONFIG = {
 }
 
 # ============================================================================
+# STAT CALCULATION CONSTANTS
+# ============================================================================
+
+STAT_CONSTANTS = {
+    'game_length_minutes': 48.0,       # NBA game length
+    'default_pace': 100.0,              # Possessions per 48 minutes
+    'ts_fta_multiplier': 0.44,          # True shooting FTA coefficient
+    'default_per_minutes': 36.0,        # Default minutes for per-minute stats
+    'default_per_possessions': 100.0,   # Default possessions for per-possession stats
+}
+
+# ============================================================================
 # NBA CONFIGURATION
 # ============================================================================
 
 def get_current_season_year():
-    """Get current NBA season year (e.g., 2025 for 2025-26 season)"""
+    """Get current NBA season year (e.g., 2026 for 2025-26 season)
+    
+    NOTE: Database uses ENDING year of season (2026 for 2025-26 season)
+    """
     now = datetime.now()
-    return now.year if now.month > 8 else now.year - 1
+    # Return ending year: if December 2025, return 2026 (for 2025-26 season)
+    return now.year + 1 if now.month > 8 else now.year
 
 def get_current_season():
     """Get current NBA season string (e.g., '2025-26')"""
     year = get_current_season_year()
-    return f"{year}-{str(year + 1)[-2:]}"
+    return f"{year - 1}-{str(year)[-2:]}"
 
 NBA_CONFIG = {
     'current_season_year': get_current_season_year(),
@@ -347,7 +379,7 @@ COLUMN_DEFINITIONS = {
     'team': {
         'display_name': 'TM',
         'db_field': 'team_abbr',
-        'width': 25,
+        'width': 30,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -359,7 +391,7 @@ COLUMN_DEFINITIONS = {
     'jersey': {
         'display_name': 'J#',
         'db_field': 'jersey_number',
-        'width': 22,
+        'width': 25,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
@@ -371,12 +403,12 @@ COLUMN_DEFINITIONS = {
     'experience': {
         'display_name': 'EXP',
         'db_field': 'years_experience',
-        'width': 32,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
         'nba_sheet_only': False,
         'is_stat': False,
+        'is_physical_attribute': True,
         'editable': False,
         'hidden': False,
     },
@@ -388,46 +420,60 @@ COLUMN_DEFINITIONS = {
         'in_historical': False,
         'in_postseason': False,
         'nba_sheet_only': False,
-        'is_stat': False,
+        'is_stat': True,  # Stat column with percentiles
         'editable': False,
         'hidden': False,
+        'reverse_stat': True,  # Lower is better
+        'format_as_percentage': False,
         'decimal_places': 1,
+        'is_physical_attribute': True,  # Special flag for physical attributes
     },
     'height': {
         'display_name': 'HT',
         'db_field': 'height_inches',
-        'width': 32,
+        'width': 42,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
         'nba_sheet_only': False,
-        'is_stat': False,
+        'is_stat': True,  # Stat column with percentiles
         'editable': False,
         'hidden': False,
+        'reverse_stat': False,  # Higher is better
+        'format_as_percentage': False,
+        'decimal_places': 0,
+        'is_physical_attribute': True,  # Special flag for physical attributes
     },
     'wingspan': {
         'display_name': 'WS',
         'db_field': 'wingspan_inches',
-        'width': 32,
+        'width': 42,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
         'nba_sheet_only': False,
-        'is_stat': False,
+        'is_stat': True,  # Stat column with percentiles
         'editable': True,  # Can be edited by user
         'hidden': False,
+        'reverse_stat': False,  # Higher is better
+        'format_as_percentage': False,
+        'decimal_places': 0,
+        'is_physical_attribute': True,  # Special flag for physical attributes
     },
     'weight': {
         'display_name': 'WT',
         'db_field': 'weight_lbs',
-        'width': 32,
         'in_current': False,
         'in_historical': False,
         'in_postseason': False,
         'nba_sheet_only': False,
-        'is_stat': False,
+        'is_stat': True,  # Stat column with percentiles
         'editable': False,
         'hidden': False,
+        'reverse_stat': False,  # Higher is better
+        'format_as_percentage': False,
+        'decimal_places': 0,
+        'is_physical_attribute': True,  # Special flag for physical attributes
     },
     'notes': {
         'display_name': 'NOTES',
@@ -478,7 +524,8 @@ COLUMN_DEFINITIONS = {
     'minutes': {
         'display_name': 'MIN',
         'display_name_totals': 'MIN',
-        'db_field': 'minutes_total',
+        'db_field': 'minutes_x10',
+        'divide_by_10': True,  # DB stores as x10
         'width': None,
         'in_current': True,
         'in_historical': True,
@@ -512,6 +559,8 @@ COLUMN_DEFINITIONS = {
         'display_name_totals': 'PTS',
         'db_field': None,  # Calculated from fg2m, fg3m, ftm
         'calculated': True,
+        'required_fields': ['fg2m', 'fg3m', 'ftm'],  # Raw fields needed for calculation
+        'scales_with_factor': True,  # Scales with per_36/per_game/etc
         'width': None,
         'in_current': True,
         'in_historical': True,
@@ -529,6 +578,8 @@ COLUMN_DEFINITIONS = {
         'display_name_totals': 'TS%',
         'db_field': None,  # Calculated
         'calculated': True,
+        'required_fields': ['fg2m', 'fg3m', 'ftm', 'fg2a', 'fg3a', 'fta'],
+        'scales_with_factor': False,  # Percentage doesn't scale
         'width': None,
         'in_current': True,
         'in_historical': True,
@@ -562,7 +613,8 @@ COLUMN_DEFINITIONS = {
         'display_name_totals': '2P%',
         'db_field': None,  # Calculated from fg2m/fg2a
         'calculated': True,
-        'calculated_from': ['fg2m', 'fg2a'],
+        'required_fields': ['fg2m', 'fg2a'],
+        'scales_with_factor': False,  # Percentage doesn't scale
         'width': None,
         'in_current': True,
         'in_historical': True,
@@ -596,7 +648,8 @@ COLUMN_DEFINITIONS = {
         'display_name_totals': '3P%',
         'db_field': None,  # Calculated from fg3m/fg3a
         'calculated': True,
-        'calculated_from': ['fg3m', 'fg3a'],
+        'required_fields': ['fg3m', 'fg3a'],
+        'scales_with_factor': False,  # Percentage doesn't scale
         'width': None,
         'in_current': True,
         'in_historical': True,
@@ -630,7 +683,8 @@ COLUMN_DEFINITIONS = {
         'display_name_totals': 'FT%',
         'db_field': None,  # Calculated from ftm/fta
         'calculated': True,
-        'calculated_from': ['ftm', 'fta'],
+        'required_fields': ['ftm', 'fta'],
+        'scales_with_factor': False,  # Percentage doesn't scale
         'width': None,
         'in_current': True,
         'in_historical': True,
@@ -678,7 +732,8 @@ COLUMN_DEFINITIONS = {
     'oreb_pct': {
         'display_name': 'OR%',
         'display_name_totals': 'ORS',  # Changes for totals mode
-        'db_field': 'oreb_pct',
+        'db_field': 'off_reb_pct_x1000',
+        'divide_by_1000': True,  # DB stores as x1000
         'db_field_totals': 'off_rebounds',  # Different field for totals
         'width': None,
         'in_current': True,
@@ -696,7 +751,8 @@ COLUMN_DEFINITIONS = {
     'dreb_pct': {
         'display_name': 'DR%',
         'display_name_totals': 'DRS',  # Changes for totals mode
-        'db_field': 'dreb_pct',
+        'db_field': 'def_reb_pct_x1000',
+        'divide_by_1000': True,  # DB stores as x1000
         'db_field_totals': 'def_rebounds',  # Different field for totals
         'width': None,
         'in_current': True,
@@ -807,6 +863,274 @@ COLUMN_DEFINITIONS = {
         'editable': False,
         'hidden': True,  # Always hidden
     },
+    
+    # ============================================================================
+    # OPPONENT STATISTICS (What opponents did AGAINST this team)
+    # ============================================================================
+    # These appear in a separate "Opponent" row below the Team row
+    # Special handling: No OR%/DR% (use ORS/DRS in totals), no ratings, no IDs
+    # Games/minutes match team values, minutes adjusted in per-possession mode
+    
+    'opp_fg2_pct': {
+        'display_name': 'OPP 2%',
+        'display_name_totals': 'OPP 2%',
+        'db_field': 'opp_fg2m',  # Calculated from opp_fg2m/opp_fg2a
+        'db_field_denominator': 'opp_fg2a',
+        'width': None,
+        'in_current': False,  # Opponent stats don't use standard sections
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent shooting is better for defense
+        'format_as_percentage': True,
+        'decimal_places': 1,
+    },
+    'opp_fg3_pct': {
+        'display_name': 'OPP 3%',
+        'display_name_totals': 'OPP 3%',
+        'db_field': 'opp_fg3m',
+        'db_field_denominator': 'opp_fg3a',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,
+        'format_as_percentage': True,
+        'decimal_places': 1,
+    },
+    'opp_ft_pct': {
+        'display_name': 'OPP FT%',
+        'display_name_totals': 'OPP FT%',
+        'db_field': 'opp_ftm',
+        'db_field_denominator': 'opp_fta',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,
+        'format_as_percentage': True,
+        'decimal_places': 1,
+    },
+    'opp_ts_pct': {
+        'display_name': 'OPP TS%',
+        'display_name_totals': 'OPP TS%',
+        'db_field': None,  # Calculated from opp_fg2m, opp_fg3m, opp_ftm, opp_fg2a, opp_fg3a, opp_fta
+        'calculated': True,
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent TS% is better
+        'format_as_percentage': True,
+        'decimal_places': 1,
+    },
+    'opp_fg2a': {
+        'display_name': 'OPP 2PA',
+        'display_name_totals': 'OPP 2PA',
+        'db_field': 'opp_fg2a',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent 2PA is better (fewer possessions)
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_fg3a': {
+        'display_name': 'OPP 3PA',
+        'display_name_totals': 'OPP 3PA',
+        'db_field': 'opp_fg3a',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent 3PA is better
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_fta': {
+        'display_name': 'OPP FTA',
+        'display_name_totals': 'OPP FTA',
+        'db_field': 'opp_fta',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent FTA is better (better defense)
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_points': {
+        'display_name': 'OPP PTS',
+        'display_name_totals': 'OPP PTS',
+        'db_field': None,  # Calculated: (opp_fg2m*2 + opp_fg3m*3 + opp_ftm)
+        'calculated': True,
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent points is better
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_ors': {
+        'display_name': 'OPP ORS',
+        'display_name_totals': 'OPP ORS',
+        'db_field': 'opp_off_rebounds',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent offensive rebounds is better
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_drs': {
+        'display_name': 'OPP DRS',
+        'display_name_totals': 'OPP DRS',
+        'db_field': 'opp_def_rebounds',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent defensive rebounds is better
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_assists': {
+        'display_name': 'OPP AST',
+        'display_name_totals': 'OPP AST',
+        'db_field': 'opp_assists',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent assists is better
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_turnovers': {
+        'display_name': 'OPP TO',
+        'display_name_totals': 'OPP TO',
+        'db_field': 'opp_turnovers',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': False,  # Higher opponent turnovers is better (forced turnovers)
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_steals': {
+        'display_name': 'OPP STL',
+        'display_name_totals': 'OPP STL',
+        'db_field': 'opp_steals',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent steals is better
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_blocks': {
+        'display_name': 'OPP BLK',
+        'display_name_totals': 'OPP BLK',
+        'db_field': 'opp_blocks',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': True,  # Lower opponent blocks is better
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
+    'opp_fouls': {
+        'display_name': 'OPP FLS',
+        'display_name_totals': 'OPP FLS',
+        'db_field': 'opp_fouls',
+        'width': None,
+        'in_current': False,
+        'in_historical': False,
+        'in_postseason': False,
+        'nba_sheet_only': False,
+        'is_stat': True,
+        'is_opponent_stat': True,
+        'editable': False,
+        'hidden': False,
+        'reverse_stat': False,  # Higher opponent fouls is better (drawing fouls)
+        'format_as_percentage': False,
+        'decimal_places': 1,
+    },
 }
 
 # Define the order of stats as they appear in sections (left to right)
@@ -817,10 +1141,18 @@ STAT_ORDER = [
     'steals', 'blocks', 'fouls', 'off_rating', 'def_rating'
 ]
 
+# Define the order of opponent stats (no games/minutes/possessions/OR%/DR%/ratings)
+OPPONENT_STAT_ORDER = [
+    'opp_fg2_pct', 'opp_fg3_pct', 'opp_ft_pct', 'opp_ts_pct',
+    'opp_fg2a', 'opp_fg3a', 'opp_fta', 'opp_points',
+    'opp_ors', 'opp_drs', 'opp_assists', 'opp_turnovers',
+    'opp_steals', 'opp_blocks', 'opp_fouls'
+]
+
 # Helper functions to get columns for each section
 def get_player_info_columns(for_nba_sheet=False):
-    """Get player info columns in order: J#, Age, Exp, Ht, Wt, WS"""
-    return ['jersey', 'age', 'experience', 'height', 'weight', 'wingspan']
+    """Get player info columns in order: J#, Exp, Age, Ht, Wt, WS"""
+    return ['jersey', 'experience', 'age', 'height', 'weight', 'wingspan']
 
 def get_notes_columns():
     """Get notes column as separate section"""
@@ -971,6 +1303,30 @@ SECTIONS = build_sections(for_nba_sheet=False)
 SECTIONS_NBA = build_sections(for_nba_sheet=True)
 
 # ============================================================================
+# ROW TYPE SKIP CONFIGURATIONS
+# ============================================================================
+# Define which fields should be skipped (no value, black background) for different row types
+
+# Fields that opponent rows skip - these cells will be filled black with no value
+OPPONENT_SKIP_FIELDS = [
+    'jersey',      # J#
+    'years',       # EXP (years experience)
+    'age',         # AGE
+    'height',      # HT
+    'weight',      # WT
+    'wingspan',    # WS
+    'notes',       # Notes
+    'games',       # GMS
+    'minutes',     # MIN
+    'possessions', # POS
+]
+
+# Fields that team rows skip - these cells will be filled black with no value
+TEAM_SKIP_FIELDS = [
+    'jersey',      # J#
+]
+
+# ============================================================================
 # HELPER FUNCTIONS FOR COLUMN LOOKUPS
 # ============================================================================
 
@@ -1035,6 +1391,7 @@ PERCENTILE_CONFIG = {
 STAT_COLUMNS = [col for col in STAT_ORDER if COLUMN_DEFINITIONS[col]['in_current']]
 HISTORICAL_STAT_COLUMNS = [col for col in STAT_ORDER if COLUMN_DEFINITIONS[col]['in_historical']]
 PLAYOFF_STAT_COLUMNS = [col for col in STAT_ORDER if COLUMN_DEFINITIONS[col]['in_postseason']]
+OPPONENT_STAT_COLUMNS = OPPONENT_STAT_ORDER  # Opponent stats available in all sections
 PLAYER_ID_COLUMN = 'player_id'
 REVERSE_STATS = get_reverse_stats()  # Set where lower is better
 
@@ -1209,5 +1566,8 @@ def get_config_for_export():
                     'count': SECTIONS_NBA['postseason']['column_count']
                 }
             }
-        }
+        },
+        # Row type skip configurations
+        'opponent_skip_fields': OPPONENT_SKIP_FIELDS,
+        'team_skip_fields': TEAM_SKIP_FIELDS,
     }
