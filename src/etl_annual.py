@@ -16,7 +16,7 @@ import sys
 import time
 import psycopg2
 from datetime import datetime
-from nba_api.stats.endpoints import commonplayerinfo
+from nba_api.stats.endpoints import commonplayerinfo, draftcombinestats
 
 # Load environment variables FIRST (before importing config)
 if os.path.exists('.env'):
@@ -102,13 +102,82 @@ def parse_birthdate(date_str):
         return None
 
 
+def update_wingspan_from_combine():
+    """
+    Fetch wingspan data from NBA Draft Combine for all available years.
+    Uses most recent measurement for each player.
+    """
+    log("=" * 70)
+    log("STEP 1: Updating wingspan from Draft Combine data")
+    log("=" * 70)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Dictionary to store wingspan by player_id (will keep most recent)
+    player_wingspans = {}
+    
+    # Fetch combine data for all years (API supports 'all' parameter)
+    try:
+        log("Fetching all-time draft combine data...")
+        combine = draftcombinestats.DraftCombineStats(season_all_time='all')
+        result = combine.get_dict()
+        
+        rs = result['resultSets'][0]
+        headers = rs['headers']
+        
+        season_idx = headers.index('SEASON')
+        player_id_idx = headers.index('PLAYER_ID')
+        wingspan_idx = headers.index('WINGSPAN')
+        
+        # Process all combine measurements
+        for row in rs['rowSet']:
+            season = row[season_idx]
+            player_id = row[player_id_idx]
+            wingspan = row[wingspan_idx]
+            
+            if wingspan and player_id:
+                # Keep most recent measurement (later seasons)
+                if player_id not in player_wingspans or season > player_wingspans[player_id]['season']:
+                    player_wingspans[player_id] = {
+                        'wingspan': wingspan,
+                        'season': season
+                    }
+        
+        log(f"Found wingspan measurements for {len(player_wingspans)} players")
+        
+        # Update database
+        updated_count = 0
+        for player_id, data in player_wingspans.items():
+            cursor.execute("""
+                UPDATE players
+                SET wingspan_inches = %s, updated_at = NOW()
+                WHERE player_id = %s
+            """, (data['wingspan'], player_id))
+            
+            if cursor.rowcount > 0:
+                updated_count += 1
+        
+        conn.commit()
+        log(f"✓ Updated wingspan for {updated_count} players")
+        
+    except Exception as e:
+        log(f"Failed to fetch combine data: {e}", "ERROR")
+        updated_count = 0
+    
+    cursor.close()
+    conn.close()
+    
+    return updated_count
+
+
 def cleanup_inactive_players():
     """
     Delete players who have NO stats in the current or previous season.
     This cascades to delete their historical stats as well.
     """
     log("=" * 70)
-    log("STEP 1: Cleaning up inactive players")
+    log("STEP 2: Cleaning up inactive players")
     log("=" * 70)
     
     conn = get_db_connection()
@@ -166,9 +235,9 @@ def update_all_player_details(name_range=None):
     """
     log("=" * 70)
     if name_range:
-        log(f"STEP 2: Updating height, weight, birthdate for players {name_range[0]}-{name_range[1]}")
+        log(f"STEP 3: Updating height, weight, birthdate for players {name_range[0]}-{name_range[1]}")
     else:
-        log("STEP 2: Updating height, weight, birthdate for all players")
+        log("STEP 3: Updating height, weight, birthdate for all players")
     log("=" * 70)
     
     conn = get_db_connection()
@@ -275,20 +344,28 @@ def run_annual_etl(name_range=None):
     start_time = time.time()
     
     try:
-        # Step 1: Cleanup inactive players (only on first run, not for name ranges)
+        # Step 1: Update wingspan from combine data (only on first run, not for name ranges)
+        if not name_range:
+            wingspan_count = update_wingspan_from_combine()
+        else:
+            wingspan_count = 0
+            log("Skipping wingspan update (only runs on first batch)")
+        
+        # Step 2: Cleanup inactive players (only on first run, not for name ranges)
         if not name_range:
             deleted_count = cleanup_inactive_players()
         else:
             deleted_count = 0
             log("Skipping cleanup (only runs on first batch)")
         
-        # Step 2: Update height, weight, birthdate for all remaining players
+        # Step 3: Update height, weight, birthdate for all remaining players
         updated_count, failed_count = update_all_player_details(name_range)
         
         elapsed = time.time() - start_time
         log("=" * 70)
         log(f"✅ ANNUAL ETL COMPLETE - {elapsed:.1f}s ({elapsed / 60:.1f} min)")
         if not name_range:
+            log(f"   Wingspan: {wingspan_count} players updated")
             log(f"   Deleted: {deleted_count} inactive players")
         log(f"   Updated: {updated_count} players")
         log(f"   Failed: {failed_count} players")
