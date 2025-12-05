@@ -1,0 +1,23 @@
+Passes Leading to Fouls
+Secondary Assists (Pass leading to an assist)
+Putbacks
+On-Ball % (percentage of time on offense with the ball in your hands in the halfcourt)
+Avg Sec/Touch (average amount of time you hold the ball before passing it in the halfcourt)
+oRAPM (Offensive Real Adjusted Plus Minus)
+dRAPM (Defensive Real Adjusted Plus Minus)
+On-Off
+On-Off Stats
+Unassisted Rim FGA
+Unassisted Rim FGM
+Unassisted 2FGA
+Unassisted 2FGM
+Unassisted 2FGA
+Unassisted 2FGM
+Rebound own misses
+Shooting Fouls
+Shooting Foul Locations
+Technical FTs
+And Ones
+Injury data
+Contract data
+Wingspan data
