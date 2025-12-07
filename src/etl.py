@@ -26,7 +26,8 @@ from nba_api.stats.endpoints import (
     commonplayerinfo,
     leaguedashplayerstats, leaguedashteamstats,
     leaguedashptstats,
-    leaguehustlestatsplayer, leaguehustlestatsteam, leaguedashptdefend,
+    leaguehustlestatsplayer, leaguehustlestatsteam, 
+    leaguedashptdefend, leaguedashptteamdefend,
     playerdashboardbyshootingsplits, teamplayeronoffdetails
 )
 
@@ -1500,19 +1501,342 @@ def update_onoff_stats(season, season_year):
     log(f"✓ On-off stats: {updated} updates, {failed} teams failed")
 
 
+def update_team_shooting_tracking(season, season_year):
+    """
+    Get team shooting tracking in 6 league-wide calls
+    Maps to: cont_rim_fgm/fga, open_rim_fgm/fga, cont_mr_fgm/fga, open_mr_fgm/fga, 
+             cont_fg3m/fg3a, open_fg3m/fg3a
+    """
+    log(f"Fetching team shooting tracking (league-wide) for {season}...")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        from nba_api.stats.endpoints import leaguedashteamptshot
+        
+        # Store team shooting data: team_id -> {stat: value}
+        team_data = {}
+        
+        # 1-2: Contested rim (0-2 ft + 2-4 ft)
+        log("  Fetching contested rim shots (teams)...")
+        for def_dist in ['0-2 Feet - Very Tight', '2-4 Feet - Tight']:
+            endpoint = leaguedashteamptshot.LeagueDashTeamPtShot(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                general_range_nullable='Less Than 10 ft',
+                close_def_dist_range_nullable=def_dist
+            )
+            result = endpoint.get_dict()
+            rs = result['resultSets'][0]
+            headers = rs['headers']
+            
+            fgm_idx = headers.index('FGM')
+            fga_idx = headers.index('FGA')
+            
+            for row in rs['rowSet']:
+                team_id = row[0]
+                if team_id not in team_data:
+                    team_data[team_id] = {}
+                
+                team_data[team_id]['cont_rim_fgm'] = team_data[team_id].get('cont_rim_fgm', 0) + (row[fgm_idx] or 0)
+                team_data[team_id]['cont_rim_fga'] = team_data[team_id].get('cont_rim_fga', 0) + (row[fga_idx] or 0)
+            
+            time.sleep(RATE_LIMIT_DELAY)
+        
+        # 3-4: Open rim (4-6 ft + 6+ ft)
+        log("  Fetching open rim shots (teams)...")
+        for def_dist in ['4-6 Feet - Open', '6+ Feet - Wide Open']:
+            endpoint = leaguedashteamptshot.LeagueDashTeamPtShot(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                general_range_nullable='Less Than 10 ft',
+                close_def_dist_range_nullable=def_dist
+            )
+            result = endpoint.get_dict()
+            rs = result['resultSets'][0]
+            headers = rs['headers']
+            
+            fgm_idx = headers.index('FGM')
+            fga_idx = headers.index('FGA')
+            
+            for row in rs['rowSet']:
+                team_id = row[0]
+                if team_id not in team_data:
+                    team_data[team_id] = {}
+                
+                team_data[team_id]['open_rim_fgm'] = team_data[team_id].get('open_rim_fgm', 0) + (row[fgm_idx] or 0)
+                team_data[team_id]['open_rim_fga'] = team_data[team_id].get('open_rim_fga', 0) + (row[fga_idx] or 0)
+            
+            time.sleep(RATE_LIMIT_DELAY)
+        
+        # 5-6: All shots contested (0-4 ft) and open (4+ ft) to get total FG2/FG3 splits
+        log("  Fetching contested/open all shots (teams)...")
+        for def_dist_combo in ['0-2 Feet - Very Tight,2-4 Feet - Tight', '4-6 Feet - Open,6+ Feet - Wide Open']:
+            is_contested = '0-2' in def_dist_combo
+            
+            endpoint = leaguedashteamptshot.LeagueDashTeamPtShot(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                close_def_dist_range_nullable=def_dist_combo
+            )
+            result = endpoint.get_dict()
+            rs = result['resultSets'][0]
+            headers = rs['headers']
+            
+            fg2m_idx = headers.index('FG2M')
+            fg2a_idx = headers.index('FG2A')
+            fg3m_idx = headers.index('FG3M')
+            fg3a_idx = headers.index('FG3A')
+            
+            for row in rs['rowSet']:
+                team_id = row[0]
+                if team_id not in team_data:
+                    team_data[team_id] = {}
+                
+                fg2m_total = row[fg2m_idx] or 0
+                fg2a_total = row[fg2a_idx] or 0
+                fg3m_total = row[fg3m_idx] or 0
+                fg3a_total = row[fg3a_idx] or 0
+                
+                # Store totals to calculate mid-range later
+                if is_contested:
+                    team_data[team_id]['cont_fg2m_total'] = fg2m_total
+                    team_data[team_id]['cont_fg2a_total'] = fg2a_total
+                    team_data[team_id]['cont_fg3m'] = fg3m_total
+                    team_data[team_id]['cont_fg3a'] = fg3a_total
+                else:
+                    team_data[team_id]['open_fg2m_total'] = fg2m_total
+                    team_data[team_id]['open_fg2a_total'] = fg2a_total
+                    team_data[team_id]['open_fg3m'] = fg3m_total
+                    team_data[team_id]['open_fg3a'] = fg3a_total
+            
+            time.sleep(RATE_LIMIT_DELAY)
+        
+        # Calculate mid-range: MR = All 2PT - Rim
+        log("  Calculating mid-range and updating database (teams)...")
+        updated = 0
+        for team_id, stats in team_data.items():
+            cont_rim_fgm = stats.get('cont_rim_fgm', 0)
+            cont_rim_fga = stats.get('cont_rim_fga', 0)
+            open_rim_fgm = stats.get('open_rim_fgm', 0)
+            open_rim_fga = stats.get('open_rim_fga', 0)
+            
+            cont_fg2m_total = stats.get('cont_fg2m_total', 0)
+            cont_fg2a_total = stats.get('cont_fg2a_total', 0)
+            open_fg2m_total = stats.get('open_fg2m_total', 0)
+            open_fg2a_total = stats.get('open_fg2a_total', 0)
+            
+            # Mid-range = 2PT total - rim
+            cont_mr_fgm = max(0, cont_fg2m_total - cont_rim_fgm)
+            cont_mr_fga = max(0, cont_fg2a_total - cont_rim_fga)
+            open_mr_fgm = max(0, open_fg2m_total - open_rim_fgm)
+            open_mr_fga = max(0, open_fg2a_total - open_rim_fga)
+            
+            cont_fg3m = stats.get('cont_fg3m', 0)
+            cont_fg3a = stats.get('cont_fg3a', 0)
+            open_fg3m = stats.get('open_fg3m', 0)
+            open_fg3a = stats.get('open_fg3a', 0)
+            
+            cursor.execute("""
+                UPDATE team_season_stats
+                SET cont_rim_fgm = %s, cont_rim_fga = %s,
+                    open_rim_fgm = %s, open_rim_fga = %s,
+                    cont_mr_fgm = %s, cont_mr_fga = %s,
+                    open_mr_fgm = %s, open_mr_fga = %s,
+                    cont_fg3m = %s, cont_fg3a = %s,
+                    open_fg3m = %s, open_fg3a = %s,
+                    updated_at = NOW()
+                WHERE team_id = %s AND year = %s AND season_type = 1
+            """, (
+                cont_rim_fgm, cont_rim_fga, open_rim_fgm, open_rim_fga,
+                cont_mr_fgm, cont_mr_fga, open_mr_fgm, open_mr_fga,
+                cont_fg3m, cont_fg3a, open_fg3m, open_fg3a,
+                team_id, season_year
+            ))
+            
+            if cursor.rowcount > 0:
+                updated += 1
+        
+        conn.commit()
+        log(f"✓ Team shooting tracking: {updated} teams updated 🚀")
+        
+    except Exception as e:
+        log(f"Failed team shooting tracking: {e}", "ERROR")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def update_team_defense_stats(season, season_year):
+    """
+    Get team defensive stats in 3 league-wide calls
+    Maps to: def_rim_fgm, def_rim_fga, def_fg2m, def_fg2a, def_fg3m, def_fg3a, real_def_fg_pct
+    """
+    log(f"Fetching team defensive tracking (league-wide) for {season}...")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        from nba_api.stats.endpoints import leaguedashptteamdefend
+        
+        # 1. Overall defense
+        defense = leaguedashptteamdefend.LeagueDashPtTeamDefend(
+            season=season,
+            per_mode_simple='Totals',
+            season_type_all_star='Regular Season',
+            defense_category='Overall'
+        )
+        
+        result = defense.get_dict()
+        updated = 0
+        
+        for rs in result['resultSets']:
+            headers = rs['headers']
+            
+            for row in rs['rowSet']:
+                team_id = row[0]
+                def_fgm = row[headers.index('D_FGM')] or 0
+                def_fga = row[headers.index('D_FGA')] or 0
+                pct_plusminus = row[headers.index('PCT_PLUSMINUS')]
+                
+                real_def_fg_pct = safe_int(pct_plusminus, 1000)
+                
+                cursor.execute("""
+                    UPDATE team_season_stats
+                    SET def_fg2m = %s, def_fg2a = %s, real_def_fg_pct = %s, updated_at = NOW()
+                    WHERE team_id = %s AND year = %s AND season_type = 1
+                """, (def_fgm, def_fga, real_def_fg_pct, team_id, season_year))
+                
+                if cursor.rowcount > 0:
+                    updated += 1
+        
+        time.sleep(RATE_LIMIT_DELAY)
+        
+        # 2. Rim defense
+        defense_rim = leaguedashptteamdefend.LeagueDashPtTeamDefend(
+            season=season,
+            per_mode_simple='Totals',
+            season_type_all_star='Regular Season',
+            defense_category='Less Than 10Ft'
+        )
+        
+        result_rim = defense_rim.get_dict()
+        
+        for rs in result_rim['resultSets']:
+            headers = rs['headers']
+            
+            for row in rs['rowSet']:
+                team_id = row[0]
+                def_rim_fgm = row[headers.index('FGM_LT_10')] or 0
+                def_rim_fga = row[headers.index('FGA_LT_10')] or 0
+                
+                cursor.execute("""
+                    UPDATE team_season_stats
+                    SET def_rim_fgm = %s, def_rim_fga = %s, updated_at = NOW()
+                    WHERE team_id = %s AND year = %s AND season_type = 1
+                """, (def_rim_fgm, def_rim_fga, team_id, season_year))
+        
+        time.sleep(RATE_LIMIT_DELAY)
+        
+        # 3. 3PT defense
+        defense_3pt = leaguedashptteamdefend.LeagueDashPtTeamDefend(
+            season=season,
+            per_mode_simple='Totals',
+            season_type_all_star='Regular Season',
+            defense_category='3 Pointers'
+        )
+        
+        result_3pt = defense_3pt.get_dict()
+        
+        for rs in result_3pt['resultSets']:
+            headers = rs['headers']
+            
+            for row in rs['rowSet']:
+                team_id = row[0]
+                def_fg3m = row[headers.index('FG3M')] or 0
+                def_fg3a = row[headers.index('FG3A')] or 0
+                
+                cursor.execute("""
+                    UPDATE team_season_stats
+                    SET def_fg3m = %s, def_fg3a = %s, updated_at = NOW()
+                    WHERE team_id = %s AND year = %s AND season_type = 1
+                """, (def_fg3m, def_fg3a, team_id, season_year))
+        
+        conn.commit()
+        log(f"✓ Team defense stats: {updated} teams updated")
+        
+    except Exception as e:
+        log(f"Failed team defense stats: {e}", "ERROR")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def update_team_putbacks(season, season_year):
+    """
+    Get team putback stats (1 league-wide call)
+    Maps to: putbacks
+    """
+    log(f"Fetching team putbacks for {season}...")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        from nba_api.stats.endpoints import leaguedashteamptshot
+        
+        endpoint = leaguedashteamptshot.LeagueDashTeamPtShot(
+            season=season,
+            per_mode_simple='Totals',
+            season_type_all_star='Regular Season',
+            shot_type_nullable='Putbacks'
+        )
+        
+        result = endpoint.get_dict()
+        rs = result['resultSets'][0]
+        headers = rs['headers']
+        
+        fgm_idx = headers.index('FGM')
+        
+        updated = 0
+        for row in rs['rowSet']:
+            team_id = row[0]
+            putbacks = row[fgm_idx] or 0
+            
+            cursor.execute("""
+                UPDATE team_season_stats
+                SET putbacks = %s, updated_at = NOW()
+                WHERE team_id = %s AND year = %s AND season_type = 1
+            """, (putbacks, team_id, season_year))
+            
+            if cursor.rowcount > 0:
+                updated += 1
+        
+        conn.commit()
+        log(f"✓ Team putbacks: {updated} teams updated")
+        
+    except Exception as e:
+        log(f"Failed team putbacks: {e}", "ERROR")
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def update_team_advanced_stats(season=None, season_year=None):
     """
-    Update advanced tracking stats for teams (and opponents)
-    Mirrors player advanced stats but for team_season_stats table
-    
+    Update advanced tracking stats for teams
     Uses league-wide endpoints for team tracking data:
     - Shooting tracking (contested/open by zone)
     - Playmaking (pot_ast, touches)
     - Rebounding (contested rebounds)
     - Hustle stats (charges, deflections, contests)
     - Defense stats
-    
-    Also fetches opponent versions of all these stats
+    - Putbacks
     """
     if season is None:
         season = NBA_CONFIG['current_season']
@@ -1530,37 +1854,39 @@ def update_team_advanced_stats(season=None, season_year=None):
     cursor = conn.cursor()
     
     try:
-        # 1. PLAYMAKING (team + opponent)
-        log(f"Fetching team playmaking data for {season}...")
-        for player_or_team in ['Team']:
-            endpoint = leaguedashptstats.LeagueDashPtStats(
-                season=season,
-                per_mode_simple='Totals',
-                season_type_all_star='Regular Season',
-                player_or_team=player_or_team,
-                pt_measure_type='Passing'
-            )
-            result = endpoint.get_dict()
-            rs = result['resultSets'][0]
-            headers = rs['headers']
-            
-            pot_ast_idx = headers.index('POTENTIAL_AST')
-            touches_idx = headers.index('PASSES_RECEIVED')
-            
-            for row in rs['rowSet']:
-                team_id = row[0]
-                pot_ast = row[pot_ast_idx] or 0
-                touches = row[touches_idx] or 0
-                
-                cursor.execute("""
-                    UPDATE team_season_stats
-                    SET pot_ast = %s, touches = %s, updated_at = NOW()
-                    WHERE team_id = %s AND year = %s AND season_type = 1
-                """, (pot_ast, touches, team_id, season_year))
-            
-            time.sleep(RATE_LIMIT_DELAY)
+        # 1. SHOOTING TRACKING (6 calls)
+        update_team_shooting_tracking(season, season_year)
         
-        # 2. REBOUNDING (team + opponent)
+        # 2. PLAYMAKING
+        log(f"Fetching team playmaking data for {season}...")
+        endpoint = leaguedashptstats.LeagueDashPtStats(
+            season=season,
+            per_mode_simple='Totals',
+            season_type_all_star='Regular Season',
+            player_or_team='Team',
+            pt_measure_type='Passing'
+        )
+        result = endpoint.get_dict()
+        rs = result['resultSets'][0]
+        headers = rs['headers']
+        
+        pot_ast_idx = headers.index('POTENTIAL_AST')
+        touches_idx = headers.index('PASSES_RECEIVED')
+        
+        for row in rs['rowSet']:
+            team_id = row[0]
+            pot_ast = row[pot_ast_idx] or 0
+            touches = row[touches_idx] or 0
+            
+            cursor.execute("""
+                UPDATE team_season_stats
+                SET pot_ast = %s, touches = %s, updated_at = NOW()
+                WHERE team_id = %s AND year = %s AND season_type = 1
+            """, (pot_ast, touches, team_id, season_year))
+        
+        time.sleep(RATE_LIMIT_DELAY)
+        
+        # 3. REBOUNDING
         log(f"Fetching team rebounding data for {season}...")
         endpoint = leaguedashptstats.LeagueDashPtStats(
             season=season,
@@ -1589,9 +1915,8 @@ def update_team_advanced_stats(season=None, season_year=None):
         
         time.sleep(RATE_LIMIT_DELAY)
         
-        # 3. HUSTLE STATS (team only - no opponent version available)
+        # 4. HUSTLE STATS
         log(f"Fetching team hustle stats for {season}...")
-        
         hustle = leaguehustlestatsteam.LeagueHustleStatsTeam(
             season=season,
             per_mode_time='Totals',
@@ -1614,6 +1939,14 @@ def update_team_advanced_stats(season=None, season_year=None):
                         SET charges_drawn = %s, deflections = %s, contests = %s, updated_at = NOW()
                         WHERE team_id = %s AND year = %s AND season_type = 1
                     """, (charges, deflections, contests, team_id, season_year))
+        
+        time.sleep(RATE_LIMIT_DELAY)
+        
+        # 5. DEFENSE STATS (3 calls)
+        update_team_defense_stats(season, season_year)
+        
+        # 6. PUTBACKS
+        update_team_putbacks(season, season_year)
         
         conn.commit()
         log("✓ Team advanced stats updated successfully")
@@ -1670,7 +2003,6 @@ def update_team_opponent_tracking(season=None, season_year=None):
             headers = rs['headers']
             
             for row in rs['rowSet']:
-                player_id = row[0]
                 team_id = row[headers.index('TEAM_ID')]
                 fgm = row[headers.index('FGM')] or 0
                 fga = row[headers.index('FGA')] or 0
