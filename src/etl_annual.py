@@ -159,7 +159,7 @@ def update_wingspan_from_combine():
                 updated_count += 1
         
         conn.commit()
-        log(f"✓ Updated wingspan for {updated_count} players")
+        log(f"Updated wingspan for {updated_count} players")
         
     except Exception as e:
         log(f"Failed to fetch combine data: {e}", "ERROR")
@@ -213,9 +213,9 @@ def cleanup_inactive_players():
         """, (player_ids_to_delete,))
         
         deleted_count = cursor.rowcount
-        log(f"✓ Deleted {deleted_count} players and their stats (cascaded)")
+        log(f"Deleted {deleted_count} players and their stats (cascaded)")
     else:
-        log("✓ No inactive players to remove")
+        log("No inactive players to remove")
     
     conn.commit()
     cursor.close()
@@ -320,7 +320,7 @@ def update_all_player_details(name_range=None):
     cursor.close()
     conn.close()
     
-    log(f"✓ Updated {updated_count}/{total_players} players")
+    log(f"Updated {updated_count}/{total_players} players")
     if failed_count > 0:
         log(f"⚠ Failed to update {failed_count} players", "WARN")
     
