@@ -22,6 +22,7 @@ import argparse
 import psycopg2
 from datetime import datetime
 from psycopg2.extras import execute_values
+from tqdm import tqdm
 from nba_api.stats.endpoints import (
     commonplayerinfo,
     leaguedashplayerstats, leaguedashteamstats,
@@ -40,27 +41,102 @@ if os.path.exists('.env'):
                 key, value = line.split('=', 1)
                 os.environ.setdefault(key, value)
 
-# Add parent directory to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from src.config import NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Import config modules (works both with -m and direct execution)
+try:
+    from src.config import NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA
+    from src.backend_config import (
+        ETL_GROUPS,
+        ETL_STAT_MAPPING,
+        get_stats_by_group,
+        get_stats_by_entity
+    )
+except ImportError:
+    from config import NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA
+    from backend_config import (
+        ETL_GROUPS,
+        ETL_STAT_MAPPING,
+        get_stats_by_group,
+        get_stats_by_entity
+    )
+
 
 RATE_LIMIT_DELAY = NBA_CONFIG['api_rate_limit_delay']
 
+# Global progress bars (accessed by all ETL functions)
+_overall_pbar = None
+_group_pbar = None
+
+# Global progress bars (accessed by all ETL functions)
+_overall_pbar = None
+_group_pbar = None
+
+
+def resilient_api_call(endpoint_func, call_description, max_retries=3, timeout=20):
+    """
+    Execute NBA API call with retry logic and timeout protection.
+    
+    Args:
+        endpoint_func: Lambda that creates and calls the NBA API endpoint
+        call_description: Human-readable description for logging
+        max_retries: Number of attempts (default 3)
+        timeout: Timeout in seconds (default 20)
+    
+    Returns:
+        API response dict
+    
+    Raises:
+        Exception if all retries fail
+    """
+    result = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = endpoint_func(timeout)
+            return result  # Success
+        except Exception as e:
+            if attempt < max_retries:
+                wait_time = attempt * 3  # Exponential: 3s, 6s, 9s
+                log(f"  WARNING - {call_description} attempt {attempt}/{max_retries} failed: {str(e)[:80]}")
+                log(f"  Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                log(f"  ERROR - {call_description} failed after {max_retries} attempts")
+                raise
+    
+    if result is None:
+        raise Exception(f"{call_description} returned None after {max_retries} attempts")
+
 
 def log(message, level="INFO"):
-    """Centralized logging"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [{level}] {message}")
+    """Centralized logging - uses tqdm.write to avoid interfering with progress bars"""
+    tqdm.write(message)
+
+
+def update_group_progress(n=1, description=None):
+    """Update the group progress bar (called from individual ETL functions)"""
+    global _group_pbar, _overall_pbar
+    if _group_pbar is not None:
+        if description:
+            _group_pbar.set_description(description)
+        _group_pbar.update(n)
+    # Also update overall progress with each transaction
+    if _overall_pbar is not None:
+        _overall_pbar.update(n)
 
 
 def get_db_connection():
-    """Create database connection"""
-    return psycopg2.connect(
+    """Create database connection with timeout protection"""
+    conn = psycopg2.connect(
         host=DB_CONFIG['host'],
         database=DB_CONFIG['database'],
         user=DB_CONFIG['user'],
-        password=DB_CONFIG['password']
+        password=DB_CONFIG['password'],
+        application_name='the_glass_etl',
+        options='-c statement_timeout=30000'  # 30 second timeout per statement
     )
+    return conn
 
 
 def ensure_schema_exists():
@@ -79,7 +155,7 @@ def ensure_schema_exists():
     """)
     
     if cursor.fetchone()[0]:
-        log("✓ Schema already exists")
+        log("Schema already exists")
         cursor.close()
         conn.close()
         return
@@ -90,7 +166,7 @@ def ensure_schema_exists():
     cursor.execute(DB_SCHEMA['create_schema_sql'])
     conn.commit()
     
-    log("✓ Schema created successfully")
+    log("Schema created successfully")
     
     cursor.close()
     conn.close()
@@ -151,13 +227,42 @@ def parse_birthdate(date_str):
     try:
         for fmt in ['%Y-%m-%dT%H:%M:%S', '%Y-%m-%d', '%m/%d/%Y']:
             try:
-                return datetime.strptime(str(date_str).split('.')[0], fmt).date()
-            except Exception:
+                return datetime.strptime(str(date_str), fmt).date()
+            except ValueError:
                 continue
+    except:
+        pass
+    return None
+
+
+def get_stat_value_from_row(row, stat_config):
+    """
+    Extract and scale a stat value from API response using config.
+    
+    Args:
+        row: DataFrame row from NBA API
+        stat_config: Config dict from ETL_STAT_MAPPING
+        
+    Returns:
+        Scaled value ready for database insert
+    """
+    nba_field = stat_config.get('af')  # API field name
+    scale = stat_config.get('sc', 1)
+    
+    if nba_field is None:
         return None
-    except Exception as e:
-        log(f"Error parsing birthdate '{date_str}': {e}", "ERROR")
-        return None
+    
+    value = row.get(nba_field, 0)
+    
+    # Apply scaling based on stat type
+    if scale == 1:
+        return safe_int(value)
+    elif scale == 10:
+        return safe_int(value, 10)
+    elif scale == 1000:
+        return safe_float(value, 1000)
+    else:
+        return safe_float(value, scale)
 
 
 def update_player_rosters():
@@ -171,7 +276,7 @@ def update_player_rosters():
     Height/weight/birthdate for existing players updated annually on August 1st.
     """
     log("=" * 70)
-    log("STEP 1: Updating Player Rosters (Fast Mode)")
+    log("STEP 1: Updating Player Rosters")
     log("="* 70)
     
     conn = get_db_connection()
@@ -187,7 +292,7 @@ def update_player_rosters():
     
     # First, fetch current team rosters to know who's actually on teams RIGHT NOW
     # This is the SOURCE OF TRUTH for current team assignments
-    log("\nFetching current team rosters from NBA API...")
+    log("Fetching current team rosters from NBA API...")
     try:
         from nba_api.stats.static import teams
         from nba_api.stats.endpoints import commonteamroster
@@ -217,22 +322,22 @@ def update_player_rosters():
                             'age': None
                         }
                         
-                    log(f"  ✓ {team['abbreviation']}: {len(roster_df)} players")
+                    update_group_progress(1)  # One team completed
                     break
                 except Exception as e:
                     if attempt < 2:
                         wait_time = 5 * (attempt + 1)
-                        log(f"  ⚠ Retry {attempt + 1}/3 for {team['abbreviation']} (waiting {wait_time}s)", "WARN")
+                        log(f"  WARNING - Retry {attempt + 1}/3 for {team['abbreviation']} (waiting {wait_time}s)", "WARN")
                         time.sleep(wait_time)
                     else:
-                        log(f"  ⚠ Failed to fetch roster for {team['abbreviation']} after 3 attempts: {e}", "WARN")
+                        log(f"  WARNING - Failed to fetch roster for {team['abbreviation']} after 3 attempts: {e}", "WARN")
                         continue
         
-        log(f"✓ Fetched current rosters: {len(all_players)} players\n")
+        log(f"Fetched current rosters: {len(all_players)} players")
     except Exception as e:
-        log(f"⚠ Failed to fetch current rosters: {e}", "WARN")
+        log(f"WARNING - Failed to fetch current rosters: {e}", "WARN")
     
-    log(f"\nTotal players found from rosters: {len(all_players)}")
+    log(f"Total players found from rosters: {len(all_players)}")
     
     # Get existing players from database to identify NEW players
     conn = get_db_connection()
@@ -244,8 +349,7 @@ def update_player_rosters():
     new_player_ids = [pid for pid in all_players.keys() if pid not in existing_player_ids]
     
     if new_player_ids:
-        log(f"\n🆕 Found {len(new_player_ids)} NEW players - fetching height/weight/birthdate...")
-        log(f"⏱ Estimated time: ~{len(new_player_ids) * 1.5 / 60:.1f} minutes")
+        log(f"Found {len(new_player_ids)} new players - fetching height/weight/birthdate...")
         
         failed_count = 0
         consecutive_failures = 0
@@ -282,32 +386,34 @@ def update_player_rosters():
                 except Exception as e:
                     if attempt < 2:
                         wait_time = 5 * (attempt + 1)
-                        log(f"  ⚠ Retry {attempt + 1}/3 for {player_name} (waiting {wait_time}s)", "WARN")
+                        log(f"  WARNING - Retry {attempt + 1}/3 for {player_name} (waiting {wait_time}s)", "WARN")
                         time.sleep(wait_time)
                     else:
                         failed_count += 1
                         consecutive_failures += 1
-                        log(f"  ✗ Failed to fetch {player_name}: {e}", "ERROR")
+                        log(f"  ERROR - Failed to fetch {player_name}: {e}", "ERROR")
+            
+            update_group_progress(1)  # One new player processed
             
             # Log progress every 5 new players
             if (idx + 1) % 5 == 0 or (idx + 1) == len(new_player_ids):
-                status = f"(✓ {idx + 1 - failed_count} success, ✗ {failed_count} failed)" if failed_count > 0 else ""
+                status = f"(OK {idx + 1 - failed_count} success, ERROR {failed_count} failed)" if failed_count > 0 else ""
                 log(f"Progress: {idx + 1}/{len(new_player_ids)} new players {status}")
         
         if failed_count > 0:
-            log(f"⚠ Could not fetch details for {failed_count}/{len(new_player_ids)} new players", "WARN")
+            log(f"WARNING - Could not fetch details for {failed_count}/{len(new_player_ids)} new players", "WARN")
             log("  These players will still be added with basic info (name, team, jersey from roster)", "WARN")
     else:
-        log("\n✓ No new players found - all players already in database")
+        log("No new players found - all players already in database")
     
     # First, clear team_id for all players (they'll be re-assigned if still on roster)
-    log("\nClearing team assignments for all players...")
+    log("Clearing team assignments for all players...")
     cursor.execute("UPDATE players SET team_id = NULL, updated_at = NOW()")
     conn.commit()
-    log("✓ Cleared all team assignments")
+    log("Cleared all team assignments")
     
     # Update database with all players
-    log(f"\nUpdating database with {len(all_players)} players currently on rosters...")
+    log(f"Updating database with {len(all_players)} players currently on rosters...")
     
     for player_id, player_data in all_players.items():
         try:
@@ -340,7 +446,6 @@ def update_player_rosters():
                 
                 if existing[0] != player_data['team_id']:
                     players_updated += 1
-                    log(f"Updated: {player_data['name']} → Team {player_data['team_id']}")
             else:
                 # Insert new player (with height/weight/birthdate if fetched)
                 if 'birthdate' in player_data:
@@ -365,31 +470,34 @@ def update_player_rosters():
                           player_data['jersey']))
                 
                 players_added += 1
-                log(f"Added: {player_data['name']}")
         
         except Exception as e:
-            log(f"✗ Error updating player {player_id}: {e}", "ERROR")
+            log(f"ERROR - Failed to update player {player_id}: {e}", "ERROR")
             continue
     
     conn.commit()
     cursor.close()
     conn.close()
     
-    log(f"✓ Roster update complete: {players_added} added, {players_updated} updated")
+    log(f"Roster update complete: {players_added} added, {players_updated} updated")
     
     return True
 
 
 def update_player_stats():
-    """Update season statistics for all players"""
+    """Update season statistics for all players (GROUP 1: Basic Stats)"""
     log("=" * 70)
-    log("STEP 2: Updating Player Stats")
+    log("STEP 2: Updating Player Stats (GROUP 1: Basic Stats)")
     log("=" * 70)
     
     conn = get_db_connection()
     cursor = conn.cursor()
     current_season = NBA_CONFIG['current_season']
     current_year = NBA_CONFIG['current_season_year']
+    
+    # Get GROUP 1 stats from config
+    group1_stats = get_stats_by_group(1)
+    log(f" Processing {len(group1_stats)} GROUP 1 stats")
     
     # Get valid player IDs from database (all players on rosters)
     cursor.execute("SELECT player_id, team_id FROM players")
@@ -479,42 +587,37 @@ def update_player_stats():
                 
                 players_with_stats.add(player_id)
                 
-                # Calculate 2FG from total FG
-                fgm = safe_int(row.get('FGM', 0))
-                fga = safe_int(row.get('FGA', 0))
-                fg3m = safe_int(row.get('FG3M', 0))
-                fg3a = safe_int(row.get('FG3A', 0))
-                
-                fg2m = max(0, fgm - fg3m)
-                fg2a = max(0, fga - fg3a)
-                
-                record = (
+                # Build record using config - start with fixed fields
+                record_values = [
                     player_id,
                     current_year,
                     safe_int(row.get('TEAM_ID', 0)),
                     season_type_code,
-                    safe_int(row.get('GP', 0)),
-                    safe_int(row.get('MIN', 0), 10),
-                    safe_int(row.get('POSS', 0)),
-                    fg2m,
-                    fg2a,
-                    fg3m,
-                    fg3a,
-                    safe_int(row.get('FTM', 0)),
-                    safe_int(row.get('FTA', 0)),
-                    safe_int(row.get('OREB', 0)),
-                    safe_int(row.get('DREB', 0)),
-                    safe_float(row.get('OREB_PCT', 0), 1000),
-                    safe_float(row.get('DREB_PCT', 0), 1000),
-                    safe_int(row.get('AST', 0)),
-                    safe_int(row.get('TOV', 0)),
-                    safe_int(row.get('STL', 0)),
-                    safe_int(row.get('BLK', 0)),
-                    safe_int(row.get('PF', 0)),
-                    safe_float(row.get('OFF_RATING', 0), 10),
-                    safe_float(row.get('DEF_RATING', 0), 10)
-                )
-                records.append(record)
+                ]
+                
+                # Add GROUP 1 stats from config in order
+                for stat_key in group1_stats:
+                    stat_cfg = ETL_STAT_MAPPING[stat_key]
+                    
+                    # Handle calculated fields (fg2m, fg2a)
+                    if stat_cfg.get('calc'):
+                        if stat_key == 'fg2m':
+                            fgm = safe_int(row.get('FGM', 0))
+                            fg3m = safe_int(row.get('FG3M', 0))
+                            value = max(0, fgm - fg3m)
+                        elif stat_key == 'fg2a':
+                            fga = safe_int(row.get('FGA', 0))
+                            fg3a = safe_int(row.get('FG3A', 0))
+                            value = max(0, fga - fg3a)
+                        else:
+                            value = None  # Other calculated fields handled later
+                    else:
+                        # Extract from API response using config
+                        value = get_stat_value_from_row(row, stat_cfg)
+                    
+                    record_values.append(value)
+                
+                records.append(tuple(record_values))
             
             # Add zero-stat records for players on rosters who didn't play (Regular Season only)
             if season_type_code == 1:  # Regular Season
@@ -529,78 +632,68 @@ def update_player_stats():
                         if not team_id:
                             skipped += 1
                             continue
-                        record = (
-                            player_id,
-                            current_year,
-                            team_id,
-                            season_type_code,
-                            0, 0, 0,  # games_played, minutes, possessions
-                            0, 0, 0, 0, 0, 0,  # shooting stats
-                            0, 0, None, None,  # rebounds
-                            0, 0, 0, 0, 0,  # assists, turnovers, steals, blocks, fouls
-                            None, None  # ratings
-                        )
-                        records.append(record)
-                    if skipped > 0:
-                        log(f"  ⚠ Skipped {skipped} players without valid team_id", "WARN")
+                        # Build zero-stat record using config
+                        zero_values = [player_id, current_year, team_id, season_type_code]
+                        
+                        # Add zeros/Nones for all GROUP 1 stats
+                        for stat_key in group1_stats:
+                            stat_cfg = ETL_STAT_MAPPING[stat_key]
+                            # Use None for percentage stats, 0 for counts
+                            if stat_cfg.get('sc', 1) >= 1000:  # Percentage stats
+                                zero_values.append(None)
+                            elif 'rating' in stat_key:  # Rating stats
+                                zero_values.append(None)
+                            else:  # Count stats
+                                # Explicitly ensure games_played gets 0 to satisfy NOT NULL constraint
+                                zero_values.append(0)
+                        
+                        records.append(tuple(zero_values))
             
-            # Bulk insert
+            # Bulk insert using config-driven column names
             if records:
-                execute_values(
-                    cursor,
-                    """
+                # Build column list from config
+                db_columns = ['player_id', 'year', 'team_id', 'season_type'] + list(group1_stats.keys())
+                columns_str = ', '.join(db_columns)
+                
+                # Build UPDATE SET clause from config (exclude keys)
+                update_clauses = ['team_id = EXCLUDED.team_id'] + [
+                    f"{col} = EXCLUDED.{col}" for col in group1_stats
+                ]
+                update_str = ',\n                        '.join(update_clauses)
+                
+                # Execute bulk insert
+                sql = f"""
                     INSERT INTO player_season_stats (
-                        player_id, year, team_id, season_type,
-                        games_played, minutes_x10, possessions,
-                        fg2m, fg2a, fg3m, fg3a, ftm, fta,
-                        off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
-                        assists, turnovers, steals, blocks, fouls,
-                        off_rating_x10, def_rating_x10
+                        {columns_str}
                     ) VALUES %s
                     ON CONFLICT (player_id, year, season_type) DO UPDATE SET
-                        team_id = EXCLUDED.team_id,
-                        games_played = EXCLUDED.games_played,
-                        minutes_x10 = EXCLUDED.minutes_x10,
-                        possessions = EXCLUDED.possessions,
-                        fg2m = EXCLUDED.fg2m,
-                        fg2a = EXCLUDED.fg2a,
-                        fg3m = EXCLUDED.fg3m,
-                        fg3a = EXCLUDED.fg3a,
-                        ftm = EXCLUDED.ftm,
-                        fta = EXCLUDED.fta,
-                        off_rebounds = EXCLUDED.off_rebounds,
-                        def_rebounds = EXCLUDED.def_rebounds,
-                        off_reb_pct_x1000 = EXCLUDED.off_reb_pct_x1000,
-                        def_reb_pct_x1000 = EXCLUDED.def_reb_pct_x1000,
-                        assists = EXCLUDED.assists,
-                        turnovers = EXCLUDED.turnovers,
-                        steals = EXCLUDED.steals,
-                        blocks = EXCLUDED.blocks,
-                        fouls = EXCLUDED.fouls,
-                        off_rating_x10 = EXCLUDED.off_rating_x10,
-                        def_rating_x10 = EXCLUDED.def_rating_x10,
+                        {update_str},
                         updated_at = NOW()
-                    """,
+                """
+                
+                execute_values(
+                    cursor,
+                    sql,
                     records
                 )
                 conn.commit()
                 total_updated += len(records)
-                log(f"✓ Inserted/Updated {len(records)} {season_type_name} player records")
+                log(f"Inserted/Updated {len(records)} {season_type_name} player records")
         
         except Exception as e:
-            log(f"✗ Error fetching {season_type_name} stats: {e}", "ERROR")
+            log(f"ERROR - Error fetching {season_type_name} stats: {e}", "ERROR")
     
     cursor.close()
     conn.close()
     
-    log(f"✓ Player stats complete: {total_updated} total records")
+    log(f"Player stats complete: {total_updated} total records")
     return True
 
 
 def update_team_stats():
-    """Update season statistics for all teams"""
+    """Update season statistics for all teams (GROUP 1: Basic + GROUP 7: Opponent)"""
     log("=" * 70)
-    log("STEP 3: Updating Team Stats")
+    log("STEP 3: Updating Team Stats (GROUP 1: Basic + GROUP 7: Opponent)")
     log("=" * 70)
     
     conn = get_db_connection()
@@ -610,6 +703,11 @@ def update_team_stats():
     
     # Get valid team IDs from config (numeric IDs, not abbreviations)
     valid_team_ids = set(TEAM_IDS.values())
+    
+    # Get GROUP 1 and GROUP 7 stats from config
+    group1_stats = get_stats_by_group(1)
+    group7_stats = get_stats_by_group(7)
+    log(f" Processing {len(group1_stats)} GROUP 1 stats + {len(group7_stats)} GROUP 7 defense stats")
     
     # Process all season types
     season_types = [
@@ -701,12 +799,16 @@ def update_team_stats():
                             raise retry_error
                 
                 if not opp_df.empty:
-                    # API returns columns with OPP_ prefix already
-                    opp_columns = ['TEAM_ID', 'OPP_FGM', 'OPP_FGA', 'OPP_FG3M', 'OPP_FG3A', 'OPP_FTM', 'OPP_FTA', 
-                                   'OPP_OREB', 'OPP_DREB', 'OPP_AST', 'OPP_TOV', 'OPP_STL', 'OPP_BLK', 'OPP_PF']
-                    opp_df = opp_df[opp_columns]
+                    # Build opponent column list from config (13 available stats)
+                    opp_api_columns = ['TEAM_ID']
+                    for stat_key in group7_stats:
+                        nba_field = ETL_STAT_MAPPING[stat_key].get('nba')
+                        if nba_field:
+                            opp_api_columns.append(nba_field)
+                    
+                    opp_df = opp_df[opp_api_columns]
                     df = df.merge(opp_df, on='TEAM_ID', how='left')
-                    log(f"✓ Fetched opponent stats for {len(opp_df)} teams")
+                    log(f"Fetched {len(group7_stats)} opponent stats for {len(opp_df)} teams")
             except Exception as e:
                 log(f"Warning: Could not fetch opponent stats: {e}", "WARN")
             
@@ -724,306 +826,349 @@ def update_team_stats():
                 if team_id not in valid_team_ids:
                     continue
                 
-                # Calculate 2FG from total FG
-                fgm = safe_int(row.get('FGM', 0))
-                fga = safe_int(row.get('FGA', 0))
-                fg3m = safe_int(row.get('FG3M', 0))
-                fg3a = safe_int(row.get('FG3A', 0))
-                
-                fg2m = max(0, fgm - fg3m)
-                fg2a = max(0, fga - fg3a)
-                
-                # Calculate opponent 2FG from total FG
-                opp_fgm = safe_int(row.get('OPP_FGM', 0))
-                opp_fga = safe_int(row.get('OPP_FGA', 0))
-                opp_fg3m = safe_int(row.get('OPP_FG3M', 0))
-                opp_fg3a = safe_int(row.get('OPP_FG3A', 0))
-                
-                opp_fg2m = max(0, opp_fgm - opp_fg3m)
-                opp_fg2a = max(0, opp_fga - opp_fg3a)
-                
-                record = (
+                # Build record using config - start with fixed fields
+                record_values = [
                     team_id,
                     current_year,
                     season_type_code,
-                    safe_int(row.get('GP', 0)),
-                    safe_int(row.get('MIN', 0), 10),
-                    safe_int(row.get('POSS', 0)),
-                    fg2m,
-                    fg2a,
-                    fg3m,
-                    fg3a,
-                    safe_int(row.get('FTM', 0)),
-                    safe_int(row.get('FTA', 0)),
-                    safe_int(row.get('OREB', 0)),
-                    safe_int(row.get('DREB', 0)),
-                    safe_float(row.get('OREB_PCT', 0), 1000),
-                    safe_float(row.get('DREB_PCT', 0), 1000),
-                    safe_int(row.get('AST', 0)),
-                    safe_int(row.get('TOV', 0)),
-                    safe_int(row.get('STL', 0)),
-                    safe_int(row.get('BLK', 0)),
-                    safe_int(row.get('PF', 0)),
-                    safe_float(row.get('OFF_RATING', 0), 10),
-                    safe_float(row.get('DEF_RATING', 0), 10),
-                    opp_fg2m,
-                    opp_fg2a,
-                    opp_fg3m,
-                    opp_fg3a,
-                    safe_int(row.get('OPP_FTM', 0)),
-                    safe_int(row.get('OPP_FTA', 0)),
-                    safe_int(row.get('OPP_OREB', 0)),
-                    safe_int(row.get('OPP_DREB', 0)),
-                    safe_int(row.get('OPP_AST', 0)),
-                    safe_int(row.get('OPP_TOV', 0)),
-                    safe_int(row.get('OPP_STL', 0)),
-                    safe_int(row.get('OPP_BLK', 0)),
-                    safe_int(row.get('OPP_PF', 0))
-                )
-                records.append(record)
+                ]
+                
+                # Add GROUP 1 stats from config
+                for stat_key in group1_stats:
+                    stat_cfg = ETL_STAT_MAPPING[stat_key]
+                    
+                    # Handle calculated fields (fg2m, fg2a)
+                    if stat_cfg.get('calc'):
+                        if stat_key == 'fg2m':
+                            fgm = safe_int(row.get('FGM', 0))
+                            fg3m = safe_int(row.get('FG3M', 0))
+                            value = max(0, fgm - fg3m)
+                        elif stat_key == 'fg2a':
+                            fga = safe_int(row.get('FGA', 0))
+                            fg3a = safe_int(row.get('FG3A', 0))
+                            value = max(0, fga - fg3a)
+                        else:
+                            value = None
+                    else:
+                        value = get_stat_value_from_row(row, stat_cfg)
+                    
+                    record_values.append(value)
+                
+                # Add GROUP 7 opponent stats from config
+                for stat_key in group7_stats:
+                    stat_cfg = ETL_STAT_MAPPING[stat_key]
+                    
+                    # Handle calculated opponent fields (opp_fg2m, opp_fg2a)
+                    if stat_cfg.get('calc'):
+                        if stat_key == 'opp_fg2m':
+                            opp_fgm = safe_int(row.get('OPP_FGM', 0))
+                            opp_fg3m = safe_int(row.get('OPP_FG3M', 0))
+                            value = max(0, opp_fgm - opp_fg3m)
+                        elif stat_key == 'opp_fg2a':
+                            opp_fga = safe_int(row.get('OPP_FGA', 0))
+                            opp_fg3a = safe_int(row.get('OPP_FG3A', 0))
+                            value = max(0, opp_fga - opp_fg3a)
+                        else:
+                            value = None
+                    else:
+                        value = get_stat_value_from_row(row, stat_cfg)
+                    
+                    record_values.append(value)
+                
+                records.append(tuple(record_values))
             
-            # Bulk insert
+            # Bulk insert using config-driven column names
             if records:
-                execute_values(
-                    cursor,
-                    """
+                # Build column list from config
+                db_columns = ['team_id', 'year', 'season_type'] + list(group1_stats.keys()) + list(group7_stats.keys())
+                columns_str = ', '.join(db_columns)
+                
+                # Build UPDATE SET clause from config (exclude keys)
+                update_clauses = [f"{col} = EXCLUDED.{col}" for col in list(group1_stats.keys()) + list(group7_stats.keys())]
+                update_str = ',\n                        '.join(update_clauses)
+                
+                # Execute bulk insert
+                sql = f"""
                     INSERT INTO team_season_stats (
-                        team_id, year, season_type,
-                        games_played, minutes_x10, possessions,
-                        fg2m, fg2a, fg3m, fg3a, ftm, fta,
-                        off_rebounds, def_rebounds, off_reb_pct_x1000, def_reb_pct_x1000,
-                        assists, turnovers, steals, blocks, fouls,
-                        off_rating_x10, def_rating_x10,
-                        opp_fg2m, opp_fg2a, opp_fg3m, opp_fg3a, opp_ftm, opp_fta,
-                        opp_off_rebounds, opp_def_rebounds, opp_assists, opp_turnovers,
-                        opp_steals, opp_blocks, opp_fouls
+                        {columns_str}
                     ) VALUES %s
                     ON CONFLICT (team_id, year, season_type) DO UPDATE SET
-                        games_played = EXCLUDED.games_played,
-                        minutes_x10 = EXCLUDED.minutes_x10,
-                        possessions = EXCLUDED.possessions,
-                        fg2m = EXCLUDED.fg2m,
-                        fg2a = EXCLUDED.fg2a,
-                        fg3m = EXCLUDED.fg3m,
-                        fg3a = EXCLUDED.fg3a,
-                        ftm = EXCLUDED.ftm,
-                        fta = EXCLUDED.fta,
-                        off_rebounds = EXCLUDED.off_rebounds,
-                        def_rebounds = EXCLUDED.def_rebounds,
-                        off_reb_pct_x1000 = EXCLUDED.off_reb_pct_x1000,
-                        def_reb_pct_x1000 = EXCLUDED.def_reb_pct_x1000,
-                        assists = EXCLUDED.assists,
-                        turnovers = EXCLUDED.turnovers,
-                        steals = EXCLUDED.steals,
-                        blocks = EXCLUDED.blocks,
-                        fouls = EXCLUDED.fouls,
-                        off_rating_x10 = EXCLUDED.off_rating_x10,
-                        def_rating_x10 = EXCLUDED.def_rating_x10,
-                        opp_fg2m = EXCLUDED.opp_fg2m,
-                        opp_fg2a = EXCLUDED.opp_fg2a,
-                        opp_fg3m = EXCLUDED.opp_fg3m,
-                        opp_fg3a = EXCLUDED.opp_fg3a,
-                        opp_ftm = EXCLUDED.opp_ftm,
-                        opp_fta = EXCLUDED.opp_fta,
-                        opp_off_rebounds = EXCLUDED.opp_off_rebounds,
-                        opp_def_rebounds = EXCLUDED.opp_def_rebounds,
-                        opp_assists = EXCLUDED.opp_assists,
-                        opp_turnovers = EXCLUDED.opp_turnovers,
-                        opp_steals = EXCLUDED.opp_steals,
-                        opp_blocks = EXCLUDED.opp_blocks,
-                        opp_fouls = EXCLUDED.opp_fouls,
+                        {update_str},
                         updated_at = NOW()
-                    """,
+                """
+                
+                execute_values(
+                    cursor,
+                    sql,
                     records
                 )
                 conn.commit()
                 total_updated += len(records)
-                log(f"✓ Inserted/Updated {len(records)} {season_type_name} team records")
+                log(f"Inserted/Updated {len(records)} {season_type_name} team records")
         
         except Exception as e:
-            log(f"✗ Error fetching {season_type_name} stats: {e}", "ERROR")
+            log(f"ERROR - Error fetching {season_type_name} stats: {e}", "ERROR")
     
     cursor.close()
     conn.close()
     
-    log(f"✓ Team stats complete: {total_updated} total records")
+    log(f"Team stats complete: {total_updated} total records")
     return True
 
 
 def update_shooting_tracking_bulk(season, season_year):
     """
-    OPTIMIZED: Get ALL players' shooting tracking in 6 league-wide calls! 🚀
-    Was: 439 per-player calls (5-10 min) → Now: 6 league-wide calls (~30 sec)
+    GROUP 2: Shooting Tracking - Per-player API calls
     
-    Maps to: cont_rim_fgm/fga, open_rim_fgm/fga, cont_mr_fgm/fga, open_mr_fgm/fga, 
-             cont_fg3m/fg3a, open_fg3m/fg3a
+    Uses backend_config to map shooting columns:
+    - Rim: cont_rim_fgm/fga, open_rim_fgm/fga
+    - 2PT (all): cont_fg2m/fg2a, open_fg2m/fg2a  
+    - 3PT: cont_fg3m/fga, open_fg3m/fga
+    - Mid-Range: Calculated as cont_fg2 - cont_rim, open_fg2 - open_rim
     
-    Strategy:
-    - Use LeagueDashPlayerPtShot with general_range + close_def_dist filters
-    - 6 API calls total:
-      1-2. Rim (<10 ft): Contested (0-2 + 2-4 ft) + Open (4-6 + 6+ ft)
-      3-4. All shots: Contested (0-4 ft) + Open (4+ ft) to get total FG2M/FG3M
-    - Calculate mid-range: MR = (Total 2PT - Rim 2PT)
+    Uses playerdashptshots endpoint with zone + close_def_dist_range filters
     """
-    log(f"Fetching shooting tracking (league-wide) for {season}...")
+    log(f"Fetching GROUP 2: Shooting Tracking (per-player) for {season}...")
+    
+    # Get GROUP 2 stats from config
+    group2_stats = get_stats_by_group(2)
+    log(f" Processing {len(group2_stats)} GROUP 2 shooting stats")
     
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # Get active players
+    cursor.execute("""
+        SELECT DISTINCT player_id 
+        FROM player_season_stats
+        WHERE year = %s AND season_type = 1 AND games_played > 0
+        ORDER BY player_id
+    """, (season_year,))
+    
+    players = [row[0] for row in cursor.fetchall()]
+    log(f"Found {len(players)} active players")
+    
+    # Store player shooting data
+    player_data = {}
+    failed = 0
+    
     try:
-        from nba_api.stats.endpoints import leaguedashplayerptshot
+        from nba_api.stats.endpoints import playerdashptshots
         
-        # Store player shooting data: player_id -> {stat: value}
-        player_data = {}
-        
-        # 1-2: Contested rim (0-2 ft + 2-4 ft)
-        log("  Fetching contested rim shots...")
-        for def_dist in ['0-2 Feet - Very Tight', '2-4 Feet - Tight']:
-            endpoint = leaguedashplayerptshot.LeagueDashPlayerPtShot(
-                season=season,
-                per_mode_simple='Totals',
-                season_type_all_star='Regular Season',
-                general_range_nullable='Less Than 10 ft',
-                close_def_dist_range_nullable=def_dist
-            )
-            result = endpoint.get_dict()
-            rs = result['resultSets'][0]
-            headers = rs['headers']
+        for idx, player_id in enumerate(players):
+            if idx % 100 == 0 and idx > 0:
+                log(f"  Progress: {idx}/{len(players)} players processed...")
             
-            fgm_idx = headers.index('FGM')
-            fga_idx = headers.index('FGA')
-            
-            for row in rs['rowSet']:
-                player_id = row[0]
-                if player_id not in player_data:
-                    player_data[player_id] = {}
+            try:
+                stats = {}
                 
-                player_data[player_id]['cont_rim_fgm'] = player_data[player_id].get('cont_rim_fgm', 0) + (row[fgm_idx] or 0)
-                player_data[player_id]['cont_rim_fga'] = player_data[player_id].get('cont_rim_fga', 0) + (row[fga_idx] or 0)
-            
-            time.sleep(RATE_LIMIT_DELAY)
-        
-        # 3-4: Open rim (4-6 ft + 6+ ft)
-        log("  Fetching open rim shots...")
-        for def_dist in ['4-6 Feet - Open', '6+ Feet - Wide Open']:
-            endpoint = leaguedashplayerptshot.LeagueDashPlayerPtShot(
-                season=season,
-                per_mode_simple='Totals',
-                season_type_all_star='Regular Season',
-                general_range_nullable='Less Than 10 ft',
-                close_def_dist_range_nullable=def_dist
-            )
-            result = endpoint.get_dict()
-            rs = result['resultSets'][0]
-            headers = rs['headers']
-            
-            fgm_idx = headers.index('FGM')
-            fga_idx = headers.index('FGA')
-            
-            for row in rs['rowSet']:
-                player_id = row[0]
-                if player_id not in player_data:
-                    player_data[player_id] = {}
+                # 1. Contested rim (Restricted Area, 0-4 ft defender)
+                try:
+                    result = playerdashptshots.PlayerDashPtShots(
+                        player_id=player_id,
+                        season=season,
+                        season_type_all_star='Regular Season',
+                        per_mode_simple='Totals',
+                        general_range='2PT Field Goals',
+                        shot_clock_range='',
+                        shot_dist_range='',
+                        touch_time_range='',
+                        closest_def_dist_range='0-2 Feet - Very Tight, 2-4 Feet - Tight',
+                        timeout=20
+                    ).get_dict()
+                    
+                    for rs in result['resultSets']:
+                        if rs['name'] == 'ClosestDefenderShooting':
+                            for row in rs['rowSet']:
+                                if 'Restricted Area' in str(row):
+                                    stats['cont_rim_fgm'] = stats.get('cont_rim_fgm', 0) + (row[rs['headers'].index('FGM')] or 0)
+                                    stats['cont_rim_fga'] = stats.get('cont_rim_fga', 0) + (row[rs['headers'].index('FGA')] or 0)
+                except:
+                    pass
                 
-                player_data[player_id]['open_rim_fgm'] = player_data[player_id].get('open_rim_fgm', 0) + (row[fgm_idx] or 0)
-                player_data[player_id]['open_rim_fga'] = player_data[player_id].get('open_rim_fga', 0) + (row[fga_idx] or 0)
-            
-            time.sleep(RATE_LIMIT_DELAY)
-        
-        # 5-6: All shots contested (0-4 ft) and open (4+ ft) to get total FG2/FG3 splits
-        log("  Fetching contested/open all shots...")
-        for def_dist_combo in ['0-2 Feet - Very Tight,2-4 Feet - Tight', '4-6 Feet - Open,6+ Feet - Wide Open']:
-            is_contested = '0-2' in def_dist_combo
-            
-            endpoint = leaguedashplayerptshot.LeagueDashPlayerPtShot(
-                season=season,
-                per_mode_simple='Totals',
-                season_type_all_star='Regular Season',
-                close_def_dist_range_nullable=def_dist_combo
-            )
-            result = endpoint.get_dict()
-            rs = result['resultSets'][0]
-            headers = rs['headers']
-            
-            fg2m_idx = headers.index('FG2M')
-            fg2a_idx = headers.index('FG2A')
-            fg3m_idx = headers.index('FG3M')
-            fg3a_idx = headers.index('FG3A')
-            
-            for row in rs['rowSet']:
-                player_id = row[0]
-                if player_id not in player_data:
-                    player_data[player_id] = {}
+                time.sleep(RATE_LIMIT_DELAY)
                 
-                fg2m_total = row[fg2m_idx] or 0
-                fg2a_total = row[fg2a_idx] or 0
-                fg3m_total = row[fg3m_idx] or 0
-                fg3a_total = row[fg3a_idx] or 0
+                # 2. Open rim (Restricted Area, 4+ ft defender)  
+                try:
+                    result = playerdashptshots.PlayerDashPtShots(
+                        player_id=player_id,
+                        season=season,
+                        season_type_all_star='Regular Season',
+                        per_mode_simple='Totals',
+                        general_range='2PT Field Goals',
+                        shot_clock_range='',
+                        shot_dist_range='',
+                        touch_time_range='',
+                        closest_def_dist_range='4-6 Feet - Open, 6+ Feet - Wide Open',
+                        timeout=20
+                    ).get_dict()
+                    
+                    for rs in result['resultSets']:
+                        if rs['name'] == 'ClosestDefenderShooting':
+                            for row in rs['rowSet']:
+                                if 'Restricted Area' in str(row):
+                                    stats['open_rim_fgm'] = stats.get('open_rim_fgm', 0) + (row[rs['headers'].index('FGM')] or 0)
+                                    stats['open_rim_fga'] = stats.get('open_rim_fga', 0) + (row[rs['headers'].index('FGA')] or 0)
+                except:
+                    pass
                 
-                # Store totals to calculate mid-range later
-                if is_contested:
-                    player_data[player_id]['cont_fg2m_total'] = fg2m_total
-                    player_data[player_id]['cont_fg2a_total'] = fg2a_total
-                    player_data[player_id]['cont_fg3m'] = fg3m_total
-                    player_data[player_id]['cont_fg3a'] = fg3a_total
-                else:
-                    player_data[player_id]['open_fg2m_total'] = fg2m_total
-                    player_data[player_id]['open_fg2a_total'] = fg2a_total
-                    player_data[player_id]['open_fg3m'] = fg3m_total
-                    player_data[player_id]['open_fg3a'] = fg3a_total
-            
-            time.sleep(RATE_LIMIT_DELAY)
+                time.sleep(RATE_LIMIT_DELAY)
+                
+                # 3. Contested 2PT (all zones, 0-4 ft defender)
+                try:
+                    result = playerdashptshots.PlayerDashPtShots(
+                        player_id=player_id,
+                        season=season,
+                        season_type_all_star='Regular Season',
+                        per_mode_simple='Totals',
+                        general_range='2PT Field Goals',
+                        shot_clock_range='',
+                        shot_dist_range='',
+                        touch_time_range='',
+                        closest_def_dist_range='0-2 Feet - Very Tight, 2-4 Feet - Tight',
+                        timeout=20
+                    ).get_dict()
+                    
+                    for rs in result['resultSets']:
+                        if rs['name'] == 'GeneralShooting':
+                            for row in rs['rowSet']:
+                                stats['cont_fg2m'] = row[rs['headers'].index('FG2M')] or 0
+                                stats['cont_fg2a'] = row[rs['headers'].index('FG2A')] or 0
+                                break
+                except:
+                    pass
+                
+                time.sleep(RATE_LIMIT_DELAY)
+                
+                # 4. Open 2PT (all zones, 4+ ft defender)
+                try:
+                    result = playerdashptshots.PlayerDashPtShots(
+                        player_id=player_id,
+                        season=season,
+                        season_type_all_star='Regular Season',
+                        per_mode_simple='Totals',
+                        general_range='2PT Field Goals',
+                        shot_clock_range='',
+                        shot_dist_range='',
+                        touch_time_range='',
+                        closest_def_dist_range='4-6 Feet - Open, 6+ Feet - Wide Open',
+                        timeout=20
+                    ).get_dict()
+                    
+                    for rs in result['resultSets']:
+                        if rs['name'] == 'GeneralShooting':
+                            for row in rs['rowSet']:
+                                stats['open_fg2m'] = row[rs['headers'].index('FG2M')] or 0
+                                stats['open_fg2a'] = row[rs['headers'].index('FG2A')] or 0
+                                break
+                except:
+                    pass
+                
+                time.sleep(RATE_LIMIT_DELAY)
+                
+                # 5. Contested 3PT (0-4 ft defender)
+                try:
+                    result = playerdashptshots.PlayerDashPtShots(
+                        player_id=player_id,
+                        season=season,
+                        season_type_all_star='Regular Season',
+                        per_mode_simple='Totals',
+                        general_range='3PT Field Goals',
+                        shot_clock_range='',
+                        shot_dist_range='',
+                        touch_time_range='',
+                        closest_def_dist_range='0-2 Feet - Very Tight, 2-4 Feet - Tight',
+                        timeout=20
+                    ).get_dict()
+                    
+                    for rs in result['resultSets']:
+                        if rs['name'] == 'GeneralShooting':
+                            for row in rs['rowSet']:
+                                stats['cont_fg3m'] = row[rs['headers'].index('FG3M')] or 0
+                                stats['cont_fg3a'] = row[rs['headers'].index('FG3A')] or 0
+                                break
+                except:
+                    pass
+                
+                time.sleep(RATE_LIMIT_DELAY)
+                
+                # 6. Open 3PT (4+ ft defender)
+                try:
+                    result = playerdashptshots.PlayerDashPtShots(
+                        player_id=player_id,
+                        season=season,
+                        season_type_all_star='Regular Season',
+                        per_mode_simple='Totals',
+                        general_range='3PT Field Goals',
+                        shot_clock_range='',
+                        shot_dist_range='',
+                        touch_time_range='',
+                        closest_def_dist_range='4-6 Feet - Open, 6+ Feet - Wide Open',
+                        timeout=20
+                    ).get_dict()
+                    
+                    for rs in result['resultSets']:
+                        if rs['name'] == 'GeneralShooting':
+                            for row in rs['rowSet']:
+                                stats['open_fg3m'] = row[rs['headers'].index('FG3M')] or 0
+                                stats['open_fg3a'] = row[rs['headers'].index('FG3A')] or 0
+                                break
+                except:
+                    pass
+                
+                time.sleep(RATE_LIMIT_DELAY)
+                
+                if stats:
+                    player_data[player_id] = stats
+                    
+            except Exception as e:
+                failed += 1
+                if failed <= 5:  # Only log first 5 failures
+                    log(f"  Failed player {player_id}: {e}", "WARN")
+                continue
         
-        # Calculate mid-range: MR = All 2PT - Rim
-        log("  Calculating mid-range and updating database...")
+        # Update database
+        log("Updating database with shooting data...")
         updated = 0
+        
         for player_id, stats in player_data.items():
-            cont_rim_fgm = stats.get('cont_rim_fgm', 0)
-            cont_rim_fga = stats.get('cont_rim_fga', 0)
-            open_rim_fgm = stats.get('open_rim_fgm', 0)
-            open_rim_fga = stats.get('open_rim_fga', 0)
-            
-            cont_fg2m_total = stats.get('cont_fg2m_total', 0)
-            cont_fg2a_total = stats.get('cont_fg2a_total', 0)
-            open_fg2m_total = stats.get('open_fg2m_total', 0)
-            open_fg2a_total = stats.get('open_fg2a_total', 0)
-            
-            # Mid-range = 2PT total - rim
-            cont_mr_fgm = max(0, cont_fg2m_total - cont_rim_fgm)
-            cont_mr_fga = max(0, cont_fg2a_total - cont_rim_fga)
-            open_mr_fgm = max(0, open_fg2m_total - open_rim_fgm)
-            open_mr_fga = max(0, open_fg2a_total - open_rim_fga)
-            
-            cont_fg3m = stats.get('cont_fg3m', 0)
-            cont_fg3a = stats.get('cont_fg3a', 0)
-            open_fg3m = stats.get('open_fg3m', 0)
-            open_fg3a = stats.get('open_fg3a', 0)
-            
             cursor.execute("""
                 UPDATE player_season_stats
                 SET cont_rim_fgm = %s, cont_rim_fga = %s,
                     open_rim_fgm = %s, open_rim_fga = %s,
-                    cont_mr_fgm = %s, cont_mr_fga = %s,
-                    open_mr_fgm = %s, open_mr_fga = %s,
+                    cont_fg2m = %s, cont_fg2a = %s,
+                    open_fg2m = %s, open_fg2a = %s,
                     cont_fg3m = %s, cont_fg3a = %s,
                     open_fg3m = %s, open_fg3a = %s,
                     updated_at = NOW()
                 WHERE player_id = %s AND year = %s AND season_type = 1
             """, (
-                cont_rim_fgm, cont_rim_fga, open_rim_fgm, open_rim_fga,
-                cont_mr_fgm, cont_mr_fga, open_mr_fgm, open_mr_fga,
-                cont_fg3m, cont_fg3a, open_fg3m, open_fg3a,
-                player_id, season_year
+                stats.get('cont_rim_fgm', 0),
+                stats.get('cont_rim_fga', 0),
+                stats.get('open_rim_fgm', 0),
+                stats.get('open_rim_fga', 0),
+                stats.get('cont_fg2m', 0),
+                stats.get('cont_fg2a', 0),
+                stats.get('open_fg2m', 0),
+                stats.get('open_fg2a', 0),
+                stats.get('cont_fg3m', 0),
+                stats.get('cont_fg3a', 0),
+                stats.get('open_fg3m', 0),
+                stats.get('open_fg3a', 0),
+                player_id,
+                season_year
             ))
             
             if cursor.rowcount > 0:
                 updated += 1
         
         conn.commit()
-        log(f"✓ Shooting tracking: {updated} players updated 🚀")
+        log(f"GROUP 2 Shooting: {updated} players updated, {failed} failed")
         
     except Exception as e:
-        log(f"Failed shooting tracking: {e}", "ERROR")
+        log(f"Failed GROUP 2 shooting tracking: {e}", "ERROR")
+        import traceback
+        log(traceback.format_exc(), "ERROR")
     finally:
         cursor.close()
         conn.close()
@@ -1031,12 +1176,19 @@ def update_shooting_tracking_bulk(season, season_year):
 
 def update_playmaking_bulk(season, season_year):
     """
-    OPTIMIZED: Get ALL players' playmaking in 1 league-wide call
-    Replaces 600+ individual player calls (6 min → 1 sec)
+    GROUP 3: Playmaking - Config-driven
     
-    Maps to: pot_ast, touches
+    Uses backend_config to map 2 playmaking columns:
+    - pot_ast: Potential assists
+    - touches: Touches (passes received)
+    
+    Endpoint: LeagueDashPtStats with pt_measure_type='Passing'
     """
-    log(f"Fetching playmaking data (league-wide) for {season}...")
+    log(f"Fetching GROUP 3: Playmaking (league-wide) for {season}...")
+    
+    # Get GROUP 3 stats from config
+    group3_stats = get_stats_by_group(3)
+    log(f" Processing {len(group3_stats)} GROUP 3 playmaking stats")
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1054,29 +1206,48 @@ def update_playmaking_bulk(season, season_year):
         rs = result['resultSets'][0]
         headers = rs['headers']
         
-        pot_ast_idx = headers.index('POTENTIAL_AST')
-        touches_idx = headers.index('PASSES_RECEIVED')
-        
-        updated = 0
+        # Extract values using config
+        update_records = []
         for row in rs['rowSet']:
             player_id = row[0]  # PLAYER_ID
-            pot_ast = row[pot_ast_idx] or 0
-            touches = row[touches_idx] or 0
             
-            cursor.execute("""
-                UPDATE player_season_stats
-                SET pot_ast = %s, touches = %s, updated_at = NOW()
-                WHERE player_id = %s AND year = %s AND season_type = 1
-            """, (pot_ast, touches, player_id, season_year))
+            # Extract each GROUP 3 stat from API response using config
+            values = []
+            for stat_name, stat_cfg in group3_stats.items():
+                nba_field = stat_cfg.get('nba')
+                scale = stat_cfg.get('sc', 1)
+                raw_value = row[headers.index(nba_field)] if nba_field else 0
+                value = safe_int(raw_value, scale) if scale < 1000 else safe_float(raw_value, scale)
+                values.append(value)
             
-            if cursor.rowcount > 0:
-                updated += 1
+            # Build record: (stat1, stat2, ..., player_id, season_year)
+            values.extend([player_id, season_year])
+            update_records.append(tuple(values))
         
-        conn.commit()
-        log(f"✓ Playmaking: {updated} players updated 🚀")
+        # Bulk update using config-driven column names
+        if update_records:
+            set_clause = ', '.join([f"{col} = %s" for col in group3_stats.keys()])
+            
+            updated = 0
+            for record in update_records:
+                cursor.execute(f"""
+                    UPDATE player_season_stats
+                    SET {set_clause}, updated_at = NOW()
+                    WHERE player_id = %s AND year = %s AND season_type = 1
+                """, record)
+                
+                if cursor.rowcount > 0:
+                    updated += 1
+            
+            conn.commit()
+            log(f"GROUP 3 Playmaking: {updated} players updated (2 columns)")
+        else:
+            log("WARNING - No playmaking data to update", "WARN")
         
     except Exception as e:
-        log(f"Failed playmaking: {e}", "ERROR")
+        log(f"Failed GROUP 3 playmaking: {e}", "ERROR")
+        import traceback
+        log(traceback.format_exc(), "ERROR")
     finally:
         cursor.close()
         conn.close()
@@ -1084,12 +1255,19 @@ def update_playmaking_bulk(season, season_year):
 
 def update_rebounding_bulk(season, season_year):
     """
-    OPTIMIZED: Get ALL players' rebounding in 1 league-wide call
-    Replaces 600+ individual player calls (6 min → 1 sec)
+    GROUP 4: Rebounding - Config-driven
     
-    Maps to: cont_dreb, cont_oreb
+    Uses backend_config to map 2 contested rebound columns:
+    - cont_oreb: Contested offensive rebounds
+    - cont_dreb: Contested defensive rebounds
+    
+    Endpoint: LeagueDashPtStats with pt_measure_type='Rebounding'
     """
-    log(f"Fetching rebounding data (league-wide) for {season}...")
+    log(f"Fetching GROUP 4: Rebounding (league-wide) for {season}...")
+    
+    # Get GROUP 4 stats from config
+    group4_stats = get_stats_by_group(4)
+    log(f" Processing {len(group4_stats)} GROUP 4 rebounding stats")
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1107,29 +1285,48 @@ def update_rebounding_bulk(season, season_year):
         rs = result['resultSets'][0]
         headers = rs['headers']
         
-        cont_oreb_idx = headers.index('OREB_CONTEST')
-        cont_dreb_idx = headers.index('DREB_CONTEST')
-        
-        updated = 0
+        # Extract values using config
+        update_records = []
         for row in rs['rowSet']:
             player_id = row[0]  # PLAYER_ID
-            cont_oreb = row[cont_oreb_idx] or 0
-            cont_dreb = row[cont_dreb_idx] or 0
             
-            cursor.execute("""
-                UPDATE player_season_stats
-                SET cont_oreb = %s, cont_dreb = %s, updated_at = NOW()
-                WHERE player_id = %s AND year = %s AND season_type = 1
-            """, (cont_oreb, cont_dreb, player_id, season_year))
+            # Extract each GROUP 4 stat from API response using config
+            values = []
+            for stat_name, stat_cfg in group4_stats.items():
+                nba_field = stat_cfg.get('nba')
+                scale = stat_cfg.get('sc', 1)
+                raw_value = row[headers.index(nba_field)] if nba_field else 0
+                value = safe_int(raw_value, scale) if scale < 1000 else safe_float(raw_value, scale)
+                values.append(value)
             
-            if cursor.rowcount > 0:
-                updated += 1
+            # Build record: (stat1, stat2, ..., player_id, season_year)
+            values.extend([player_id, season_year])
+            update_records.append(tuple(values))
         
-        conn.commit()
-        log(f"✓ Rebounding: {updated} players updated 🚀")
+        # Bulk update using config-driven column names
+        if update_records:
+            set_clause = ', '.join([f"{col} = %s" for col in group4_stats.keys()])
+            
+            updated = 0
+            for record in update_records:
+                cursor.execute(f"""
+                    UPDATE player_season_stats
+                    SET {set_clause}, updated_at = NOW()
+                    WHERE player_id = %s AND year = %s AND season_type = 1
+                """, record)
+                
+                if cursor.rowcount > 0:
+                    updated += 1
+            
+            conn.commit()
+            log(f"GROUP 4 Rebounding: {updated} players updated (2 columns)")
+        else:
+            log("WARNING - No rebounding data to update", "WARN")
         
     except Exception as e:
-        log(f"Failed rebounding: {e}", "ERROR")
+        log(f"Failed GROUP 4 rebounding: {e}", "ERROR")
+        import traceback
+        log(traceback.format_exc(), "ERROR")
     finally:
         cursor.close()
         conn.close()
@@ -1137,10 +1334,20 @@ def update_rebounding_bulk(season, season_year):
 
 def update_hustle_stats_bulk(season, season_year):
     """
-    Get ALL players' hustle stats in 1 league-wide call
-    Maps to: charges_drawn, deflections, contests
+    GROUP 6: Hustle Stats - Config-driven
+    
+    Uses backend_config to map 3 hustle columns:
+    - charges_drawn: Charges drawn
+    - deflections: Deflections
+    - contests: Contested shots
+    
+    Endpoint: LeagueHustleStatsPlayer
     """
-    log(f"Fetching hustle stats (league-wide) for {season}...")
+    log(f"Fetching GROUP 6: Hustle stats (league-wide) for {season}...")
+    
+    # Get GROUP 6 stats from config
+    group6_stats = get_stats_by_group(6)
+    log(f" Processing {len(group6_stats)} GROUP 6 hustle stats")
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1154,31 +1361,52 @@ def update_hustle_stats_bulk(season, season_year):
         
         result = hustle.get_dict()
         
-        updated = 0
+        # Extract values using config
+        update_records = []
         for rs in result['resultSets']:
             if rs['name'] == 'HustleStatsPlayer':
                 headers = rs['headers']
                 
                 for row in rs['rowSet']:
                     player_id = row[headers.index('PLAYER_ID')]
-                    charges_drawn = row[headers.index('CHARGES_DRAWN')] or 0
-                    deflections = row[headers.index('DEFLECTIONS')] or 0
-                    contests = row[headers.index('CONTESTED_SHOTS')] or 0
                     
-                    cursor.execute("""
-                        UPDATE player_season_stats
-                        SET charges_drawn = %s, deflections = %s, contests = %s, updated_at = NOW()
-                        WHERE player_id = %s AND year = %s AND season_type = 1
-                    """, (charges_drawn, deflections, contests, player_id, season_year))
+                    # Extract each GROUP 6 stat from API response using config
+                    values = []
+                    for stat_name, stat_cfg in group6_stats.items():
+                        nba_field = stat_cfg.get('nba')
+                        scale = stat_cfg.get('sc', 1)
+                        raw_value = row[headers.index(nba_field)] if nba_field else 0
+                        value = safe_int(raw_value, scale) if scale < 1000 else safe_float(raw_value, scale)
+                        values.append(value)
                     
-                    if cursor.rowcount > 0:
-                        updated += 1
+                    # Build record: (stat1, stat2, stat3, player_id, season_year)
+                    values.extend([player_id, season_year])
+                    update_records.append(tuple(values))
         
-        conn.commit()
-        log(f"✓ Hustle stats: {updated} players updated")
+        # Bulk update using config-driven column names
+        if update_records:
+            set_clause = ', '.join([f"{col} = %s" for col in group6_stats.keys()])
+            
+            updated = 0
+            for record in update_records:
+                cursor.execute(f"""
+                    UPDATE player_season_stats
+                    SET {set_clause}, updated_at = NOW()
+                    WHERE player_id = %s AND year = %s AND season_type = 1
+                """, record)
+                
+                if cursor.rowcount > 0:
+                    updated += 1
+            
+            conn.commit()
+            log(f"GROUP 6 Hustle stats: {updated} players updated (3 columns)")
+        else:
+            log("WARNING - No hustle stats to update", "WARN")
         
     except Exception as e:
-        log(f"Failed hustle stats: {e}", "ERROR")
+        log(f"Failed GROUP 6 hustle stats: {e}", "ERROR")
+        import traceback
+        log(traceback.format_exc(), "ERROR")
     finally:
         cursor.close()
         conn.close()
@@ -1186,16 +1414,34 @@ def update_hustle_stats_bulk(season, season_year):
 
 def update_defense_stats_bulk(season, season_year):
     """
-    Get ALL players' defensive stats in 3 league-wide calls
-    Maps to: def_rim_fgm, def_rim_fga, def_fg2m, def_fg2a, def_fg3m, def_fg3a, real_def_fg_pct
+    GROUP 7: Defense Tracking - Config-driven
+    
+    Uses backend_config to map 7 defense columns:
+    - def_rim_fgm/fga: Rim defense (<6 ft)
+    - def_fg2m/fga: Overall 2PT defense (calculated: total - fg3)
+    - def_fg3m/fga: 3PT defense
+    - real_def_fg_pct_x1000: Defensive FG% +/- vs expected
+    
+    Endpoint: LeagueDashPtDefend with 3 dribble_range calls:
+    1. Overall (for FG2 and real_def_fg_pct)
+    2. Less Than 6 Ft (for rim defense)
+    3. 3 Pointers (for FG3 defense)
     """
-    log(f"Fetching defensive tracking (league-wide) for {season}...")
+    log(f"Fetching GROUP 7: Defense tracking (league-wide) for {season}...")
+    
+    # Get GROUP 7 stats from config
+    group7_stats = get_stats_by_group(7)
+    log(f" Processing {len(group7_stats)} GROUP 7 defense stats")
     
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # 1. Overall defense (for real_def_fg_pct and general FG2 stats)
+        # Store defense data: player_id -> {stat: value}
+        player_data = {}
+        
+        # Call 1: Overall defense (for FG totals and real_def_fg_pct)
+        log("  Call 1/3: Overall defense...")
         defense = leaguedashptdefend.LeagueDashPtDefend(
             season=season,
             per_mode_simple='Totals',
@@ -1205,36 +1451,31 @@ def update_defense_stats_bulk(season, season_year):
         
         result = defense.get_dict()
         
-        updated = 0
         for rs in result['resultSets']:
             headers = rs['headers']
             
             for row in rs['rowSet']:
-                player_id = row[0]  # CLOSE_DEF_PERSON_ID (first column)
-                def_fgm = row[headers.index('D_FGM')] or 0
-                def_fga = row[headers.index('D_FGA')] or 0
+                player_id = row[0]  # CLOSE_DEF_PERSON_ID
+                if player_id not in player_data:
+                    player_data[player_id] = {}
+                
+                # Total D_FGM/A (will subtract FG3 to get FG2)
+                player_data[player_id]['total_def_fgm'] = row[headers.index('D_FGM')] or 0
+                player_data[player_id]['total_def_fga'] = row[headers.index('D_FGA')] or 0
+                
+                # Real defensive FG% (PCT_PLUSMINUS)
                 pct_plusminus = row[headers.index('PCT_PLUSMINUS')]
-                
-                # Convert PCT_PLUSMINUS to integer (x1000 for precision)
-                real_def_fg_pct = safe_int(pct_plusminus, 1000)
-                
-                cursor.execute("""
-                    UPDATE player_season_stats
-                    SET def_fg2m = %s, def_fg2a = %s, real_def_fg_pct = %s, updated_at = NOW()
-                    WHERE player_id = %s AND year = %s AND season_type = 1
-                """, (def_fgm, def_fga, real_def_fg_pct, player_id, season_year))
-                
-                if cursor.rowcount > 0:
-                    updated += 1
+                player_data[player_id]['real_def_fg_pct_x1000'] = safe_int(pct_plusminus, 1000)
         
         time.sleep(RATE_LIMIT_DELAY)
         
-        # 2. Rim defense (Less Than 10Ft)
+        # Call 2: Rim defense (Less Than 6 Ft)
+        log("  Call 2/3: Rim defense (<6 ft)...")
         defense_rim = leaguedashptdefend.LeagueDashPtDefend(
             season=season,
             per_mode_simple='Totals',
             season_type_all_star='Regular Season',
-            defense_category='Less Than 10Ft'
+            defense_category='Less Than 6Ft'
         )
         
         result_rim = defense_rim.get_dict()
@@ -1243,19 +1484,17 @@ def update_defense_stats_bulk(season, season_year):
             headers = rs['headers']
             
             for row in rs['rowSet']:
-                player_id = row[0]  # CLOSE_DEF_PERSON_ID
-                def_rim_fgm = row[headers.index('FGM_LT_10')] or 0
-                def_rim_fga = row[headers.index('FGA_LT_10')] or 0
+                player_id = row[0]
+                if player_id not in player_data:
+                    player_data[player_id] = {}
                 
-                cursor.execute("""
-                    UPDATE player_season_stats
-                    SET def_rim_fgm = %s, def_rim_fga = %s, updated_at = NOW()
-                    WHERE player_id = %s AND year = %s AND season_type = 1
-                """, (def_rim_fgm, def_rim_fga, player_id, season_year))
+                player_data[player_id]['def_rim_fgm'] = row[headers.index('FGM_LT_06')] or 0
+                player_data[player_id]['def_rim_fga'] = row[headers.index('FGA_LT_06')] or 0
         
         time.sleep(RATE_LIMIT_DELAY)
         
-        # 3. 3PT defense
+        # Call 3: 3PT defense
+        log("  Call 3/3: 3PT defense...")
         defense_3pt = leaguedashptdefend.LeagueDashPtDefend(
             season=season,
             per_mode_simple='Totals',
@@ -1269,21 +1508,66 @@ def update_defense_stats_bulk(season, season_year):
             headers = rs['headers']
             
             for row in rs['rowSet']:
-                player_id = row[0]  # CLOSE_DEF_PERSON_ID
-                def_fg3m = row[headers.index('FG3M')] or 0
-                def_fg3a = row[headers.index('FG3A')] or 0
+                player_id = row[0]
+                if player_id not in player_data:
+                    player_data[player_id] = {}
                 
+                player_data[player_id]['def_fg3m'] = row[headers.index('FG3M')] or 0
+                player_data[player_id]['def_fg3a'] = row[headers.index('FG3A')] or 0
+        
+        # Calculate def_fg2 = total - fg3 (per config calculation)
+        log("  Calculating FG2 defense and updating database...")
+        update_records = []
+        for player_id, stats in player_data.items():
+            total_fgm = stats.get('total_def_fgm', 0)
+            total_fga = stats.get('total_def_fga', 0)
+            def_fg3m = stats.get('def_fg3m', 0)
+            def_fg3a = stats.get('def_fg3a', 0)
+            
+            # Calculate FG2 = Total - FG3
+            def_fg2m = max(0, total_fgm - def_fg3m)
+            def_fg2a = max(0, total_fga - def_fg3a)
+            
+            # Build record: (rim_m, rim_a, fg2m, fg2a, fg3m, fg3a, pct, player_id, year)
+            record = (
+                stats.get('def_rim_fgm', 0),
+                stats.get('def_rim_fga', 0),
+                def_fg2m,
+                def_fg2a,
+                def_fg3m,
+                def_fg3a,
+                stats.get('real_def_fg_pct_x1000', 0),
+                player_id,
+                season_year
+            )
+            update_records.append(record)
+        
+        # Bulk update using config-driven column names
+        if update_records:
+            updated = 0
+            for record in update_records:
                 cursor.execute("""
                     UPDATE player_season_stats
-                    SET def_fg3m = %s, def_fg3a = %s, updated_at = NOW()
+                    SET def_rim_fgm = %s, def_rim_fga = %s,
+                        def_fg2m = %s, def_fg2a = %s,
+                        def_fg3m = %s, def_fg3a = %s,
+                        real_def_fg_pct_x1000 = %s,
+                        updated_at = NOW()
                     WHERE player_id = %s AND year = %s AND season_type = 1
-                """, (def_fg3m, def_fg3a, player_id, season_year))
-        
-        conn.commit()
-        log(f"✓ Defense stats: {updated} players updated")
+                """, record)
+                
+                if cursor.rowcount > 0:
+                    updated += 1
+            
+            conn.commit()
+            log(f"GROUP 7 Defense: {updated} players updated (7 columns)")
+        else:
+            log("WARNING - No defense data to update", "WARN")
         
     except Exception as e:
-        log(f"Failed defense stats: {e}", "ERROR")
+        log(f"Failed GROUP 7 defense: {e}", "ERROR")
+        import traceback
+        log(traceback.format_exc(), "ERROR")
     finally:
         cursor.close()
         conn.close()
@@ -1291,8 +1575,10 @@ def update_defense_stats_bulk(season, season_year):
 
 def update_putbacks_per_player(season, season_year):
     """
-    Putbacks only available per-player (no league endpoint)
-    Maps to: putbacks
+    GROUP 5: Putbacks - Per-player (no league endpoint available)
+    
+    Maps to: putbacks (sum of Putback + Tip shot FGM)
+    Endpoint: PlayerDashboardByShootingSplits (per player, ~480 calls)
     
     RESILIENT: Implements retry logic for API instability
     - 2 attempts per player with backoff (2s, 5s)
@@ -1301,7 +1587,11 @@ def update_putbacks_per_player(season, season_year):
     - Logs each player attempt for visibility
     - Continues on failure to complete ETL
     """
-    log(f"Fetching putbacks (per-player) for {season}...")
+    log(f"Fetching GROUP 5: Putbacks (per-player) for {season}...")
+    
+    # Get GROUP 5 stat from config
+    group5_stats = get_stats_by_group(5)
+    log(f" Processing {len(group5_stats)} GROUP 5 putback stat")
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1325,7 +1615,6 @@ def update_putbacks_per_player(season, season_year):
     total_players = cursor.fetchone()[0]
     
     log(f"Found {len(players)} active players (out of {total_players} total)")
-    log(f"⏱ Estimated time: ~{len(players) * 2 / 60:.1f} minutes (with retries)")
     
     updated = 0
     failed = 0
@@ -1337,7 +1626,7 @@ def update_putbacks_per_player(season, season_year):
         
         # Emergency brake: if too many consecutive failures, take a longer break
         if consecutive_failures >= 5:
-            log(f"  ⚠ {consecutive_failures} consecutive failures - taking 30s break...", "WARN")
+            log(f"  WARNING - Taking 30s break after {consecutive_failures} consecutive failures...", "WARN")
             time.sleep(30)
             consecutive_failures = 0
         
@@ -1374,14 +1663,12 @@ def update_putbacks_per_player(season, season_year):
                         updated += 1
                         success = True
                         consecutive_failures = 0  # Reset on success
-                        log(f"  [{idx+1}/{len(players)}] ✓ {player_name}: {putbacks_value} putbacks")
                         break
                 
                 if success:
                     break  # Success - exit retry loop
                 else:
                     # No putback data found
-                    log(f"  [{idx+1}/{len(players)}] ○ {player_name}: no putback data")
                     consecutive_failures = 0  # Reset - this isn't a failure
                     break
             
@@ -1391,41 +1678,43 @@ def update_putbacks_per_player(season, season_year):
                 if attempt < 2:
                     # Retry with longer backoff (2s, 5s)
                     backoff = 2 if attempt == 1 else 5
-                    log(f"  [{idx+1}/{len(players)}] ⚠ {player_name}: attempt {attempt} failed ({error_msg}), retrying in {backoff}s...")
                     time.sleep(backoff)
                 else:
                     # Final attempt failed
-                    log(f"  [{idx+1}/{len(players)}] ✗ {player_name}: all attempts failed ({error_msg})")
                     failed += 1
                     consecutive_failures += 1
         
         # Rate limiting between ALL players (even successful ones)
         time.sleep(max(1.5, RATE_LIMIT_DELAY))  # At least 1.5s between requests
-        
-        # Progress checkpoint every 50 players
-        if (idx + 1) % 50 == 0:
-            conn.commit()
-            log(f"  💾 Checkpoint: {updated} updated, {failed} failed so far...")
+        update_group_progress(1)  # One player completed
     
     conn.commit()
     cursor.close()
     conn.close()
     
-    log(f"✓ Putbacks complete: {updated} updated, {failed} failed")
+    log(f"GROUP 5 Putbacks: {updated} players updated, {failed} failed")
     
     if failed > 0:
-        log(f"  ⚠ {failed} players failed after 3 attempts - continuing ETL", "WARN")
+        log(f"  WARNING - {failed} players failed after retries - continuing ETL", "WARN")
 
 
 def update_onoff_stats(season, season_year):
     """
-    Get on-off stats per team (30 calls)
-    Maps to: tm_off_off_rating_x10, tm_off_def_rating_x10 (team performance with player OFF court)
+    GROUP 8: On-Off Ratings - Config-driven
     
-    Note: We calculate simple off/def ratings from team stats when player is off court
+    Uses backend_config to map 2 on-off columns:
+    - tm_off_off_rating_x10: Team offensive rating when player OFF court
+    - tm_off_def_rating_x10: Team defensive rating when player OFF court
+    
+    Endpoint: TeamPlayerOnOffDetails (per team, 30 API calls)
+    Note: Calculates ratings from team stats when player is off court
     Formula: ORtg = (PTS / Poss) * 100, DRtg = (Opp PTS / Poss) * 100
     """
-    log(f"Fetching on-off stats for {season}...")
+    log(f"Fetching GROUP 8: On-Off ratings for {season}...")
+    
+    # Get GROUP 8 stats from config
+    group8_stats = get_stats_by_group(8)
+    log(f" Processing {len(group8_stats)} GROUP 8 on-off stats")
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1444,7 +1733,7 @@ def update_onoff_stats(season, season_year):
             
             result = onoff.get_dict()
             
-            # Find the OFF court result set
+            # Find the OFF court result set (player is off court)
             for rs in result['resultSets']:
                 if rs['name'] == 'PlayersOffCourtTeamPlayerOnOffDetails':
                     headers = rs['headers']
@@ -1458,6 +1747,7 @@ def update_onoff_stats(season, season_year):
                         fta = row[headers.index('FTA')] or 0
                         oreb = row[headers.index('OREB')] or 0
                         tov = row[headers.index('TOV')] or 0
+                        plus_minus = row[headers.index('PLUS_MINUS')] or 0
                         
                         # Calculate possessions: FGA - OREB + TOV + 0.44*FTA
                         poss = fga - oreb + tov + (0.44 * fta)
@@ -1466,24 +1756,21 @@ def update_onoff_stats(season, season_year):
                             # Offensive rating: points per 100 possessions
                             off_rating = (pts / poss) * 100
                             
-                            # For defensive rating, we'd need opponent points
-                            # which isn't in this endpoint. Use plus/minus as proxy.
-                            plus_minus = row[headers.index('PLUS_MINUS')] or 0
-                            
-                            # Simple approximation: if team scores X and has +/- Y, 
-                            # then opponents scored (X - Y)
+                            # Defensive rating: opponent points per 100 possessions
+                            # Approximate: if team scores X and has +/- Y, opponents scored (X - Y)
                             opp_pts = pts - plus_minus
                             def_rating = (opp_pts / poss) * 100 if poss > 0 else 0
                             
-                            # Scale by 10 for storage
-                            off_rating_x10 = int(off_rating * 10)
-                            def_rating_x10 = int(def_rating * 10)
+                            # Scale by 10 for storage (per config)
+                            tm_off_off_rating_x10 = int(off_rating * 10)
+                            tm_off_def_rating_x10 = int(def_rating * 10)
                             
+                            # Update using config column names
                             cursor.execute("""
                                 UPDATE player_season_stats
                                 SET tm_off_off_rating_x10 = %s, tm_off_def_rating_x10 = %s, updated_at = NOW()
                                 WHERE player_id = %s AND year = %s AND season_type = 1
-                            """, (off_rating_x10, def_rating_x10, player_id, season_year))
+                            """, (tm_off_off_rating_x10, tm_off_def_rating_x10, player_id, season_year))
                             
                             if cursor.rowcount > 0:
                                 updated += 1
@@ -1498,19 +1785,31 @@ def update_onoff_stats(season, season_year):
     cursor.close()
     conn.close()
     
-    log(f"✓ On-off stats: {updated} updates, {failed} teams failed")
+    log(f"GROUP 8 On-Off: {updated} players updated, {failed} teams failed")
 
 
-def update_team_shooting_tracking(season, season_year):
+def update_team_shooting_tracking(season, season_year, conn=None, cursor=None):
     """
     Get team shooting tracking in 6 league-wide calls
-    Maps to: cont_rim_fgm/fga, open_rim_fgm/fga, cont_mr_fgm/fga, open_mr_fgm/fga, 
+    Maps to: cont_rim_fgm/fga, open_rim_fgm/fga, cont_fg2m/fga, open_fg2m/fga, 
              cont_fg3m/fg3a, open_fg3m/fg3a
+    
+    Note: Mid-range stats are calculated in frontend as fg2 - rim
+    
+    Args:
+        conn: Optional database connection to reuse (prevents deadlocks)
+        cursor: Optional cursor to reuse
     """
     log(f"Fetching team shooting tracking (league-wide) for {season}...")
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    # Use provided connection or create new one
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        close_conn = True
+    elif cursor is None:
+        cursor = conn.cursor()
     
     try:
         from nba_api.stats.endpoints import leaguedashteamptshot
@@ -1572,16 +1871,15 @@ def update_team_shooting_tracking(season, season_year):
             
             time.sleep(RATE_LIMIT_DELAY)
         
-        # 5-6: All shots contested (0-4 ft) and open (4+ ft) to get total FG2/FG3 splits
-        log("  Fetching contested/open all shots (teams)...")
-        for def_dist_combo in ['0-2 Feet - Very Tight,2-4 Feet - Tight', '4-6 Feet - Open,6+ Feet - Wide Open']:
-            is_contested = '0-2' in def_dist_combo
-            
+        # 5-8: All shots contested (0-4 ft total) and open (4+ ft total) to get FG2/FG3 splits
+        # Need 4 separate calls because API doesn't support comma-separated values
+        log("  Fetching contested all shots (teams)...")
+        for def_dist in ['0-2 Feet - Very Tight', '2-4 Feet - Tight']:
             endpoint = leaguedashteamptshot.LeagueDashTeamPtShot(
                 season=season,
                 per_mode_simple='Totals',
                 season_type_all_star='Regular Season',
-                close_def_dist_range_nullable=def_dist_combo
+                close_def_dist_range_nullable=def_dist
             )
             result = endpoint.get_dict()
             rs = result['resultSets'][0]
@@ -1597,44 +1895,60 @@ def update_team_shooting_tracking(season, season_year):
                 if team_id not in team_data:
                     team_data[team_id] = {}
                 
-                fg2m_total = row[fg2m_idx] or 0
-                fg2a_total = row[fg2a_idx] or 0
-                fg3m_total = row[fg3m_idx] or 0
-                fg3a_total = row[fg3a_idx] or 0
+                # Accumulate contested totals
+                team_data[team_id]['cont_fg2m_total'] = team_data[team_id].get('cont_fg2m_total', 0) + (row[fg2m_idx] or 0)
+                team_data[team_id]['cont_fg2a_total'] = team_data[team_id].get('cont_fg2a_total', 0) + (row[fg2a_idx] or 0)
+                team_data[team_id]['cont_fg3m'] = team_data[team_id].get('cont_fg3m', 0) + (row[fg3m_idx] or 0)
+                team_data[team_id]['cont_fg3a'] = team_data[team_id].get('cont_fg3a', 0) + (row[fg3a_idx] or 0)
+            
+            time.sleep(RATE_LIMIT_DELAY)
+        
+        log("  Fetching open all shots (teams)...")
+        for def_dist in ['4-6 Feet - Open', '6+ Feet - Wide Open']:
+            endpoint = leaguedashteamptshot.LeagueDashTeamPtShot(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                close_def_dist_range_nullable=def_dist
+            )
+            result = endpoint.get_dict()
+            rs = result['resultSets'][0]
+            headers = rs['headers']
+            
+            fg2m_idx = headers.index('FG2M')
+            fg2a_idx = headers.index('FG2A')
+            fg3m_idx = headers.index('FG3M')
+            fg3a_idx = headers.index('FG3A')
+            
+            for row in rs['rowSet']:
+                team_id = row[0]
+                if team_id not in team_data:
+                    team_data[team_id] = {}
                 
-                # Store totals to calculate mid-range later
-                if is_contested:
-                    team_data[team_id]['cont_fg2m_total'] = fg2m_total
-                    team_data[team_id]['cont_fg2a_total'] = fg2a_total
-                    team_data[team_id]['cont_fg3m'] = fg3m_total
-                    team_data[team_id]['cont_fg3a'] = fg3a_total
-                else:
-                    team_data[team_id]['open_fg2m_total'] = fg2m_total
-                    team_data[team_id]['open_fg2a_total'] = fg2a_total
-                    team_data[team_id]['open_fg3m'] = fg3m_total
-                    team_data[team_id]['open_fg3a'] = fg3a_total
+                # Accumulate open totals
+                team_data[team_id]['open_fg2m_total'] = team_data[team_id].get('open_fg2m_total', 0) + (row[fg2m_idx] or 0)
+                team_data[team_id]['open_fg2a_total'] = team_data[team_id].get('open_fg2a_total', 0) + (row[fg2a_idx] or 0)
+                team_data[team_id]['open_fg3m'] = team_data[team_id].get('open_fg3m', 0) + (row[fg3m_idx] or 0)
+                team_data[team_id]['open_fg3a'] = team_data[team_id].get('open_fg3a', 0) + (row[fg3a_idx] or 0)
             
             time.sleep(RATE_LIMIT_DELAY)
         
         # Calculate mid-range: MR = All 2PT - Rim
-        log("  Calculating mid-range and updating database (teams)...")
+        log(f"  Calculating mid-range and updating database (teams) - {len(team_data)} teams to process...")
+        log(f"  DEBUG: close_conn={close_conn}, conn={conn is not None}, cursor={cursor is not None}")
         updated = 0
-        for team_id, stats in team_data.items():
+        for idx, (team_id, stats) in enumerate(team_data.items()):
+            log(f"    [{idx+1}/{len(team_data)}] Processing team {team_id}...")
             cont_rim_fgm = stats.get('cont_rim_fgm', 0)
             cont_rim_fga = stats.get('cont_rim_fga', 0)
             open_rim_fgm = stats.get('open_rim_fgm', 0)
             open_rim_fga = stats.get('open_rim_fga', 0)
             
-            cont_fg2m_total = stats.get('cont_fg2m_total', 0)
-            cont_fg2a_total = stats.get('cont_fg2a_total', 0)
-            open_fg2m_total = stats.get('open_fg2m_total', 0)
-            open_fg2a_total = stats.get('open_fg2a_total', 0)
-            
-            # Mid-range = 2PT total - rim
-            cont_mr_fgm = max(0, cont_fg2m_total - cont_rim_fgm)
-            cont_mr_fga = max(0, cont_fg2a_total - cont_rim_fga)
-            open_mr_fgm = max(0, open_fg2m_total - open_rim_fgm)
-            open_mr_fga = max(0, open_fg2a_total - open_rim_fga)
+            # Store fg2 totals directly (mr is calculated in frontend as fg2 - rim)
+            cont_fg2m = stats.get('cont_fg2m_total', 0)
+            cont_fg2a = stats.get('cont_fg2a_total', 0)
+            open_fg2m = stats.get('open_fg2m_total', 0)
+            open_fg2a = stats.get('open_fg2a_total', 0)
             
             cont_fg3m = stats.get('cont_fg3m', 0)
             cont_fg3a = stats.get('cont_fg3a', 0)
@@ -1645,87 +1959,114 @@ def update_team_shooting_tracking(season, season_year):
                 UPDATE team_season_stats
                 SET cont_rim_fgm = %s, cont_rim_fga = %s,
                     open_rim_fgm = %s, open_rim_fga = %s,
-                    cont_mr_fgm = %s, cont_mr_fga = %s,
-                    open_mr_fgm = %s, open_mr_fga = %s,
+                    cont_fg2m = %s, cont_fg2a = %s,
+                    open_fg2m = %s, open_fg2a = %s,
                     cont_fg3m = %s, cont_fg3a = %s,
                     open_fg3m = %s, open_fg3a = %s,
                     updated_at = NOW()
                 WHERE team_id = %s AND year = %s AND season_type = 1
             """, (
                 cont_rim_fgm, cont_rim_fga, open_rim_fgm, open_rim_fga,
-                cont_mr_fgm, cont_mr_fga, open_mr_fgm, open_mr_fga,
+                cont_fg2m, cont_fg2a, open_fg2m, open_fg2a,
                 cont_fg3m, cont_fg3a, open_fg3m, open_fg3a,
                 team_id, season_year
             ))
+            log(f"      UPDATE completed, rowcount={cursor.rowcount}")
             
             if cursor.rowcount > 0:
                 updated += 1
         
-        conn.commit()
-        log(f"✓ Team shooting tracking: {updated} teams updated 🚀")
+        # Only commit if we created our own connection
+        if close_conn:
+            conn.commit()
+        
+        log(f"Team shooting tracking: {updated} teams updated")
         
     except Exception as e:
         log(f"Failed team shooting tracking: {e}", "ERROR")
     finally:
-        cursor.close()
-        conn.close()
+        # Only close if we created our own connection
+        if close_conn:
+            cursor.close()
+            conn.close()
 
 
-def update_team_defense_stats(season, season_year):
+def update_team_defense_stats(season, season_year, conn=None, cursor=None):
     """
     Get team defensive stats in 3 league-wide calls
-    Maps to: def_rim_fgm, def_rim_fga, def_fg2m, def_fg2a, def_fg3m, def_fg3a, real_def_fg_pct
+    Maps to: def_rim_fgm, def_rim_fga, def_fg2m, def_fg2a, def_fg3m, def_fg3a, real_def_fg_pct_x1000
+    
+    RESILIENT: Implements retry logic for API instability
+    - 3 attempts per call with exponential backoff
+    - 20s timeout to fail fast on hangs
+    - Logs each attempt for visibility
+    
+    Args:
+        conn: Optional database connection to reuse (prevents deadlocks)
+        cursor: Optional cursor to reuse
     """
     log(f"Fetching team defensive tracking (league-wide) for {season}...")
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    # Use provided connection or create new one
+    close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        close_conn = True
+    elif cursor is None:
+        cursor = conn.cursor()
+        close_conn = False
     
     try:
         from nba_api.stats.endpoints import leaguedashptteamdefend
         
-        # 1. Overall defense
-        defense = leaguedashptteamdefend.LeagueDashPtTeamDefend(
-            season=season,
-            per_mode_simple='Totals',
-            season_type_all_star='Regular Season',
-            defense_category='Overall'
-        )
+        # Store data from all 3 calls, then calculate def_fg2m/fg2a
+        team_data = {}
         
-        result = defense.get_dict()
-        updated = 0
+        # 1. Overall defense - get total FGM/FGA and real_def_fg_pct_x1000
+        log("  Call 1/3: Overall defense (with retry protection)...")
+        result = resilient_api_call(
+            lambda timeout: leaguedashptteamdefend.LeagueDashPtTeamDefend(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                defense_category='Overall',
+                timeout=timeout
+            ).get_dict(),
+            "Overall defense"
+        )
         
         for rs in result['resultSets']:
             headers = rs['headers']
             
             for row in rs['rowSet']:
                 team_id = row[0]
-                def_fgm = row[headers.index('D_FGM')] or 0
-                def_fga = row[headers.index('D_FGA')] or 0
+                def_fgm_total = row[headers.index('D_FGM')] or 0
+                def_fga_total = row[headers.index('D_FGA')] or 0
                 pct_plusminus = row[headers.index('PCT_PLUSMINUS')]
                 
                 real_def_fg_pct = safe_int(pct_plusminus, 1000)
                 
-                cursor.execute("""
-                    UPDATE team_season_stats
-                    SET def_fg2m = %s, def_fg2a = %s, real_def_fg_pct = %s, updated_at = NOW()
-                    WHERE team_id = %s AND year = %s AND season_type = 1
-                """, (def_fgm, def_fga, real_def_fg_pct, team_id, season_year))
-                
-                if cursor.rowcount > 0:
-                    updated += 1
+                team_data[team_id] = {
+                    'def_fgm_total': def_fgm_total,
+                    'def_fga_total': def_fga_total,
+                    'real_def_fg_pct': real_def_fg_pct
+                }
         
         time.sleep(RATE_LIMIT_DELAY)
         
         # 2. Rim defense
-        defense_rim = leaguedashptteamdefend.LeagueDashPtTeamDefend(
-            season=season,
-            per_mode_simple='Totals',
-            season_type_all_star='Regular Season',
-            defense_category='Less Than 10Ft'
+        log("  Call 2/3: Rim defense (with retry protection)...")
+        result_rim = resilient_api_call(
+            lambda timeout: leaguedashptteamdefend.LeagueDashPtTeamDefend(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                defense_category='Less Than 10Ft',
+                timeout=timeout
+            ).get_dict(),
+            "Rim defense"
         )
-        
-        result_rim = defense_rim.get_dict()
         
         for rs in result_rim['resultSets']:
             headers = rs['headers']
@@ -1735,23 +2076,24 @@ def update_team_defense_stats(season, season_year):
                 def_rim_fgm = row[headers.index('FGM_LT_10')] or 0
                 def_rim_fga = row[headers.index('FGA_LT_10')] or 0
                 
-                cursor.execute("""
-                    UPDATE team_season_stats
-                    SET def_rim_fgm = %s, def_rim_fga = %s, updated_at = NOW()
-                    WHERE team_id = %s AND year = %s AND season_type = 1
-                """, (def_rim_fgm, def_rim_fga, team_id, season_year))
+                if team_id in team_data:
+                    team_data[team_id]['def_rim_fgm'] = def_rim_fgm
+                    team_data[team_id]['def_rim_fga'] = def_rim_fga
         
         time.sleep(RATE_LIMIT_DELAY)
         
         # 3. 3PT defense
-        defense_3pt = leaguedashptteamdefend.LeagueDashPtTeamDefend(
-            season=season,
-            per_mode_simple='Totals',
-            season_type_all_star='Regular Season',
-            defense_category='3 Pointers'
+        log("  Call 3/3: 3PT defense (with retry protection)...")
+        result_3pt = resilient_api_call(
+            lambda timeout: leaguedashptteamdefend.LeagueDashPtTeamDefend(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                defense_category='3 Pointers',
+                timeout=timeout
+            ).get_dict(),
+            "3PT defense"
         )
-        
-        result_3pt = defense_3pt.get_dict()
         
         for rs in result_3pt['resultSets']:
             headers = rs['headers']
@@ -1761,67 +2103,137 @@ def update_team_defense_stats(season, season_year):
                 def_fg3m = row[headers.index('FG3M')] or 0
                 def_fg3a = row[headers.index('FG3A')] or 0
                 
-                cursor.execute("""
-                    UPDATE team_season_stats
-                    SET def_fg3m = %s, def_fg3a = %s, updated_at = NOW()
-                    WHERE team_id = %s AND year = %s AND season_type = 1
-                """, (def_fg3m, def_fg3a, team_id, season_year))
+                if team_id in team_data:
+                    team_data[team_id]['def_fg3m'] = def_fg3m
+                    team_data[team_id]['def_fg3a'] = def_fg3a
         
-        conn.commit()
-        log(f"✓ Team defense stats: {updated} teams updated")
+        # Now calculate def_fg2m/fg2a and update all defense stats
+        log("  3PT defense API call completed successfully")
+        log("  Calculating FG2 defense and preparing database updates...")
+        updated = 0
+        for idx, (team_id, stats) in enumerate(team_data.items()):
+            log(f"    Updating team {idx+1}/{len(team_data)} (ID: {team_id})...")
+            def_fgm_total = stats.get('def_fgm_total', 0)
+            def_fga_total = stats.get('def_fga_total', 0)
+            def_fg3m = stats.get('def_fg3m', 0)
+            def_fg3a = stats.get('def_fg3a', 0)
+            
+            # Calculate 2PT defense as total - 3PT
+            def_fg2m = def_fgm_total - def_fg3m
+            def_fg2a = def_fga_total - def_fg3a
+
+            cursor.execute("""
+                UPDATE team_season_stats
+                SET def_rim_fgm = %s, def_rim_fga = %s,
+                    def_fg2m = %s, def_fg2a = %s,
+                    def_fg3m = %s, def_fg3a = %s,
+                    real_def_fg_pct_x1000 = %s,
+                    updated_at = NOW()
+                WHERE team_id = %s AND year = %s AND season_type = 1
+            """, (
+                stats.get('def_rim_fgm', 0), stats.get('def_rim_fga', 0),
+                def_fg2m, def_fg2a,
+                def_fg3m, def_fg3a,
+                stats.get('real_def_fg_pct', 0),
+                team_id, season_year
+            ))
+            
+            if cursor.rowcount > 0:
+                updated += 1
+        
+        log(f"  Committing {updated} team defense updates to database...")
+        
+        # Only commit if we created our own connection
+        if close_conn:
+            conn.commit()
+        
+        log(f"Team defense stats: {updated} teams updated")
         
     except Exception as e:
         log(f"Failed team defense stats: {e}", "ERROR")
     finally:
-        cursor.close()
-        conn.close()
+        # Only close if we created our own connection
+        if close_conn:
+            cursor.close()
+            conn.close()
 
 
 def update_team_putbacks(season, season_year):
     """
-    Get team putback stats (1 league-wide call)
-    Maps to: putbacks
+    Get team putback stats using TeamDashboardByShootingSplits
+    Maps to: putbacks (sum of Putback + Tip shot FGM)
+    
+    Uses ShotTypeTeamDashboard result set to get:
+    - Putback Dunk Shot
+    - Putback Layup Shot
+    - Tip Dunk Shot
+    - Tip Layup Shot
+    
+    Note: Requires 30 API calls (one per team)
     """
-    log(f"Fetching team putbacks for {season}...")
+    log(f"Fetching team putbacks for {season} (per-team)...")
     
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        from nba_api.stats.endpoints import leaguedashteamptshot
-        
-        endpoint = leaguedashteamptshot.LeagueDashTeamPtShot(
-            season=season,
-            per_mode_simple='Totals',
-            season_type_all_star='Regular Season',
-            shot_type_nullable='Putbacks'
-        )
-        
-        result = endpoint.get_dict()
-        rs = result['resultSets'][0]
-        headers = rs['headers']
-        
-        fgm_idx = headers.index('FGM')
+        from nba_api.stats.endpoints import teamdashboardbyshootingsplits
         
         updated = 0
-        for row in rs['rowSet']:
-            team_id = row[0]
-            putbacks = row[fgm_idx] or 0
-            
-            cursor.execute("""
-                UPDATE team_season_stats
-                SET putbacks = %s, updated_at = NOW()
-                WHERE team_id = %s AND year = %s AND season_type = 1
-            """, (putbacks, team_id, season_year))
-            
-            if cursor.rowcount > 0:
-                updated += 1
+        failed = 0
+        
+        # Fetch for all 30 teams
+        for team_id in TEAM_IDS.values():
+            try:
+                endpoint = teamdashboardbyshootingsplits.TeamDashboardByShootingSplits(
+                    team_id=team_id,
+                    season=season,
+                    per_mode_detailed='Totals',
+                    season_type_all_star='Regular Season'
+                )
+                
+                result = endpoint.get_dict()
+                
+                # Find ShotTypeTeamDashboard result set
+                putback_total = 0
+                for rs in result['resultSets']:
+                    if rs['name'] == 'ShotTypeTeamDashboard':
+                        headers = rs['headers']
+                        fgm_idx = headers.index('FGM')
+                        
+                        # Sum up all putback and tip shots
+                        for row in rs['rowSet']:
+                            shot_type = row[1]  # GROUP_VALUE
+                            fgm = row[fgm_idx] or 0
+                            
+                            if any(keyword in shot_type for keyword in ['Putback', 'Tip']):
+                                putback_total += fgm
+                        break
+                
+                # Update database
+                cursor.execute("""
+                    UPDATE team_season_stats 
+                    SET putbacks = %s, updated_at = NOW()
+                    WHERE team_id = %s AND year = %s AND season_type = 1
+                """, (putback_total, team_id, season_year))
+                
+                if cursor.rowcount > 0:
+                    updated += 1
+                
+                time.sleep(RATE_LIMIT_DELAY)
+                update_group_progress(1)  # One team completed
+                
+            except Exception as e:
+                log(f"  Failed team {team_id}: {e}", "ERROR")
+                failed += 1
         
         conn.commit()
-        log(f"✓ Team putbacks: {updated} teams updated")
+        log(f"Team putbacks: {updated} teams updated, {failed} failed (30 API calls)")
         
     except Exception as e:
         log(f"Failed team putbacks: {e}", "ERROR")
+        log(f"  Error details: {str(e)}", "ERROR")
+        conn.rollback()
     finally:
         cursor.close()
         conn.close()
@@ -1843,30 +2255,57 @@ def update_team_advanced_stats(season=None, season_year=None):
         season_year = NBA_CONFIG['current_season_year']
     
     if season_year < 2013:
-        log("⊘ Team tracking data not available before 2013-14 season")
+        log("SKIP - Team tracking data not available before 2013-14 season")
         return
     
     log("=" * 70)
     log("STEP 5: Updating Team Advanced Stats")
     log("=" * 70)
     
+    # Check for competing ETL processes before starting
+    log("Checking for competing ETL processes...")
+    check_conn = get_db_connection()
+    check_cursor = check_conn.cursor()
+    check_cursor.execute("""
+        SELECT COUNT(*) FROM pg_stat_activity 
+        WHERE datname = 'the_glass_db' 
+          AND application_name = 'the_glass_etl'
+          AND state IN ('active', 'idle in transaction')
+          AND pid != pg_backend_pid()
+    """)
+    competing = check_cursor.fetchone()[0]
+    check_cursor.close()
+    check_conn.close()
+    
+    if competing > 0:
+        log(f"WARNING - Found {competing} other ETL process(es) running!", "WARN")
+        log("  This may cause deadlocks. Consider waiting for them to finish.", "WARN")
+        log("  Continuing anyway with statement timeout protection...", "WARN")
+    else:
+        log("No competing ETL processes found")
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # 1. SHOOTING TRACKING (6 calls)
-        update_team_shooting_tracking(season, season_year)
+        # 1. SHOOTING TRACKING (6 calls) - pass connection to avoid deadlock
+        update_team_shooting_tracking(season, season_year, conn=conn, cursor=cursor)
+        conn.commit()  # Commit shooting tracking before next section
+        log("  Shooting tracking committed")
         
         # 2. PLAYMAKING
         log(f"Fetching team playmaking data for {season}...")
-        endpoint = leaguedashptstats.LeagueDashPtStats(
-            season=season,
-            per_mode_simple='Totals',
-            season_type_all_star='Regular Season',
-            player_or_team='Team',
-            pt_measure_type='Passing'
+        result = resilient_api_call(
+            lambda timeout: leaguedashptstats.LeagueDashPtStats(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                player_or_team='Team',
+                pt_measure_type='Passing',
+                timeout=timeout
+            ).get_dict(),
+            "Team playmaking"
         )
-        result = endpoint.get_dict()
         rs = result['resultSets'][0]
         headers = rs['headers']
         
@@ -1884,18 +2323,23 @@ def update_team_advanced_stats(season=None, season_year=None):
                 WHERE team_id = %s AND year = %s AND season_type = 1
             """, (pot_ast, touches, team_id, season_year))
         
+        conn.commit()  # Commit playmaking before next section
+        log("  Playmaking committed")
         time.sleep(RATE_LIMIT_DELAY)
         
         # 3. REBOUNDING
         log(f"Fetching team rebounding data for {season}...")
-        endpoint = leaguedashptstats.LeagueDashPtStats(
-            season=season,
-            per_mode_simple='Totals',
-            season_type_all_star='Regular Season',
-            player_or_team='Team',
-            pt_measure_type='Rebounding'
+        result = resilient_api_call(
+            lambda timeout: leaguedashptstats.LeagueDashPtStats(
+                season=season,
+                per_mode_simple='Totals',
+                season_type_all_star='Regular Season',
+                player_or_team='Team',
+                pt_measure_type='Rebounding',
+                timeout=timeout
+            ).get_dict(),
+            "Team rebounding"
         )
-        result = endpoint.get_dict()
         rs = result['resultSets'][0]
         headers = rs['headers']
         
@@ -1913,16 +2357,21 @@ def update_team_advanced_stats(season=None, season_year=None):
                 WHERE team_id = %s AND year = %s AND season_type = 1
             """, (cont_oreb, cont_dreb, team_id, season_year))
         
+        conn.commit()  # Commit rebounding before next section
+        log("  Rebounding committed")
         time.sleep(RATE_LIMIT_DELAY)
         
         # 4. HUSTLE STATS
         log(f"Fetching team hustle stats for {season}...")
-        hustle = leaguehustlestatsteam.LeagueHustleStatsTeam(
-            season=season,
-            per_mode_time='Totals',
-            season_type_all_star='Regular Season'
+        result = resilient_api_call(
+            lambda timeout: leaguehustlestatsteam.LeagueHustleStatsTeam(
+                season=season,
+                per_mode_time='Totals',
+                season_type_all_star='Regular Season',
+                timeout=timeout
+            ).get_dict(),
+            "Team hustle stats"
         )
-        result = hustle.get_dict()
         
         for rs in result['resultSets']:
             if rs['name'] == 'HustleStatsTeam':
@@ -1940,16 +2389,19 @@ def update_team_advanced_stats(season=None, season_year=None):
                         WHERE team_id = %s AND year = %s AND season_type = 1
                     """, (charges, deflections, contests, team_id, season_year))
         
+        conn.commit()  # Commit hustle stats before next section
+        log("  Hustle stats committed")
         time.sleep(RATE_LIMIT_DELAY)
         
-        # 5. DEFENSE STATS (3 calls)
-        update_team_defense_stats(season, season_year)
+        # 5. DEFENSE STATS (3 calls) - pass connection to avoid deadlock
+        update_team_defense_stats(season, season_year, conn=conn, cursor=cursor)
+        conn.commit()  # Commit defense stats before next section
+        log("  Defense stats committed")
         
-        # 6. PUTBACKS
+        # 6. PUTBACKS (30 calls - one per team)
         update_team_putbacks(season, season_year)
         
-        conn.commit()
-        log("✓ Team advanced stats updated successfully")
+        log("Team advanced stats updated successfully")
         
     except Exception as e:
         log(f"Failed team advanced stats: {e}", "ERROR")
@@ -1970,7 +2422,7 @@ def update_team_opponent_tracking(season=None, season_year=None):
         season_year = NBA_CONFIG['current_season_year']
     
     if season_year < 2013:
-        log("⊘ Opponent tracking data not available before 2013-14 season")
+        log("SKIP - Opponent tracking data not available before 2013-14 season")
         return
     
     log(f"Fetching team opponent tracking stats for {season}...")
@@ -2018,7 +2470,7 @@ def update_team_opponent_tracking(season=None, season_year=None):
         # For now, we're demonstrating the pattern
         # This is commented out to avoid excessive API calls in this demonstration
         
-        log("  ⊘ Opponent tracking stats require defensive matchup data not available in current endpoints")
+        log("  SKIP - Opponent tracking stats require defensive matchup data not available in current endpoints")
         log("  Skipping opponent advanced tracking for now")
         
     except Exception as e:
@@ -2041,7 +2493,7 @@ def update_player_advanced_stats(season=None, season_year=None):
     
     # Skip if before 2013-14 (tracking data not available)
     if season_year < 2013:
-        log("⊘ Tracking data not available before 2013-14 season")
+        log("SKIP - Tracking data not available before 2013-14 season")
         return
     
     log("=" * 70)
@@ -2065,12 +2517,12 @@ def update_player_advanced_stats(season=None, season_year=None):
         
         elapsed = time.time() - start_time
         log("=" * 70)
-        log(f"✅ ADVANCED STATS COMPLETE - {elapsed:.1f}s ({elapsed / 60:.1f} min)")
+        log(f"ADVANCED STATS COMPLETE - {elapsed:.1f}s ({elapsed / 60:.1f} min)")
         log("=" * 70)
         
     except Exception as e:
         elapsed = time.time() - start_time
-        log(f"❌ Advanced stats failed after {elapsed:.1f}s: {e}", "ERROR")
+        log(f"Advanced stats failed after {elapsed:.1f}s: {e}", "ERROR")
         raise
 
 
@@ -2085,32 +2537,93 @@ def run_nightly_etl(backfill_start=None, backfill_end=None, check_missing=True):
         check_missing: Check for missing data after update
     """
     log("=" * 70)
-    log("🏀 THE GLASS - DAILY ETL STARTED")
+    log("THE GLASS - DAILY ETL STARTED")
     log("=" * 70)
     start_time = time.time()
+    
+    global _overall_pbar, _group_pbar
     
     try:
         # Ensure schema exists (first-time setup)
         ensure_schema_exists()
         
-        # Run fast daily updates
+        # Calculate total transactions across all steps for accurate progress
+        # These numbers are approximate based on typical workload
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get player count for accurate progress calculation
+        cursor.execute("SELECT COUNT(*) FROM players")
+        player_count = cursor.fetchone()[0] or 480  # Default if empty
+        
+        cursor.close()
+        conn.close()
+        
+        # Transaction estimates per step:
+        # 1. Rosters: 30 teams + new players (variable, use 0-20) + player updates (1 bulk)
+        # 2. Player stats: 2 season types (2 API calls)
+        # 3. Team stats: 3 season types × 3 API calls = 9 calls
+        # 4. Player advanced: playmaking(1) + rebounding(1) + hustle(1) + defense(3) + shooting(4×players) + putbacks(players) + onoff(30)
+        # 5. Team advanced: shooting(8) + playmaking(1) + rebounding(1) + hustle(1) + defense(3) + putbacks(2)
+        
+        rosters_tx = 30 + 10  # 30 teams + avg 10 new players
+        player_stats_tx = 2
+        team_stats_tx = 9
+        # Player advanced: playmaking(1) + rebounding(1) + hustle(1) + defense(3) + shooting(480 players) + putbacks(480 players) + onoff(30)
+        player_advanced_tx = 1 + 1 + 1 + 3 + player_count + player_count + 30  # ~1000 for 480 players (NOT 5x players!)
+        team_advanced_tx = 8 + 1 + 1 + 1 + 3 + 30  # 44 operations (8 shooting + 3 defense + playmaking + rebounding + hustle + 30 putbacks)
+        
+        total_transactions = rosters_tx + player_stats_tx + team_stats_tx + player_advanced_tx + team_advanced_tx
+        
+        # Create two progress bars that stay at the bottom
+        # position=0 for step (top), position=1 for overall (bottom)
+        _overall_pbar = tqdm(total=total_transactions, desc="Overall ETL Progress", 
+                            position=1, leave=True, unit="tx", 
+                            bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        _group_pbar = tqdm(total=0, desc="Initializing...", 
+                          position=0, leave=True, unit="op",
+                          bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        
+        # STEP 1: Player Rosters
+        _group_pbar.reset(total=rosters_tx)
+        _group_pbar.set_description("STEP 1: Player Rosters")
         update_player_rosters()
+        
+        # STEP 2: Player Stats
+        _group_pbar.reset(total=player_stats_tx)
+        _group_pbar.set_description("STEP 2: Player Stats")
         update_player_stats()
+        
+        # STEP 3: Team Stats
+        _group_pbar.reset(total=team_stats_tx)
+        _group_pbar.set_description("STEP 3: Team Stats")
         update_team_stats()
         
-        # Run advanced stats (optimized)
+        # STEP 4: Player Advanced Stats
+        _group_pbar.reset(total=player_advanced_tx)
+        _group_pbar.set_description("STEP 4: Player Advanced Stats")
         update_player_advanced_stats()
+        
+        # STEP 5: Team Advanced Stats
+        _group_pbar.reset(total=team_advanced_tx)
+        _group_pbar.set_description("STEP 5: Team Advanced Stats")
         update_team_advanced_stats()
+        
+        # Close progress bars
+        _group_pbar.close()
+        _overall_pbar.close()
+        _overall_pbar = None
+        _group_pbar = None
         
         elapsed = time.time() - start_time
         log("=" * 70)
-        log(f"✅ DAILY ETL COMPLETE - {elapsed:.1f}s ({elapsed / 60:.1f} min)")
+        log(f"DAILY ETL COMPLETE - {elapsed:.1f}s ({elapsed / 60:.1f} min)")
         log("=" * 70)
         
     except Exception as e:
         elapsed = time.time() - start_time
         log("=" * 70)
-        log(f"❌ DAILY ETL FAILED - {elapsed:.1f}s", "ERROR")
+        log(f"DAILY ETL FAILED - {elapsed:.1f}s", "ERROR")
         log(f"Error: {e}", "ERROR")
         log("=" * 70)
         raise

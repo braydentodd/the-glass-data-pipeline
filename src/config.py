@@ -165,7 +165,7 @@ DB_SCHEMA = {
         team_id INTEGER REFERENCES teams(team_id),
         year INTEGER NOT NULL,
         season_type INTEGER NOT NULL DEFAULT 1,
-        games_played INTEGER DEFAULT 0,
+        games_played INTEGER NOT NULL DEFAULT 0,
         minutes_x10 INTEGER DEFAULT 0,
         possessions INTEGER DEFAULT 0,
         fg2m INTEGER DEFAULT 0,
@@ -215,7 +215,7 @@ DB_SCHEMA = {
         def_fg2a INTEGER DEFAULT 0,
         def_fg3m INTEGER DEFAULT 0,
         def_fg3a INTEGER DEFAULT 0,
-        real_def_fg_pct INTEGER,
+        real_def_fg_pct_x1000 INTEGER,
         -- On-off stats (team performance with player off court)
         tm_off_off_rating_x10 INTEGER,
         tm_off_def_rating_x10 INTEGER,
@@ -280,7 +280,7 @@ DB_SCHEMA = {
         def_fg2a INTEGER DEFAULT 0,
         def_fg3m INTEGER DEFAULT 0,
         def_fg3a INTEGER DEFAULT 0,
-        real_def_fg_pct INTEGER,
+        real_def_fg_pct_x1000 INTEGER,
         -- On-off stats (team performance with player off court)
         tm_off_off_rating_x10 INTEGER,
         tm_off_def_rating_x10 INTEGER,

@@ -47,7 +47,7 @@ ssh $SERVER "ls -la $REMOTE_DIR/src/*.py 2>/dev/null | wc -l" | {
 # Cleanup
 rm -f /tmp/src.tar.gz
 ssh $SERVER "cd $REMOTE_DIR && rm -rf src.backup"
-echo "  ✓ All files uploaded successfully"
+echo "  All files uploaded successfully"
 
 # Upload google credentials
 echo "Uploading credentials..."
