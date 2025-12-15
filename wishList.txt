@@ -21,3 +21,11 @@ And Ones
 Injury data
 Contract data
 Wingspan data
+Real Possessions
+Real Offensive/Defensive Rating
+Real TS%
+Real O/D Reb %s
+points per shots
+playtype data
+grenades
+heaves

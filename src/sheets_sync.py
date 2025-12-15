@@ -1132,11 +1132,14 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         else:
             header_row_1.append(h)
     
-    # Header row 2 - already built dynamically with correct headers based on stats_mode
-    header_row_2 = list(HEADERS['row_2'])  # Headers already have OR%/DR% or ORS/DRS based on mode
+    # Header row 2 - subsection headers (Rates, Scoring, Distribution, Rebounding, Defense, On/Off)
+    header_row_2 = list(HEADERS['row_2'])  # Subsection headers for ADVANCED view
     
-    # Override row 2 cell A2 to say "PLAYERS" instead of "NAME"
-    header_row_2[0] = 'PLAYERS'
+    # Header row 3 - column headers (GMS, MIN, PTS, etc.)
+    header_row_3 = list(HEADERS['row_3'])  # Headers already have OR%/DR% or ORS/DRS based on mode
+    
+    # Override row 3 cell A3 to say "PLAYERS" instead of "NAME"
+    header_row_3[0] = 'PLAYERS'
     
     # For NBA sheet: Move "PLAYER INFO" from C1 to B1 so it appears in the merged B1-H1 cell
     if for_nba_sheet:
@@ -1147,7 +1150,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             header_row_1[1] = header_row_1[player_info_start]
             header_row_1[player_info_start] = ''
     
-    # Filter row
+    # Filter row (row 4)
     filter_row = [""] * SHEET_FORMAT_CONFIG['total_columns']
     
     # Prepare data rows with percentile tracking
@@ -1975,11 +1978,11 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         data_rows.append(opponent_row)
         percentile_data.append(opponent_row_percentiles)
     
-    # Combine all data
-    all_data = [header_row_1, header_row_2, filter_row] + data_rows
+    # Combine all data (Row 1: main sections, Row 2: subsections, Row 3: column headers, Row 4: filters)
+    all_data = [header_row_1, header_row_2, header_row_3, filter_row] + data_rows
     
     spreadsheet = worksheet.spreadsheet
-    total_rows = 3 + len(data_rows)
+    total_rows = 4 + len(data_rows)  # 4 header rows + data rows
     total_cols = SHEET_FORMAT_CONFIG['total_columns']
     
     # Build ONE mega batch request with ALL operations
@@ -2316,6 +2319,78 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 }
             })
     
+    # Row 2: Merge subsection headers (Rates, Scoring, Distribution, Rebounding, Defense, On/Off)
+    # Find consecutive cells with the same subsection name and merge them
+    subsection_merges = []
+    current_subsection = None
+    start_col = None
+    
+    for col_idx, subsection in enumerate(header_row_2):
+        if subsection and subsection != '':
+            if subsection == current_subsection:
+                # Continue current subsection
+                continue
+            else:
+                # Save previous subsection merge if exists
+                if current_subsection and start_col is not None and col_idx > start_col + 1:
+                    subsection_merges.append({
+                        'start': start_col,
+                        'end': col_idx,
+                        'name': current_subsection
+                    })
+                # Start new subsection
+                current_subsection = subsection
+                start_col = col_idx
+        else:
+            # Empty cell - save previous subsection if exists
+            if current_subsection and start_col is not None and col_idx > start_col + 1:
+                subsection_merges.append({
+                    'start': start_col,
+                    'end': col_idx,
+                    'name': current_subsection
+                })
+            current_subsection = None
+            start_col = None
+    
+    # Handle last subsection if exists
+    if current_subsection and start_col is not None and len(header_row_2) > start_col + 1:
+        subsection_merges.append({
+            'start': start_col,
+            'end': len(header_row_2),
+            'name': current_subsection
+        })
+    
+    # Apply subsection merges
+    for merge in subsection_merges:
+        requests.append({
+            'mergeCells': {
+                'range': {
+                    'sheetId': sheet_id,
+                    'startRowIndex': 1,  # Row 2 (0-indexed)
+                    'endRowIndex': 2,
+                    'startColumnIndex': merge['start'],
+                    'endColumnIndex': merge['end'],
+                },
+                'mergeType': 'MERGE_ALL'
+            }
+        })
+    
+    # Hide Row 2 by default (subsection headers shown only in ADVANCED view)
+    requests.append({
+        'updateDimensionProperties': {
+            'range': {
+                'sheetId': sheet_id,
+                'dimension': 'ROWS',
+                'startIndex': 1,  # Row 2 (0-indexed)
+                'endIndex': 2
+            },
+            'properties': {
+                'hiddenByUser': True
+            },
+            'fields': 'hiddenByUser'
+        }
+    })
+    
     # Format row 1
     black = COLORS['black']
     white = COLORS['white']
@@ -2347,7 +2422,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         }
     })
     
-    # Format row 2 - SECONDARY HEADER (font 10)
+    # Format row 2 - SUBSECTION HEADERS (font 9, hidden by default)
     requests.append({
         'repeatCell': {
             'range': {
@@ -2361,7 +2436,33 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'textFormat': {
                         'foregroundColor': white,
                         'fontFamily': SHEET_FORMAT_CONFIG['fonts']['header_secondary']['family'],
-                        'fontSize': 10,  # Row 2 is 10
+                        'fontSize': 9,  # Row 2 subsection headers
+                        'bold': True
+                    },
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE',
+                    'wrapStrategy': 'CLIP'
+                }
+            },
+            'fields': 'userEnteredFormat'
+        }
+    })
+    
+    # Format row 3 - COLUMN HEADERS (font 10)
+    requests.append({
+        'repeatCell': {
+            'range': {
+                'sheetId': sheet_id,
+                'startRowIndex': 2,
+                'endRowIndex': 3,
+            },
+            'cell': {
+                'userEnteredFormat': {
+                    'backgroundColor': black,
+                    'textFormat': {
+                        'foregroundColor': white,
+                        'fontFamily': SHEET_FORMAT_CONFIG['fonts']['header_secondary']['family'],
+                        'fontSize': 10,  # Row 3 column headers
                         'bold': True
                     },
                     'horizontalAlignment': 'CENTER',
@@ -2401,13 +2502,13 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         }
     })
     
-    # Format filter row (row 3) - (font 10)
+    # Format filter row (row 4) - (font 10)
     requests.append({
         'repeatCell': {
             'range': {
                 'sheetId': sheet_id,
-                'startRowIndex': 2,
-                'endRowIndex': 3,
+                'startRowIndex': 3,
+                'endRowIndex': 4,
             },
             'cell': {
                 'userEnteredFormat': {
@@ -2415,7 +2516,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                     'textFormat': {
                         'foregroundColor': white,
                         'fontFamily': SHEET_FORMAT_CONFIG['fonts']['header_primary']['family'],
-                        'fontSize': 10,  # Row 3 is 10
+                        'fontSize': 10,  # Row 4 is filter row
                         'bold': True
                     },
                     'horizontalAlignment': 'CENTER',
@@ -2434,8 +2535,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             'repeatCell': {
                 'range': {
                     'sheetId': sheet_id,
-                    'startRowIndex': 3,
-                    'endRowIndex': 3 + len(data_rows),
+                    'startRowIndex': 4,  # Data starts at row 5 (0-indexed = 4)
+                    'endRowIndex': 4 + len(data_rows),
                 },
                 'cell': {
                     'userEnteredFormat': {
