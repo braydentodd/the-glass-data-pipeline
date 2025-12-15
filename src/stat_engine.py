@@ -114,6 +114,9 @@ def build_select_fields(entity_type='player', include_opponent=False, context='c
         # Skip physical attributes - these come from players table, not stats table
         if col_def.get('is_physical_attribute'):
             continue
+        # Skip player-only fields when fetching team stats
+        if entity_type == 'team' and col_def.get('player_only'):
+            continue
         
         # Filter by context - only include fields appropriate for this query type
         if context == 'current' and not col_def.get('in_current'):
@@ -160,10 +163,11 @@ def build_select_fields(entity_type='player', include_opponent=False, context='c
                 fields.append(f's.{db_field}')
     
     # Add raw fields needed for calculated stats
+    # Note: possessions is calculated from fg2a + fg3a - off_rebounds + turnovers + 0.44*fta
     # Note: oreb_pct and dreb_pct are added via additional_fields in fetch functions
     raw_fields_needed = ['fg2m', 'fg2a', 'fg3m', 'fg3a', 'ftm', 'fta', 
                          'off_rebounds', 'def_rebounds', 'games_played', 
-                         'minutes_x10', 'possessions', 'assists', 'turnovers',
+                         'minutes_x10', 'assists', 'turnovers',
                          'steals', 'blocks', 'fouls', 'off_rating_x10', 'def_rating_x10']
     
     for field in raw_fields_needed:
@@ -216,7 +220,8 @@ def build_aggregated_select_fields(entity_type='player', include_opponent=False)
         'COUNT(DISTINCT s.year) AS seasons_played',
         'SUM(s.games_played) AS games_played',
         'SUM(s.minutes_x10::float) / 10 AS minutes_total',
-        'SUM(s.possessions) AS possessions',
+        # Possessions calculated: FGA - OREB + TOV + 0.44*FTA
+        'SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)) AS possessions',
         'SUM(s.fg2m) AS fg2m',
         'SUM(s.fg2a) AS fg2a',
         'SUM(s.fg3m) AS fg3m',
@@ -225,10 +230,11 @@ def build_aggregated_select_fields(entity_type='player', include_opponent=False)
         'SUM(s.fta) AS fta',
         'SUM(s.off_rebounds) AS off_rebounds',
         'SUM(s.def_rebounds) AS def_rebounds',
-        'SUM(s.off_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS oreb_pct',
-        'SUM(s.def_reb_pct_x1000 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 1000 AS dreb_pct',
-        'SUM(s.off_rating_x10 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 10 AS off_rating',
-        'SUM(s.def_rating_x10 * s.possessions)::float / NULLIF(SUM(s.possessions), 0) / 10 AS def_rating',
+        # Use calculated possessions for weighted averages
+        'SUM(s.off_reb_pct_x1000 * (s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 1000 AS oreb_pct',
+        'SUM(s.def_reb_pct_x1000 * (s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 1000 AS dreb_pct',
+        'SUM(s.off_rating_x10 * (s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 10 AS off_rating',
+        'SUM(s.def_rating_x10 * (s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 10 AS def_rating',
         'SUM(s.assists) AS assists',
         'SUM(s.turnovers) AS turnovers',
         'SUM(s.steals) AS steals',
@@ -288,6 +294,7 @@ def calculate_stat_value(entity_data, col_key, mode='per_36', custom_value=None)
         factor = target_minutes / minutes_total if minutes_total > 0 else 0
     elif mode == 'per_100_poss':
         possessions = entity_data.get('possessions', 0) or 0
+        possessions = float(possessions) if possessions else 0  # Convert Decimal to float
         target_poss = float(custom_value) if custom_value else STAT_CONSTANTS['default_per_possessions']
         factor = target_poss / possessions if possessions > 0 else 0
     else:
@@ -508,7 +515,7 @@ def calculate_percentiles_generic(entities_data, stat_columns, mode='per_36', cu
                         minutes_weight = entity.get('minutes_total', 0)
                         if minutes_weight > 0:
                             weight_count = max(1, int(round(minutes_weight / PERCENTILE_CONFIG['minutes_weight_factor'])))
-                            weighted_values.extend([stat_value] * weight_count)
+                            weighted_values.extend([float(stat_value)] * weight_count)
                 
                 if weighted_values:
                     percentiles[stat_name] = np.percentile(weighted_values, range(101))
@@ -520,7 +527,7 @@ def calculate_percentiles_generic(entities_data, stat_columns, mode='per_36', cu
                 for entity in entities_with_stats:
                     stat_value = entity['calculated_stats'].get(stat_name, 0)
                     if stat_value and stat_value != 0:
-                        values.append(stat_value)
+                        values.append(float(stat_value))
                 
                 if values:
                     percentiles[stat_name] = np.percentile(values, range(101))

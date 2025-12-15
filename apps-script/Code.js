@@ -157,9 +157,10 @@ function onOpen() {
     .addSubMenu(ui.createMenu('Stats Config')
       .addItem('Totals', 'switchToTotals')
       .addItem('Per Game', 'switchToPerGame')
-      .addItem('Per Minute', 'switchToPerMinute')
-      .addItem('Per Possession', 'switchToPerPossession')
+      .addItem('Per 100 Possessions', 'switchToPer100')
+      .addItem('Per 36 Minutes', 'switchToPer36')
       .addSeparator()
+      .addItem('Toggle Advanced', 'toggleAdvancedView')
       .addItem('Toggle Percentiles', 'togglePercentileDisplay')
       .addSeparator()
       .addItem('Historical Timeframe', 'showHistoricalStatsDialog'))
@@ -282,53 +283,88 @@ function switchToPerGame() {
 }
 
 /**
- * Switch all team sheets to Per Minute mode with user input
+ * Switch all team sheets to Per 100 Possessions mode
  */
-function switchToPerMinute() {
-  const ui = SpreadsheetApp.getUi();
-  const response = ui.prompt(
-    'Per __ Minute Stats',
-    'Enter the number of minutes to scale stats to:',
-    ui.ButtonSet.OK_CANCEL
+function switchToPer100() {
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Switching to Per 100 Possessions',
+    'Updating Stats',
+    5
   );
-  
-  if (response.getSelectedButton() === ui.Button.OK) {
-    const minutes = parseFloat(response.getResponseText());
-    if (isNaN(minutes) || minutes <= 0) {
-      return;
-    }
-    SpreadsheetApp.getActiveSpreadsheet().toast(
-      `Switching to Per ${minutes} Minutes`,
-      'Updating Stats',
-      5
-    );
-    updateAllSheets('per_minutes', minutes);
-  }
+  updateAllSheets('per_100', null);
 }
 
 /**
- * Switch all team sheets to Per Possession mode with user input
+ * Switch all team sheets to Per 36 Minutes mode
  */
-function switchToPerPossession() {
+function switchToPer36() {
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Switching to Per 36 Minutes',
+    'Updating Stats',
+    5
+  );
+  updateAllSheets('per_36', null);
+}
+
+/**
+ * Toggle between BASIC and ADVANCED view
+ * BASIC: Shows ~21 basic stats (basic_only + both), hides Row 2 subsection headers
+ * ADVANCED: Shows ~51 advanced stats (advanced_only + both) organized in subsections, shows Row 2 subsection headers
+ */
+function toggleAdvancedView() {
   const ui = SpreadsheetApp.getUi();
-  const response = ui.prompt(
-    'Per __ Possession Stats',
-    'Enter the number of possessions to scale stats to:',
-    ui.ButtonSet.OK_CANCEL
+  const props = PropertiesService.getDocumentProperties();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // Get current view mode (default to 'basic')
+  const currentMode = props.getProperty('VIEW_MODE') || 'basic';
+  const newMode = currentMode === 'basic' ? 'advanced' : 'basic';
+  
+  // Save new mode
+  props.setProperty('VIEW_MODE', newMode);
+  
+  const displayMode = newMode === 'basic' ? 'BASIC' : 'ADVANCED';
+  
+  // Get all sheets in the spreadsheet
+  const sheets = ss.getSheets();
+  
+  // Process each sheet
+  for (const sheet of sheets) {
+    const sheetName = sheet.getName();
+    
+    // Skip utility sheets
+    if (sheetName === 'Config' || sheetName === 'Instructions') {
+      continue;
+    }
+    
+    try {
+      // Toggle Row 2 visibility (subsection headers)
+      if (newMode === 'advanced') {
+        sheet.showRows(2);  // Show Row 2 in ADVANCED mode
+      } else {
+        sheet.hideRows(2);  // Hide Row 2 in BASIC mode
+      }
+      
+      // TODO: Implement column show/hide logic for individual stats
+      // This would require mapping stat names to column indices dynamically
+      // For now, Row 2 toggle provides the main visual difference
+      
+    } catch (e) {
+      Logger.log(`Error processing sheet ${sheetName}: ${e.message}`);
+    }
+  }
+  
+  ui.alert(
+    'View Mode Changed',
+    `Switched to ${displayMode} view.\\n\\nRow 2 subsection headers are now ${newMode === 'advanced' ? 'visible' : 'hidden'}.\\n\\nNote: Column visibility will be implemented in a future update. For now, all stats remain visible.`,
+    ui.ButtonSet.OK
   );
   
-  if (response.getSelectedButton() === ui.Button.OK) {
-    const possessions = parseFloat(response.getResponseText());
-    if (isNaN(possessions) || possessions <= 0) {
-      return;
-    }
-    SpreadsheetApp.getActiveSpreadsheet().toast(
-      `Switching to Per ${possessions} Possessions`,
-      'Updating Stats',
-      5
-    );
-    updateAllSheets('per_100_poss', possessions);
-  }
+  ss.toast(
+    `View mode set to ${displayMode}. Row 2 ${newMode === 'advanced' ? 'shown' : 'hidden'}.`,
+    'View Mode Updated',
+    5
+  );
 }
 
 /**
