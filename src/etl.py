@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Import config modules (works both with -m and direct execution)
 try:
-    from src.config_database import (
+    from src.db_config import (
         NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA,
         DB_COLUMNS, SEASON_TYPE_MAP,
         infer_execution_tier_from_endpoint,
@@ -48,13 +48,13 @@ try:
         get_columns_by_entity,
         safe_int, safe_float, safe_str, parse_height, parse_birthdate
     )
-    from src.config_etl import (
+    from src.etl_config import (
         PARALLEL_EXECUTION, SUBPROCESS_CONFIG,
         API_CONFIG, RETRY_CONFIG, DB_OPERATIONS, TRANSFORMATIONS, ANNUAL_ETL_CONFIG,
         RESULT_SET_DEFAULTS
     )
 except ImportError:
-    from config_database import (
+    from db_config import (
         NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA,
         DB_COLUMNS, SEASON_TYPE_MAP,
         infer_execution_tier_from_endpoint,
@@ -62,7 +62,7 @@ except ImportError:
         get_columns_by_entity,
         safe_int, safe_float, safe_str, parse_height, parse_birthdate
     )
-    from config_etl import (
+    from etl_config import (
         PARALLEL_EXECUTION, SUBPROCESS_CONFIG,
         API_CONFIG, RETRY_CONFIG, DB_OPERATIONS, TRANSFORMATIONS, ANNUAL_ETL_CONFIG,
         RESULT_SET_DEFAULTS
@@ -2099,7 +2099,7 @@ def update_player_rosters():
 def update_player_stats(skip_zero_stats=False):
     """
     Update season statistics for all players (Basic Stats from leaguedashplayerstats)
-    Uses config_database.DB_COLUMNS for all field mappings - NO HARDCODING!
+    Uses db_config.DB_COLUMNS for all field mappings - NO HARDCODING!
     
     Args:
         skip_zero_stats: If True, don't add zero-stat records for roster players (backfill mode)
@@ -2322,7 +2322,7 @@ def update_player_stats(skip_zero_stats=False):
 def update_team_stats():
     """
     Update season statistics for all teams (leaguedashteamstats + opponent stats)
-    Uses config_database.DB_COLUMNS for all field mappings - NO HARDCODING!
+    Uses db_config.DB_COLUMNS for all field mappings - NO HARDCODING!
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2963,7 +2963,7 @@ def _extract_value_from_result(result, transform):
 def update_team_advanced_stats(season=None, season_year=None):
     """
     100% CONFIG-DRIVEN team advanced stats - automatically discovers ALL endpoints from DB_COLUMNS.
-    NO HARDCODING - adding new team stats only requires updating config_database.py.
+    NO HARDCODING - adding new team stats only requires updating db_config.py.
     """
     if season is None:
         season = NBA_CONFIG['current_season']

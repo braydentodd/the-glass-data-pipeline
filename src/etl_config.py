@@ -2,7 +2,7 @@
 THE GLASS - ETL Configuration
 Single source of truth for ETL execution strategy, rate limiting, and runtime behavior.
 
-This module defines how the ETL runs, not what data it collects (that's in config_database.py).
+This module defines how the ETL runs, not what data it collects (that's in db_config.py).
 """
 
 import os

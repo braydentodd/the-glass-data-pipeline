@@ -2012,7 +2012,7 @@ def execute_transform(value, transform_name, scale=1):
 
 
 # Safe transform functions (referenced by execute_transform)
-# These are duplicated from etl.py to make config_database self-contained
+# These are duplicated from etl.py to make db_config self-contained
 def safe_int(value, scale=1):
     """Convert value to scaled integer, handling None/NaN"""
     if value is None or (hasattr(value, '__iter__') and len(str(value).strip()) == 0):
