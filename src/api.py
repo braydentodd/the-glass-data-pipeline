@@ -12,8 +12,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import numpy as np
 
-from src.config import (
-    DB_CONFIG, API_CONFIG, NBA_TEAMS, COLUMN_DEFINITIONS,
+from config.database import DB_CONFIG
+from config.sheets import (
+    API_CONFIG, NBA_TEAMS, COLUMN_DEFINITIONS,
     get_reverse_stats, get_editable_fields, get_config_for_export,
     STAT_ORDER
 )

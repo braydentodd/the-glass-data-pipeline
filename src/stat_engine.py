@@ -4,7 +4,7 @@ Everything driven by COLUMN_DEFINITIONS - zero hardcoding.
 """
 
 import numpy as np
-from src.config import COLUMN_DEFINITIONS, PERCENTILE_CONFIG, STAT_CONSTANTS
+from config.sheets import COLUMN_DEFINITIONS, PERCENTILE_CONFIG, STAT_CONSTANTS
 
 
 # ============================================================================

@@ -1,5 +1,15 @@
 # Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
 
 # Environment variables
 .env

@@ -12,10 +12,9 @@ from google.oauth2.service_account import Credentials
 from psycopg2.extras import RealDictCursor
 
 # Import centralized configuration
-from src.config import (
-    DB_CONFIG,
+from config.database import DB_CONFIG, NBA_CONFIG
+from config.sheets import (
     GOOGLE_SHEETS_CONFIG,
-    NBA_CONFIG,
     NBA_TEAMS,
     STAT_COLUMNS,
     HISTORICAL_STAT_COLUMNS,
@@ -1818,7 +1817,7 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         # BUILD OPPONENT ROW - Shows what opponents did AGAINST this team
         # ============================================================================
         from src.stat_engine import calculate_entity_stats, calculate_percentiles_generic, get_opponent_stat_name
-        from src.config import OPPONENT_STAT_ORDER
+        from config.sheets import OPPONENT_STAT_ORDER
         
         # Calculate opponent stats in current mode using generic engine
         opponent_stats_current = calculate_entity_stats(team_stats, OPPONENT_STAT_ORDER, stats_mode, stats_custom_value) if team_stats else {}

@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Import config modules (works both with -m and direct execution)
 try:
-    from src.db_config import (
+    from config.database import (
         NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA,
         DB_COLUMNS, SEASON_TYPE_MAP,
         infer_execution_tier_from_endpoint,
@@ -48,13 +48,14 @@ try:
         get_columns_by_entity,
         safe_int, safe_float, safe_str, parse_height, parse_birthdate
     )
-    from src.etl_config import (
+    from config.etl import (
         PARALLEL_EXECUTION, SUBPROCESS_CONFIG,
         API_CONFIG, RETRY_CONFIG, DB_OPERATIONS, TRANSFORMATIONS, ANNUAL_ETL_CONFIG,
         RESULT_SET_DEFAULTS
     )
 except ImportError:
-    from db_config import (
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    from config.database import (
         NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA,
         DB_COLUMNS, SEASON_TYPE_MAP,
         infer_execution_tier_from_endpoint,
@@ -62,7 +63,7 @@ except ImportError:
         get_columns_by_entity,
         safe_int, safe_float, safe_str, parse_height, parse_birthdate
     )
-    from etl_config import (
+    from config.etl import (
         PARALLEL_EXECUTION, SUBPROCESS_CONFIG,
         API_CONFIG, RETRY_CONFIG, DB_OPERATIONS, TRANSFORMATIONS, ANNUAL_ETL_CONFIG,
         RESULT_SET_DEFAULTS

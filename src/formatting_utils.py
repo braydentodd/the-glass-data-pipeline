@@ -3,7 +3,7 @@ Shared formatting utilities for The Glass Data Pipeline.
 Used by both sheets_sync.py and Apps Script to ensure consistent formatting.
 """
 
-from src.config import COLORS, SHEET_FORMAT
+from config.sheets import COLORS, SHEET_FORMAT
 
 
 def get_color_dict(color_name):
@@ -294,7 +294,7 @@ def build_row_from_sections(player, sections, stats_mode='per_36',
     Build a player data row by iterating through sections.
     This ensures row structure matches section definitions.
     """
-    from config import COLUMN_DEFINITIONS
+    from config.sheets import COLUMN_DEFINITIONS
     
     row = []
     percentile_data = {}
