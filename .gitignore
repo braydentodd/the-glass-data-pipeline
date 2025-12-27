@@ -1,17 +1,8 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
 
 # Environment variables
 .env
-*.env
-!.env.example
 
 # IDE
 .vscode/
@@ -23,16 +14,6 @@ ENV/
 *.log
 /tmp/
 
-# OS
-.DS_Store
-Thumbs.db
-
 # Data
 *.csv
-*.json
-!package.json
-
-# Test outputs
-.pytest_cache/
-htmlcov/
-.coverage
+*.txt

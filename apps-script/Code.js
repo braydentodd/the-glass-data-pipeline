@@ -55,7 +55,7 @@ function loadConfig() {
         'UTA': 1610612762, 'WAS': 1610612764
       },
       stat_columns: [
-        'games', 'minutes', 'possessions', 'points', 'ts_pct', 'fg2a', 'fg2_pct', 'fg3a', 'fg3_pct',
+        'games', 'minutes', 'possessions', 'points', 'ts_pct', '2fga', '2fg_pct', '3fga', '3fg_pct',
         'fta', 'ft_pct', 'assists', 'turnovers', 'oreb_pct', 'dreb_pct', 'steals', 
         'blocks', 'fouls', 'off_rating', 'def_rating'
       ],
@@ -1071,8 +1071,8 @@ function updateSheetWithStats(sheet, statsData, mode, customValue) {
       const cell = sheet.getRange(row, col);
       
       // Get attempt values for shooting percentages
-      const fg2a = stats['fg2a'] || 0;
-      const fg3a = stats['fg3a'] || 0;
+      const 2fga = stats['2fga'] || 0;
+      const 3fga = stats['3fga'] || 0;
       const fta = stats['fta'] || 0;
       
       // Handle empty/zero values
@@ -1082,11 +1082,11 @@ function updateSheetWithStats(sheet, statsData, mode, customValue) {
           cell.clearContent();  // Always empty for TS% when 0
           col++;
           continue;
-        } else if (statName === 'fg2_pct' && fg2a === 0) {
+        } else if (statName === '2fg_pct' && 2fga === 0) {
           cell.clearContent();  // Empty if no 2PA
           col++;
           continue;
-        } else if (statName === 'fg3_pct' && fg3a === 0) {
+        } else if (statName === '3fg_pct' && 3fga === 0) {
           cell.clearContent();  // Empty if no 3PA
           col++;
           continue;

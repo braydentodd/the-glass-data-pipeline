@@ -493,17 +493,17 @@ def calculate_per_36_stats(player):
     
     factor = STAT_CONSTANTS['default_per_minutes'] / minutes_total
     
-    points = ((player.get('fg2m', 0) or 0) * 2 + 
-              (player.get('fg3m', 0) or 0) * 3 + 
+    points = ((player.get('2fgm', 0) or 0) * 2 + 
+              (player.get('3fgm', 0) or 0) * 3 + 
               (player.get('ftm', 0) or 0))
     
-    fga = (player.get('fg2a', 0) or 0) + (player.get('fg3a', 0) or 0)
+    fga = (player.get('2fga', 0) or 0) + (player.get('3fga', 0) or 0)
     fta = player.get('fta', 0) or 0
     ts_attempts = 2 * (fga + STAT_CONSTANTS['ts_fta_multiplier'] * fta)
     ts_pct = (points / ts_attempts) if ts_attempts > 0 else 0
     
-    fg2_pct = ((player.get('fg2m', 0) or 0) / (player.get('fg2a', 0) or 1)) if player.get('fg2a', 0) else 0
-    fg3_pct = ((player.get('fg3m', 0) or 0) / (player.get('fg3a', 0) or 1)) if player.get('fg3a', 0) else 0
+    2fg_pct = ((player.get('2fgm', 0) or 0) / (player.get('2fga', 0) or 1)) if player.get('2fga', 0) else 0
+    3fg_pct = ((player.get('3fgm', 0) or 0) / (player.get('3fga', 0) or 1)) if player.get('3fga', 0) else 0
     ft_pct = ((player.get('ftm', 0) or 0) / (player.get('fta', 0) or 1)) if player.get('fta', 0) else 0
     
     return {
@@ -512,10 +512,10 @@ def calculate_per_36_stats(player):
         'possessions': (player.get('possessions', 0) or 0) * factor,
         'points': points * factor,
         'ts_pct': ts_pct,
-        'fg2a': (player.get('fg2a', 0) or 0) * factor,
-        'fg2_pct': fg2_pct,
-        'fg3a': (player.get('fg3a', 0) or 0) * factor,
-        'fg3_pct': fg3_pct,
+        '2fga': (player.get('2fga', 0) or 0) * factor,
+        '2fg_pct': 2fg_pct,
+        '3fga': (player.get('3fga', 0) or 0) * factor,
+        '3fg_pct': 3fg_pct,
         'fta': fta * factor,
         'ft_pct': ft_pct,
         'assists': (player.get('assists', 0) or 0) * factor,
@@ -534,17 +534,17 @@ def calculate_totals_stats(player):
     if not player.get('games_played', 0):
         return {}
     
-    points = ((player.get('fg2m', 0) or 0) * 2 + 
-              (player.get('fg3m', 0) or 0) * 3 + 
+    points = ((player.get('2fgm', 0) or 0) * 2 + 
+              (player.get('3fgm', 0) or 0) * 3 + 
               (player.get('ftm', 0) or 0))
     
-    fga = (player.get('fg2a', 0) or 0) + (player.get('fg3a', 0) or 0)
+    fga = (player.get('2fga', 0) or 0) + (player.get('3fga', 0) or 0)
     fta = player.get('fta', 0) or 0
     ts_attempts = 2 * (fga + STAT_CONSTANTS['ts_fta_multiplier'] * fta)
     ts_pct = (points / ts_attempts) if ts_attempts > 0 else 0
     
-    fg2_pct = ((player.get('fg2m', 0) or 0) / (player.get('fg2a', 0) or 1)) if player.get('fg2a', 0) else 0
-    fg3_pct = ((player.get('fg3m', 0) or 0) / (player.get('fg3a', 0) or 1)) if player.get('fg3a', 0) else 0
+    2fg_pct = ((player.get('2fgm', 0) or 0) / (player.get('2fga', 0) or 1)) if player.get('2fga', 0) else 0
+    3fg_pct = ((player.get('3fgm', 0) or 0) / (player.get('3fga', 0) or 1)) if player.get('3fga', 0) else 0
     ft_pct = ((player.get('ftm', 0) or 0) / (player.get('fta', 0) or 1)) if player.get('fta', 0) else 0
     
     # For totals, OR% and DR% become ORS and DRS (actual rebound counts from database)
@@ -557,10 +557,10 @@ def calculate_totals_stats(player):
         'possessions': player.get('possessions', 0) or 0,
         'points': points,
         'ts_pct': ts_pct,
-        'fg2a': (player.get('fg2a', 0) or 0),
-        'fg2_pct': fg2_pct,
-        'fg3a': (player.get('fg3a', 0) or 0),
-        'fg3_pct': fg3_pct,
+        '2fga': (player.get('2fga', 0) or 0),
+        '2fg_pct': 2fg_pct,
+        '3fga': (player.get('3fga', 0) or 0),
+        '3fg_pct': 3fg_pct,
         'fta': fta,
         'ft_pct': ft_pct,
         'assists': (player.get('assists', 0) or 0),
@@ -582,17 +582,17 @@ def calculate_per_game_stats(player):
     
     factor = 1.0 / games
     
-    points = ((player.get('fg2m', 0) or 0) * 2 + 
-              (player.get('fg3m', 0) or 0) * 3 + 
+    points = ((player.get('2fgm', 0) or 0) * 2 + 
+              (player.get('3fgm', 0) or 0) * 3 + 
               (player.get('ftm', 0) or 0))
     
-    fga = (player.get('fg2a', 0) or 0) + (player.get('fg3a', 0) or 0)
+    fga = (player.get('2fga', 0) or 0) + (player.get('3fga', 0) or 0)
     fta = player.get('fta', 0) or 0
     ts_attempts = 2 * (fga + STAT_CONSTANTS['ts_fta_multiplier'] * fta)
     ts_pct = (points / ts_attempts) if ts_attempts > 0 else 0
     
-    fg2_pct = ((player.get('fg2m', 0) or 0) / (player.get('fg2a', 0) or 1)) if player.get('fg2a', 0) else 0
-    fg3_pct = ((player.get('fg3m', 0) or 0) / (player.get('fg3a', 0) or 1)) if player.get('fg3a', 0) else 0
+    2fg_pct = ((player.get('2fgm', 0) or 0) / (player.get('2fga', 0) or 1)) if player.get('2fga', 0) else 0
+    3fg_pct = ((player.get('3fgm', 0) or 0) / (player.get('3fga', 0) or 1)) if player.get('3fga', 0) else 0
     ft_pct = ((player.get('ftm', 0) or 0) / (player.get('fta', 0) or 1)) if player.get('fta', 0) else 0
     
     return {
@@ -601,10 +601,10 @@ def calculate_per_game_stats(player):
         'possessions': (player.get('possessions', 0) or 0) * factor,
         'points': points * factor,
         'ts_pct': ts_pct,
-        'fg2a': (player.get('fg2a', 0) or 0) * factor,
-        'fg2_pct': fg2_pct,
-        'fg3a': (player.get('fg3a', 0) or 0) * factor,
-        'fg3_pct': fg3_pct,
+        '2fga': (player.get('2fga', 0) or 0) * factor,
+        '2fg_pct': 2fg_pct,
+        '3fga': (player.get('3fga', 0) or 0) * factor,
+        '3fg_pct': 3fg_pct,
         'fta': fta * factor,
         'ft_pct': ft_pct,
         'assists': (player.get('assists', 0) or 0) * factor,
@@ -629,17 +629,17 @@ def calculate_per_minutes_stats(player, minutes=None):
     
     factor = minutes / minutes_total
     
-    points = ((player.get('fg2m', 0) or 0) * 2 + 
-              (player.get('fg3m', 0) or 0) * 3 + 
+    points = ((player.get('2fgm', 0) or 0) * 2 + 
+              (player.get('3fgm', 0) or 0) * 3 + 
               (player.get('ftm', 0) or 0))
     
-    fga = (player.get('fg2a', 0) or 0) + (player.get('fg3a', 0) or 0)
+    fga = (player.get('2fga', 0) or 0) + (player.get('3fga', 0) or 0)
     fta = player.get('fta', 0) or 0
     ts_attempts = 2 * (fga + STAT_CONSTANTS['ts_fta_multiplier'] * fta)
     ts_pct = (points / ts_attempts) if ts_attempts > 0 else 0
     
-    fg2_pct = ((player.get('fg2m', 0) or 0) / (player.get('fg2a', 0) or 1)) if player.get('fg2a', 0) else 0
-    fg3_pct = ((player.get('fg3m', 0) or 0) / (player.get('fg3a', 0) or 1)) if player.get('fg3a', 0) else 0
+    2fg_pct = ((player.get('2fgm', 0) or 0) / (player.get('2fga', 0) or 1)) if player.get('2fga', 0) else 0
+    3fg_pct = ((player.get('3fgm', 0) or 0) / (player.get('3fga', 0) or 1)) if player.get('3fga', 0) else 0
     ft_pct = ((player.get('ftm', 0) or 0) / (player.get('fta', 0) or 1)) if player.get('fta', 0) else 0
     
     return {
@@ -648,10 +648,10 @@ def calculate_per_minutes_stats(player, minutes=None):
         'possessions': (player.get('possessions', 0) or 0) * factor,
         'points': points * factor,
         'ts_pct': ts_pct,
-        'fg2a': (player.get('fg2a', 0) or 0) * factor,
-        'fg2_pct': fg2_pct,
-        'fg3a': (player.get('fg3a', 0) or 0) * factor,
-        'fg3_pct': fg3_pct,
+        '2fga': (player.get('2fga', 0) or 0) * factor,
+        '2fg_pct': 2fg_pct,
+        '3fga': (player.get('3fga', 0) or 0) * factor,
+        '3fg_pct': 3fg_pct,
         'fta': fta * factor,
         'ft_pct': ft_pct,
         'assists': (player.get('assists', 0) or 0) * factor,
@@ -1199,8 +1199,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 return format_stat(stat_value)
         
         # Check if there are attempts for shooting percentages
-        fg2a = calculated_stats.get('fg2a', 0)
-        fg3a = calculated_stats.get('fg3a', 0)
+        2fga = calculated_stats.get('2fga', 0)
+        3fga = calculated_stats.get('3fga', 0)
         fta = calculated_stats.get('fta', 0)
         
         # Check if player has minutes - if not, leave all stats empty
@@ -1214,8 +1214,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         seasons_played = player.get('seasons_played', 0) if has_historical_minutes else ''
         
         # Historical shooting attempts
-        hist_fg2a = historical_calculated_stats.get('fg2a', 0)
-        hist_fg3a = historical_calculated_stats.get('fg3a', 0)
+        hist_2fga = historical_calculated_stats.get('2fga', 0)
+        hist_3fga = historical_calculated_stats.get('3fga', 0)
         hist_fta = historical_calculated_stats.get('fta', 0)
         
         # Get playoff stats
@@ -1225,8 +1225,8 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
         playoff_seasons_played = player.get('playoff_seasons_played', 0) if has_playoff_minutes else ''
         
         # Playoff shooting attempts
-        playoff_fg2a = playoff_calculated_stats.get('fg2a', 0)
-        playoff_fg3a = playoff_calculated_stats.get('fg3a', 0)
+        playoff_2fga = playoff_calculated_stats.get('2fga', 0)
+        playoff_3fga = playoff_calculated_stats.get('3fga', 0)
         playoff_fta = playoff_calculated_stats.get('fta', 0)
         
         # PRE-CALCULATE PERCENTILES (needed for show_percentiles mode)
@@ -1260,9 +1260,9 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 player_percentiles[col_idx] = None
             elif stat_name == 'ts_pct' and value == 0:
                 player_percentiles[col_idx] = None
-            elif stat_name == 'fg2_pct' and fg2a == 0:
+            elif stat_name == '2fg_pct' and 2fga == 0:
                 player_percentiles[col_idx] = None
-            elif stat_name == 'fg3_pct' and fg3a == 0:
+            elif stat_name == '3fg_pct' and 3fga == 0:
                 player_percentiles[col_idx] = None
             elif stat_name == 'ft_pct' and fta == 0:
                 player_percentiles[col_idx] = None
@@ -1315,9 +1315,9 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 player_percentiles[col_idx] = None
             elif stat_name == 'ts_pct' and value == 0:
                 player_percentiles[col_idx] = None
-            elif stat_name == 'fg2_pct' and hist_fg2a == 0:
+            elif stat_name == '2fg_pct' and hist_2fga == 0:
                 player_percentiles[col_idx] = None
-            elif stat_name == 'fg3_pct' and hist_fg3a == 0:
+            elif stat_name == '3fg_pct' and hist_3fga == 0:
                 player_percentiles[col_idx] = None
             elif stat_name == 'ft_pct' and hist_fta == 0:
                 player_percentiles[col_idx] = None
@@ -1349,9 +1349,9 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
                 player_percentiles[col_idx] = None
             elif stat_name == 'ts_pct' and value == 0:
                 player_percentiles[col_idx] = None
-            elif stat_name == 'fg2_pct' and playoff_fg2a == 0:
+            elif stat_name == '2fg_pct' and playoff_2fga == 0:
                 player_percentiles[col_idx] = None
-            elif stat_name == 'fg3_pct' and playoff_fg3a == 0:
+            elif stat_name == '3fg_pct' and playoff_3fga == 0:
                 player_percentiles[col_idx] = None
             elif stat_name == 'ft_pct' and playoff_fta == 0:
                 player_percentiles[col_idx] = None
@@ -1393,9 +1393,9 @@ def create_team_sheet(worksheet, team_abbr, team_name, team_players, percentiles
             
             # Special handling for shooting percentages (allow_zero)
             allow_zero = False
-            if col_name == 'fg2_pct' and (fg2a if season_type == 'current' else (hist_fg2a if season_type == 'historical' else playoff_fg2a)) > 0:
+            if col_name == '2fg_pct' and (2fga if season_type == 'current' else (hist_2fga if season_type == 'historical' else playoff_2fga)) > 0:
                 allow_zero = True
-            elif col_name == 'fg3_pct' and (fg3a if season_type == 'current' else (hist_fg3a if season_type == 'historical' else playoff_fg3a)) > 0:
+            elif col_name == '3fg_pct' and (3fga if season_type == 'current' else (hist_3fga if season_type == 'historical' else playoff_3fga)) > 0:
                 allow_zero = True
             elif col_name == 'ft_pct' and (fta if season_type == 'current' else (hist_fta if season_type == 'historical' else playoff_fta)) > 0:
                 allow_zero = True

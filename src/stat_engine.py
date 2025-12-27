@@ -41,7 +41,7 @@ def get_opponent_stat_name(regular_stat_name):
     
     Examples:
         'points' -> 'opp_points'
-        'fg2_pct' -> 'opp_fg2_pct'
+        '2fg_pct' -> 'opp_2fg_pct'
         'oreb_pct' -> 'opp_ors'
         'games' -> None (no opponent equivalent)
     """
@@ -52,7 +52,7 @@ def get_opponent_stat_name(regular_stat_name):
         return 'opp_drs'
     
     # Stats that have direct opponent equivalents
-    opponent_stats = ['fg2_pct', 'fg3_pct', 'ft_pct', 'ts_pct', 'fg2a', 'fg3a', 'fta',
+    opponent_stats = ['2fg_pct', '3fg_pct', 'ft_pct', 'ts_pct', '2fga', '3fga', 'fta',
                      'points', 'assists', 'turnovers', 'steals', 'blocks', 'fouls']
     
     if regular_stat_name in opponent_stats:
@@ -163,9 +163,9 @@ def build_select_fields(entity_type='player', include_opponent=False, context='c
                 fields.append(f's.{db_field}')
     
     # Add raw fields needed for calculated stats
-    # Note: possessions is calculated from fg2a + fg3a - off_rebounds + turnovers + 0.44*fta
+    # Note: possessions is calculated from 2fga + 3fga - off_rebounds + turnovers + 0.44*fta
     # Note: oreb_pct and dreb_pct are added via additional_fields in fetch functions
-    raw_fields_needed = ['fg2m', 'fg2a', 'fg3m', 'fg3a', 'ftm', 'fta', 
+    raw_fields_needed = ['2fgm', '2fga', '3fgm', '3fga', 'ftm', 'fta', 
                          'off_rebounds', 'def_rebounds', 'games_played', 
                          'minutes_x10', 'assists', 'turnovers',
                          'steals', 'blocks', 'fouls', 'off_rating_x10', 'def_rating_x10']
@@ -179,7 +179,7 @@ def build_select_fields(entity_type='player', include_opponent=False, context='c
     # Add opponent stats if requested (team only)
     if include_opponent and entity_type == 'team':
         opponent_raw_fields = [
-            's.opp_fg2m', 's.opp_fg2a', 's.opp_fg3m', 's.opp_fg3a',
+            's.opp_2fgm', 's.opp_2fga', 's.opp_3fgm', 's.opp_3fga',
             's.opp_ftm', 's.opp_fta', 's.opp_off_rebounds', 's.opp_def_rebounds',
             's.opp_assists', 's.opp_turnovers', 's.opp_steals', 's.opp_blocks', 's.opp_fouls'
         ]
@@ -221,20 +221,20 @@ def build_aggregated_select_fields(entity_type='player', include_opponent=False)
         'SUM(s.games_played) AS games_played',
         'SUM(s.minutes_x10::float) / 10 AS minutes_total',
         # Possessions calculated: FGA - OREB + TOV + 0.44*FTA
-        'SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)) AS possessions',
-        'SUM(s.fg2m) AS fg2m',
-        'SUM(s.fg2a) AS fg2a',
-        'SUM(s.fg3m) AS fg3m',
-        'SUM(s.fg3a) AS fg3a',
+        'SUM(s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)) AS possessions',
+        'SUM(s.2fgm) AS 2fgm',
+        'SUM(s.2fga) AS 2fga',
+        'SUM(s.3fgm) AS 3fgm',
+        'SUM(s.3fga) AS 3fga',
         'SUM(s.ftm) AS ftm',
         'SUM(s.fta) AS fta',
         'SUM(s.off_rebounds) AS off_rebounds',
         'SUM(s.def_rebounds) AS def_rebounds',
         # Use calculated possessions for weighted averages
-        'SUM(s.off_reb_pct_x1000 * (s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 1000 AS oreb_pct',
-        'SUM(s.def_reb_pct_x1000 * (s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 1000 AS dreb_pct',
-        'SUM(s.off_rating_x10 * (s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 10 AS off_rating',
-        'SUM(s.def_rating_x10 * (s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.fg2a + s.fg3a - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 10 AS def_rating',
+        'SUM(s.off_reb_pct_x1000 * (s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 1000 AS oreb_pct',
+        'SUM(s.def_reb_pct_x1000 * (s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 1000 AS dreb_pct',
+        'SUM(s.off_rating_x10 * (s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 10 AS off_rating',
+        'SUM(s.def_rating_x10 * (s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)))::float / NULLIF(SUM(s.2fga + s.3fga - s.off_rebounds + s.turnovers + (0.44 * s.fta)), 0) / 10 AS def_rating',
         'SUM(s.assists) AS assists',
         'SUM(s.turnovers) AS turnovers',
         'SUM(s.steals) AS steals',
@@ -245,10 +245,10 @@ def build_aggregated_select_fields(entity_type='player', include_opponent=False)
     # Add opponent stats aggregation if requested
     if include_opponent and entity_type == 'team':
         fields.extend([
-            'SUM(s.opp_fg2m) AS opp_fg2m',
-            'SUM(s.opp_fg2a) AS opp_fg2a',
-            'SUM(s.opp_fg3m) AS opp_fg3m',
-            'SUM(s.opp_fg3a) AS opp_fg3a',
+            'SUM(s.opp_2fgm) AS opp_2fgm',
+            'SUM(s.opp_2fga) AS opp_2fga',
+            'SUM(s.opp_3fgm) AS opp_3fgm',
+            'SUM(s.opp_3fga) AS opp_3fga',
             'SUM(s.opp_ftm) AS opp_ftm',
             'SUM(s.opp_fta) AS opp_fta',
             'SUM(s.opp_off_rebounds) AS opp_off_rebounds',
@@ -303,52 +303,52 @@ def calculate_stat_value(entity_data, col_key, mode='per_36', custom_value=None)
     # Handle calculated fields
     if col_def.get('calculated'):
         if col_key == 'points':
-            fg2m = entity_data.get('fg2m', 0) or 0
-            fg3m = entity_data.get('fg3m', 0) or 0
+            2fgm = entity_data.get('2fgm', 0) or 0
+            3fgm = entity_data.get('3fgm', 0) or 0
             ftm = entity_data.get('ftm', 0) or 0
-            return (fg2m * 2 + fg3m * 3 + ftm) * factor
+            return (2fgm * 2 + 3fgm * 3 + ftm) * factor
         
         elif col_key == 'opp_points':
-            opp_fg2m = entity_data.get('opp_fg2m', 0) or 0
-            opp_fg3m = entity_data.get('opp_fg3m', 0) or 0
+            opp_2fgm = entity_data.get('opp_2fgm', 0) or 0
+            opp_3fgm = entity_data.get('opp_3fgm', 0) or 0
             opp_ftm = entity_data.get('opp_ftm', 0) or 0
-            return (opp_fg2m * 2 + opp_fg3m * 3 + opp_ftm) * factor
+            return (opp_2fgm * 2 + opp_3fgm * 3 + opp_ftm) * factor
         
         elif col_key == 'ts_pct':
-            fg2m = entity_data.get('fg2m', 0) or 0
-            fg3m = entity_data.get('fg3m', 0) or 0
+            2fgm = entity_data.get('2fgm', 0) or 0
+            3fgm = entity_data.get('3fgm', 0) or 0
             ftm = entity_data.get('ftm', 0) or 0
-            fg2a = entity_data.get('fg2a', 0) or 0
-            fg3a = entity_data.get('fg3a', 0) or 0
+            2fga = entity_data.get('2fga', 0) or 0
+            3fga = entity_data.get('3fga', 0) or 0
             fta = entity_data.get('fta', 0) or 0
             
-            points = fg2m * 2 + fg3m * 3 + ftm
-            fga = fg2a + fg3a
+            points = 2fgm * 2 + 3fgm * 3 + ftm
+            fga = 2fga + 3fga
             ts_attempts = 2 * (fga + STAT_CONSTANTS['ts_fta_multiplier'] * fta)
             return (points / ts_attempts) if ts_attempts > 0 else 0
         
         elif col_key == 'opp_ts_pct':
-            opp_fg2m = entity_data.get('opp_fg2m', 0) or 0
-            opp_fg3m = entity_data.get('opp_fg3m', 0) or 0
+            opp_2fgm = entity_data.get('opp_2fgm', 0) or 0
+            opp_3fgm = entity_data.get('opp_3fgm', 0) or 0
             opp_ftm = entity_data.get('opp_ftm', 0) or 0
-            opp_fg2a = entity_data.get('opp_fg2a', 0) or 0
-            opp_fg3a = entity_data.get('opp_fg3a', 0) or 0
+            opp_2fga = entity_data.get('opp_2fga', 0) or 0
+            opp_3fga = entity_data.get('opp_3fga', 0) or 0
             opp_fta = entity_data.get('opp_fta', 0) or 0
             
-            opp_points = opp_fg2m * 2 + opp_fg3m * 3 + opp_ftm
-            opp_fga = opp_fg2a + opp_fg3a
+            opp_points = opp_2fgm * 2 + opp_3fgm * 3 + opp_ftm
+            opp_fga = opp_2fga + opp_3fga
             opp_ts_attempts = 2 * (opp_fga + STAT_CONSTANTS['ts_fta_multiplier'] * opp_fta)
             return (opp_points / opp_ts_attempts) if opp_ts_attempts > 0 else 0
         
-        elif col_key == 'fg2_pct':
-            fg2m = entity_data.get('fg2m', 0) or 0
-            fg2a = entity_data.get('fg2a', 0) or 0
-            return (fg2m / fg2a) if fg2a > 0 else 0
+        elif col_key == '2fg_pct':
+            2fgm = entity_data.get('2fgm', 0) or 0
+            2fga = entity_data.get('2fga', 0) or 0
+            return (2fgm / 2fga) if 2fga > 0 else 0
         
-        elif col_key == 'fg3_pct':
-            fg3m = entity_data.get('fg3m', 0) or 0
-            fg3a = entity_data.get('fg3a', 0) or 0
-            return (fg3m / fg3a) if fg3a > 0 else 0
+        elif col_key == '3fg_pct':
+            3fgm = entity_data.get('3fgm', 0) or 0
+            3fga = entity_data.get('3fga', 0) or 0
+            return (3fgm / 3fga) if 3fga > 0 else 0
         
         elif col_key == 'ft_pct':
             ftm = entity_data.get('ftm', 0) or 0

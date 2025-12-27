@@ -32,17 +32,52 @@ DB_CONFIG = {
 TABLES = ['teams', 'players', 'player_season_stats', 'team_season_stats']
 
 # ============================================================================
-# NBA API CONFIGURATION
+# ENDPOINT EXECUTION TIER INFERENCE
 # ============================================================================
-# All field mappings are now defined in DB_COLUMNS below
-# This section only contains rate limiting and timeout configs
+# These functions infer execution tiers from endpoint names dynamically
+# This eliminates hardcoding and makes DB_COLUMNS the single source of truth
 
-NBA_API_CONFIG = {
-    'rate_limit_delay': float(os.getenv('API_RATE_LIMIT_DELAY', '0.6')),
-    'timeout_default': 20,
-    'timeout_bulk': 120,
-    'max_retries': 3,
-}
+def infer_execution_tier_from_endpoint(endpoint_name):
+    """
+    Infer execution tier from endpoint name pattern.
+    
+    Tier Classification:
+    - TIER 1 (league): Single API call returns all entities
+      Pattern: league* endpoints (leaguedashplayerstats, leaguehustlestatsplayer, etc.)
+      Strategy: 10 workers, no batching
+      
+    - TIER 2 (team): One API call per team (30 total)
+      Pattern: team* endpoints (teamdash*, teamplayeron*, etc.)
+      Strategy: 10 workers, no batching needed
+      
+    - TIER 3 (player): One API call per player (536 total)
+      Pattern: playerdash*, commonplayer* (per-player endpoints)
+      Strategy: 3 workers, batched execution with cooldowns
+      
+    Args:
+        endpoint_name (str): Name of the NBA API endpoint
+        
+    Returns:
+        str: 'league', 'team', or 'player'
+    """
+    endpoint_lower = endpoint_name.lower()
+    
+    # Player-specific endpoints (per-player API calls)
+    # MUST check these BEFORE team* to avoid misclassifying teamplayer* endpoints
+    if endpoint_lower.startswith('playerdash') or endpoint_lower.startswith('commonplayer'):
+        return 'player'
+    
+    # Team-specific endpoints (per-team API calls)
+    # Covers: teamdash*, teamplayeron*, etc.
+    if endpoint_lower.startswith('team'):
+        return 'team'
+    
+    # League-wide endpoints (single API call)
+    if endpoint_lower.startswith('league'):
+        return 'league'
+    
+    # Default to league tier for unknown patterns (safest)
+    return 'league'
 
 # ============================================================================
 # NBA CONFIGURATION
@@ -69,17 +104,10 @@ SEASON_TYPE_MAP = {
     'PlayIn': 3,
 }
 
-# Reverse mapping for lookups
-SEASON_TYPE_NAMES = {v: k for k, v in SEASON_TYPE_MAP.items()}
-
 NBA_CONFIG = {
     'current_season_year': get_current_season_year(),
     'current_season': get_current_season(),
     'season_type': int(os.getenv('SEASON_TYPE', '1')),  # 1=regular, 2=playoffs, 3=play-in
-    'api_rate_limit_delay': float(os.getenv('API_RATE_LIMIT_DELAY', '0.6')),  # Default 0.6s between API calls
-    'api_timeout_default': 20,  # Default timeout for most endpoints
-    'api_timeout_bulk': 120,  # Timeout for bulk/league-wide endpoints
-    'api_max_retries': 3,  # Default retry attempts
 }
 
 # ============================================================================
@@ -105,7 +133,7 @@ def get_teams_from_db():
         cursor.close()
         conn.close()
         return teams
-    except Exception as e:
+    except Exception:
         # Fallback: Use NBA's standard team ID range (1610612737-1610612766 = 30 teams)
         # This allows config to load even before database is populated
         return {1610612737 + i: (f'TEAM{i}', f'Team {i}') for i in range(30)}
@@ -503,7 +531,7 @@ DB_COLUMNS = {
     # ========================================================================
     # SHOOTING STATS (2PT, 3PT, FT)
     # ========================================================================
-    'fg2m': {
+    '2fgm': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -527,7 +555,7 @@ DB_COLUMNS = {
         }
     },
     
-    'fg2a': {
+    '2fga': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -551,7 +579,7 @@ DB_COLUMNS = {
         }
     },
     
-    'fg3m': {
+    '3fgm': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -575,7 +603,7 @@ DB_COLUMNS = {
         }
     },
     
-    'fg3a': {
+    '3fga': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -650,7 +678,7 @@ DB_COLUMNS = {
     # ========================================================================
     # ADVANCED SHOOTING STATS (Tracking data)
     # ========================================================================
-    'cont_rim_fgm': {
+    'cont_close_2fgm': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -665,15 +693,16 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_zone': 'RestrictedArea',
-            'defender_distance': '0-4 Feet - Tight',
-            'field': 'FGM',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefenderShooting',
+            'defender_distance_category': 'contested',  # Aggregates: 0-2ft Very Tight + 2-4ft Tight
+            'field': 'FG2M',
             'transform': 'safe_int'
         }
     },
     
-    'cont_rim_fga': {
+    'cont_close_2fga': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -688,15 +717,16 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_zone': 'RestrictedArea',
-            'defender_distance': '0-4 Feet - Tight',
-            'field': 'FGA',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefenderShooting',
+            'defender_distance_category': 'contested',  # Aggregates: 0-2ft Very Tight + 2-4ft Tight
+            'field': 'FG2A',
             'transform': 'safe_int'
         }
     },
     
-    'open_rim_fgm': {
+    'open_close_2fgm': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -711,15 +741,16 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_zone': 'RestrictedArea',
-            'defender_distance': '4+ Feet - Open',
-            'field': 'FGM',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefenderShooting',
+            'defender_distance_category': 'open',  # Aggregates: 4-6ft Open + 6+ft Wide Open
+            'field': 'FG2M',
             'transform': 'safe_int'
         }
     },
     
-    'open_rim_fga': {
+    'open_close_2fga': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -734,10 +765,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_zone': 'RestrictedArea',
-            'defender_distance': '4+ Feet - Open',
-            'field': 'FGA',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefenderShooting',
+            'defender_distance_category': 'open',  # Aggregates: 4-6ft Open + 6+ft Wide Open
+            'field': 'FG2A',
             'transform': 'safe_int'
         }
     },
@@ -757,10 +789,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_type': '2PT',
-            'defender_distance': '0-4 Feet - Tight',
-            'field': 'FGM',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefender10ftPlusShooting',
+            'defender_distance_category': 'contested',  # Aggregates: 0-2ft Very Tight + 2-4ft Tight
+            'field': 'FG2M',  # Fixed: was FG3M, should be FG2M
             'transform': 'safe_int'
         }
     },
@@ -780,10 +813,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_type': '2PT',
-            'defender_distance': '0-4 Feet - Tight',
-            'field': 'FGA',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefender10ftPlusShooting',
+            'defender_distance_category': 'contested',  # Aggregates: 0-2ft Very Tight + 2-4ft Tight
+            'field': 'FG2A',  # Fixed: was FG3A, should be FG2A
             'transform': 'safe_int'
         }
     },
@@ -803,10 +837,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_type': '2PT',
-            'defender_distance': '4+ Feet - Open',
-            'field': 'FGM',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefender10ftPlusShooting',
+            'defender_distance_category': 'open',  # Aggregates: 4-6ft Open + 6+ft Wide Open
+            'field': 'FG2M',  # Fixed: was FG3M, should be FG2M
             'transform': 'safe_int'
         }
     },
@@ -826,10 +861,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_type': '2PT',
-            'defender_distance': '4+ Feet - Open',
-            'field': 'FGA',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefender10ftPlusShooting',
+            'defender_distance_category': 'open',  # Aggregates: 4-6ft Open + 6+ft Wide Open
+            'field': 'FG2A',  # Fixed: was FG3A, should be FG2A
             'transform': 'safe_int'
         }
     },
@@ -849,10 +885,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_zone': '3PT',
-            'defender_distance': '0-4 Feet - Tight',
-            'field': 'FGM',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefender10ftPlusShooting',
+            'defender_distance_category': 'contested',  # Aggregates: 0-2ft Very Tight + 2-4ft Tight
+            'field': 'FG3M',
             'transform': 'safe_int'
         }
     },
@@ -872,10 +909,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_zone': '3PT',
-            'defender_distance': '0-4 Feet - Tight',
-            'field': 'FGA',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefender10ftPlusShooting',
+            'defender_distance_category': 'contested',  # Aggregates: 0-2ft Very Tight + 2-4ft Tight
+            'field': 'FG3A',
             'transform': 'safe_int'
         }
     },
@@ -895,10 +933,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_zone': '3PT',
-            'defender_distance': '4+ Feet - Open',
-            'field': 'FGM',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefender10ftPlusShooting',
+            'defender_distance_category': 'open',  # Aggregates: 4-6ft Open + 6+ft Wide Open
+            'field': 'FG3M',
             'transform': 'safe_int'
         }
     },
@@ -918,10 +957,11 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         },
         'team_source': {
-            'endpoint': 'leaguedashptstats',
-            'shot_zone': '3PT',
-            'defender_distance': '4+ Feet - Open',
-            'field': 'FGA',
+            'endpoint': 'teamdashptshots',
+            'execution_tier': 'team',
+            'result_set': 'ClosestDefender10ftPlusShooting',
+            'defender_distance_category': 'open',  # Aggregates: 4-6ft Open + 6+ft Wide Open
+            'field': 'FG3A',
             'transform': 'safe_int'
         }
     },
@@ -929,7 +969,7 @@ DB_COLUMNS = {
     # ========================================================================
     # REBOUNDING STATS
     # ========================================================================
-    'off_rebounds': {
+    'o_rebounds': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -953,7 +993,7 @@ DB_COLUMNS = {
         }
     },
     
-    'def_rebounds': {
+    'd_rebounds': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -984,13 +1024,15 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'applies_to_entities': ['player', 'team'],
         'player_source': {
-            'endpoint': 'leaguedashplayerstats_advanced',
+            'endpoint': 'leaguedashplayerstats',
+            'result_set': 'Advanced',
             'field': 'OREB_PCT',
             'transform': 'safe_int',
             'scale': 1000
         },
         'team_source': {
-            'endpoint': 'leaguedashteamstats_advanced',
+            'endpoint': 'leaguedashteamstats',
+            'measure_type_detailed_defense': 'Advanced',
             'field': 'OREB_PCT',
             'transform': 'safe_int',
             'scale': 1000
@@ -1004,53 +1046,51 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'applies_to_entities': ['player', 'team'],
         'player_source': {
-            'endpoint': 'leaguedashplayerstats_advanced',
+            'endpoint': 'leaguedashplayerstats',
+            'result_set': 'Advanced',
             'field': 'DREB_PCT',
             'transform': 'safe_int',
             'scale': 1000
         },
         'team_source': {
-            'endpoint': 'leaguedashteamstats_advanced',
+            'endpoint': 'leaguedashteamstats',
+            'measure_type_detailed_defense': 'Advanced',
             'field': 'DREB_PCT',
             'transform': 'safe_int',
             'scale': 1000
         }
     },
     
-    'cont_oreb': {
+    'cont_o_rebs': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
         'default': 0,
         'update_frequency': 'daily',
         'applies_to_entities': ['player', 'team'],
-        'player_source': {
-            'endpoint': 'playerdashptreb',
-            'field': 'OREB_CONTEST',
-            'transform': 'safe_int'
-        },
+        'description': 'Contested offensive rebounds',
         'team_source': {
-            'endpoint': 'leaguedashptreb',
-            'field': 'OREB_CONTEST',
+            'endpoint': 'teamdashptreb',
+            'execution_tier': 'team',
+            'result_set': 'OverallRebounding',
+            'field': 'C_OREB',
             'transform': 'safe_int'
         }
     },
     
-    'cont_dreb': {
+    'cont_d_rebs': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
         'default': 0,
         'update_frequency': 'daily',
         'applies_to_entities': ['player', 'team'],
-        'player_source': {
-            'endpoint': 'playerdashptreb',
-            'field': 'DREB_CONTEST',
-            'transform': 'safe_int'
-        },
+        'description': 'Contested defensive rebounds',
         'team_source': {
-            'endpoint': 'leaguedashptreb',
-            'field': 'DREB_CONTEST',
+            'endpoint': 'teamdashptreb',
+            'execution_tier': 'team',
+            'result_set': 'OverallRebounding',
+            'field': 'C_DREB',
             'transform': 'safe_int'
         }
     },
@@ -1062,16 +1102,7 @@ DB_COLUMNS = {
         'default': 0,
         'update_frequency': 'daily',
         'applies_to_entities': ['player', 'team'],
-        'player_source': {
-            'endpoint': 'playerdashboardbyshootingsplits',
-            'field': 'FGM',
-            'transform': 'safe_int'
-        },
-        'team_source': {
-            'endpoint': 'teamdashboardbyshootingsplits',
-            'field': 'FGM',
-            'transform': 'safe_int'
-        }
+        'description': 'Putbacks and tip shots (handled by transformation)'
     },
     
     # ========================================================================
@@ -1140,7 +1171,7 @@ DB_COLUMNS = {
         }
     },
     
-    'sec_assist': {
+    'sec_assists': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -1161,7 +1192,7 @@ DB_COLUMNS = {
         }
     },
     
-    'off_dist_x10': {
+    'o_dist_x10': {
         'table': 'stats',
         'type': 'INTEGER',
         'nullable': True,
@@ -1184,7 +1215,7 @@ DB_COLUMNS = {
         }
     },
     
-    'def_dist_x10': {
+    'd_dist_x10': {
         'table': 'stats',
         'type': 'INTEGER',
         'nullable': True,
@@ -1231,7 +1262,7 @@ DB_COLUMNS = {
         }
     },
     
-    'pot_ast': {
+    'pot_assists': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -1408,7 +1439,7 @@ DB_COLUMNS = {
         }
     },
     
-    'd_rim_fgm': {
+    'd_close_2fgm': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -1417,19 +1448,19 @@ DB_COLUMNS = {
         'applies_to_entities': ['player', 'team'],
         'player_source': {
             'endpoint': 'leaguedashptdefend',
-            'defense_category': 'Less Than 6Ft',
+            'defense_category': 'Less Than 10Ft',
             'field': 'D_FGM',
             'transform': 'safe_int'
         },
         'team_source': {
             'endpoint': 'leaguedashptteamdefend',
-            'defense_category': 'Less Than 6Ft',
+            'defense_category': 'Less Than 10Ft',
             'field': 'D_FGM',
             'transform': 'safe_int'
         }
     },
     
-    'd_rim_fga': {
+    'd_close_2fga': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -1438,13 +1469,13 @@ DB_COLUMNS = {
         'applies_to_entities': ['player', 'team'],
         'player_source': {
             'endpoint': 'leaguedashptdefend',
-            'defense_category': 'Less Than 6Ft',
+            'defense_category': 'Less Than 10Ft',
             'field': 'D_FGA',
             'transform': 'safe_int'
         },
         'team_source': {
             'endpoint': 'leaguedashptteamdefend',
-            'defense_category': 'Less Than 6Ft',
+            'defense_category': 'Less Than 10Ft',
             'field': 'D_FGA',
             'transform': 'safe_int'
         }
@@ -1536,21 +1567,21 @@ DB_COLUMNS = {
     
     'real_d_fg_pct_x1000': {
         'table': 'stats',
-        'type': 'SMALLINT',
+        'type': 'INTEGER',
         'nullable': True,
         'update_frequency': 'daily',
         'applies_to_entities': ['player', 'team'],
         'player_source': {
             'endpoint': 'leaguedashptdefend',
             'defense_category': 'Overall',
-            'field': 'D_FG_PCT',
+            'field': 'PCT_PLUSMINUS',
             'transform': 'safe_int',
             'scale': 1000
         },
         'team_source': {
             'endpoint': 'leaguedashptteamdefend',
             'defense_category': 'Overall',
-            'field': 'D_FG_PCT',
+            'field': 'PCT_PLUSMINUS',
             'transform': 'safe_int',
             'scale': 1000
         }
@@ -1566,13 +1597,15 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'applies_to_entities': ['player', 'team'],
         'player_source': {
-            'endpoint': 'leaguedashplayerstats_advanced',
+            'endpoint': 'leaguedashplayerstats',
+            'result_set': 'Advanced',
             'field': 'OFF_RATING',
             'transform': 'safe_int',
             'scale': 10
         },
         'team_source': {
-            'endpoint': 'leaguedashteamstats_advanced',
+            'endpoint': 'leaguedashteamstats',
+            'measure_type_detailed_defense': 'Advanced',
             'field': 'OFF_RATING',
             'transform': 'safe_int',
             'scale': 10
@@ -1586,13 +1619,15 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'applies_to_entities': ['player', 'team'],
         'player_source': {
-            'endpoint': 'leaguedashplayerstats_advanced',
+            'endpoint': 'leaguedashplayerstats',
+            'result_set': 'Advanced',
             'field': 'DEF_RATING',
             'transform': 'safe_int',
             'scale': 10
         },
         'team_source': {
-            'endpoint': 'leaguedashteamstats_advanced',
+            'endpoint': 'leaguedashteamstats',
+            'measure_type_detailed_defense': 'Advanced',
             'field': 'DEF_RATING',
             'transform': 'safe_int',
             'scale': 10
@@ -1610,12 +1645,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'applies_to_entities': ['player'],
-        'player_source': {
-            'endpoint': 'teamplayeronoffdetails',
-            'field': 'OFF_RATING',
-            'transform': 'safe_int',
-            'scale': 10
-        }
+        'description': 'Team offensive rating when player off court (handled by transformation)'
     },
     
     'tm_off_d_rating_x10': {
@@ -1624,12 +1654,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'applies_to_entities': ['player'],
-        'player_source': {
-            'endpoint': 'teamplayeronoffdetails',
-            'field': 'DEF_RATING',
-            'transform': 'safe_int',
-            'scale': 10
-        }
+        'description': 'Team defensive rating when player off court (handled by transformation)'
     }
 }
 
@@ -1752,7 +1777,7 @@ def generate_create_table_ddl():
 # ETL HELPER FUNCTIONS - Config-driven queries
 # ============================================================================
 
-def get_columns_by_endpoint(endpoint_name, entity='player', table=None):
+def get_columns_by_endpoint(endpoint_name, entity='player', table=None, pt_measure_type=None, measure_type_detailed_defense=None):
     """
     Get all columns that use a specific API endpoint for a given entity.
     
@@ -1760,6 +1785,8 @@ def get_columns_by_endpoint(endpoint_name, entity='player', table=None):
         endpoint_name: NBA API endpoint (e.g., 'leaguedashplayerstats')
         entity: 'player', 'team', or 'opponent'
         table: Optional table filter (e.g., 'player_season_stats', 'team_season_stats')
+        pt_measure_type: Optional filter for endpoints that use pt_measure_type (e.g., 'Passing', 'Possessions')
+        measure_type_detailed_defense: Optional filter for endpoints that use measure_type_detailed_defense (e.g., 'Advanced')
     
     Returns:
         Dict of {column_name: column_config} for matching columns
@@ -1818,7 +1845,22 @@ def get_columns_by_endpoint(endpoint_name, entity='player', table=None):
         # Check if column uses this endpoint (check entity-specific source first, then fall back to generic 'source')
         source = col_config.get(source_key) or col_config.get('source')
         if source and source.get('endpoint') == endpoint_name:
-            result[col_name] = col_config
+            # If pt_measure_type is specified, filter by it
+            if pt_measure_type is not None:
+                if source.get('pt_measure_type') == pt_measure_type:
+                    result[col_name] = col_config
+            # If measure_type_detailed_defense is specified, filter by it OR result_set
+            elif measure_type_detailed_defense is not None:
+                # Check both measure_type_detailed_defense (team) and result_set (player) fields
+                if (source.get('measure_type_detailed_defense') == measure_type_detailed_defense or 
+                    source.get('result_set') == measure_type_detailed_defense):
+                    result[col_name] = col_config
+            else:
+                # If no parameter filter, only include columns without special parameters
+                if ('pt_measure_type' not in source and 
+                    'measure_type_detailed_defense' not in source and 
+                    'result_set' not in source):
+                    result[col_name] = col_config
     
     return result
 
@@ -1864,7 +1906,6 @@ def get_columns_by_update_frequency(frequency):
             result[col_name] = col_config
     
     return result
-
 
 def get_opponent_columns():
     """
@@ -2025,5 +2066,5 @@ def parse_birthdate(date_str):
             except Exception:
                 continue
         return None
-    except:
+    except Exception:
         return None
