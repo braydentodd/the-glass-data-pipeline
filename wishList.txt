@@ -29,3 +29,12 @@ points per shots
 playtype data
 grenades
 heaves
+
+handedness
+
+does the etl backfill all seasons of a player's stats when they are added?
+does the etl get all playin and playoff stats for players and teams?
+does the etl get all rostered players for the past two seasons?
+does the etl remove all players who have not been on a roster for the past two season?
+can the etl get wingspan data?
+clean up logs so that the ONLY progress logs we see are fetching {}...

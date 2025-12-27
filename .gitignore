@@ -17,3 +17,6 @@ __pycache__/
 # Data
 *.csv
 *.txt
+
+# Secrets - Google credentials
+google-credentials.json
