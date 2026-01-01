@@ -30,6 +30,9 @@ playtype data
 grenades
 heaves
 handedness
+draft class
+draft selection
 
+Standardize ####-## year format
 
 does the etl backfill all seasons of a player's stats when a new one is found and added?

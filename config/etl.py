@@ -45,7 +45,7 @@ PARALLEL_EXECUTION = {
 
 SUBPROCESS_CONFIG = {
     # Subprocess batching (each subprocess handles this many players)
-    'players_per_subprocess': 600,      # Proven: 500 players per subprocess = 100% success
+    'players_per_subprocess': 1000,      # Split into 2 subprocesses (540 players / 2 = 270 each)
     
     # Per-request timing (within each subprocess)
     'delay_between_calls': 1.5,         # Seconds between API calls (conservative)
@@ -53,7 +53,7 @@ SUBPROCESS_CONFIG = {
     
     # Subprocess management
     'max_retries': 3,                   # Retries for failed subprocess
-    'subprocess_timeout': 1000,         # Max seconds per subprocess (60 min for 600 players - allows for API slowness)
+    'subprocess_timeout': 1500,          # Max seconds per subprocess (25 min for 1000 players: 1000 * 1.5s = 1500s + overhead)
 }
 
 # ============================================================================

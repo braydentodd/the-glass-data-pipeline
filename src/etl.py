@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Import config modules (works both with -m and direct execution)
 try:
-    from config.database import (
+    from config.db import (
         NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA,
         DB_COLUMNS, SEASON_TYPE_MAP,
         infer_execution_tier_from_endpoint,
@@ -55,7 +55,7 @@ try:
     )
 except ImportError:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from config.database import (
+    from config.db import (
         NBA_CONFIG, DB_CONFIG, TEAM_IDS, DB_SCHEMA,
         DB_COLUMNS, SEASON_TYPE_MAP,
         infer_execution_tier_from_endpoint,

@@ -12,6 +12,10 @@ NO HARDCODING. Everything is driven by this config.
 
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables first
+load_dotenv()
 
 # ============================================================================
 # DATABASE CONNECTION
@@ -120,22 +124,25 @@ def get_teams_from_db():
     Returns: dict of {team_id: (abbreviation, full_name)}
     """
     import psycopg2
+    
     try:
         conn = psycopg2.connect(
             host=DB_CONFIG['host'],
             database=DB_CONFIG['database'],
             user=DB_CONFIG['user'],
-            password=DB_CONFIG['password']
+            password=DB_CONFIG['password'],
+            port=DB_CONFIG['port']
         )
         cursor = conn.cursor()
-        cursor.execute("SELECT team_id, abbreviation, full_name FROM teams ORDER BY team_id")
+        cursor.execute("SELECT team_id, team_abbr, team_name FROM teams ORDER BY team_id")
         teams = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
         cursor.close()
         conn.close()
         return teams
-    except Exception:
+    except Exception as e:
         # Fallback: Use NBA's standard team ID range (1610612737-1610612766 = 30 teams)
         # This allows config to load even before database is populated
+        print(f"Warning: Could not fetch teams from database ({e}), using fallback")
         return {1610612737 + i: (f'TEAM{i}', f'Team {i}') for i in range(30)}
 
 # Lazy-loaded team data (fetched from DB on first access)
@@ -164,6 +171,24 @@ def get_teams_by_abbr():
 
 # Team data - lazy-loaded from database
 TEAM_IDS = get_team_ids()  # {abbreviation: team_id}
+
+# NBA_TEAMS - Complete team information
+# Usage: NBA_TEAMS = [{'abbr': 'LAL', 'name': 'Los Angeles Lakers', 'id': 1610612747}, ...]
+def get_nba_teams():
+    """
+    Get list of all NBA teams with complete information.
+    Returns list of dicts with 'abbr', 'name', and 'id' keys.
+    """
+    global _teams_cache
+    if _teams_cache is None:
+        _teams_cache = get_teams_from_db()
+    
+    return [
+        {'abbr': abbr, 'name': name, 'id': tid}
+        for tid, (abbr, name) in sorted(_teams_cache.items(), key=lambda x: x[1][0])
+    ]
+
+NBA_TEAMS = get_nba_teams()  # List of all teams for iteration
 
 # ============================================================================
 # DATABASE SCHEMA - Dynamically generated from DB_COLUMNS
@@ -1129,7 +1154,7 @@ DB_COLUMNS = {
         }
     },
     
-    'poss_time': {
+    'time_on_ball': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
