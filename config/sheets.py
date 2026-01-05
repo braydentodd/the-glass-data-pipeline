@@ -50,7 +50,6 @@ SERVER_CONFIG = {
 
 STAT_CONSTANTS = {
     'game_length_minutes': 48.0,        # NBA game length
-    'ts_fta_multiplier': 0.44,          # True shooting FTA coefficient
     'default_per_minutes': 36.0,        # Default minutes for per-minute stats
     'default_per_possessions': 100.0,   # Default possessions for per-possession stats
 }
@@ -62,7 +61,7 @@ STAT_CONSTANTS = {
 # Section display configuration - defines how each section appears in sheets
 SECTION_CONFIG = {
     'entities': {
-        'display_name': 'Players',
+        'display_name': 'Names',
     },
     'player_info': {
         'display_name': 'Player Info',
@@ -95,6 +94,9 @@ SUBSECTIONS = [
     'onoff',          # Offensive/Defensive Rating, Off-court ratings
 ]
 
+# List of all sections (for backwards compatibility)
+SECTIONS = list(SECTION_CONFIG.keys())
+
 # ============================================================================
 # COLORS & PERCENTILES
 # ============================================================================
@@ -118,1192 +120,1109 @@ COLOR_THRESHOLDS = {
 # ============================================================================
 # DISPLAY_COLUMNS - Master dictionary for all display columns
 # ============================================================================
-# Format:
-# 'column_key': {
-#     'key': 'column_key',                    # Must match key (for consistency)
-#     'db_field': 'database_field_name',      # Maps to DB_COLUMNS
-#     'display_name': 'PTS',                  # Column header in sheets
-#     'section': ['current_stats', 'historical_stats'],  # List of sections where column appears
-#     'subsection': 'scoring',                # Subsection within stats sections (or None)
-#     'applies_to_entities': ['player', 'team', 'opponent'],  # Which entities get this column
-#     'view_mode': 'both',                    # 'basic', 'advanced', or 'both'
-#     'has_percentile': True,                 # Whether to generate percentile column
-#     'editable': False,                      # Whether users can edit in sheets
-#     'reverse_percentile': False,            # True for stats where lower is better
-#     'format_as_percentage': False,          # Display as percentage
-#     'decimal_places': 1,                    # Number of decimal places
-#     'calculated': False,                    # Whether value is calculated from other fields
-#     'calculation_formula': None,            # Formula for calculated fields
-# }
 
 DISPLAY_COLUMNS = {
-    # ========================================================================
-    # PLAYER INFO SECTION
-    # ========================================================================
-      'names': {
-        'db_field': 'name',
+
+    'names': {
         'display_name': 'Names',
         'section': ['entities'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 0,
+        'player_formula': 'name',
+        'team_formula': 'Team',
+        'opponents_formula': 'Opponents',
     },
     
     'team': {
-        'key': 'team',
-        'db_field': 'team_abbr',
-        'display_name': 'Team',
+        'display_name': 'Tm',
         'section': ['player_info'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'nba',
+        'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 0,
+        'player_formula': 'team_abbr',
+        'team_formula': None,
+        'opponents_formula': None,
     },
     
     'jersey': {
-        'key': 'jersey',
-        'db_field': 'jersey_number',
         'display_name': '#',
         'section': ['player_info'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 0,
+        'player_formula': 'jersey_number',
+        'team_formula': None,
+        'opponents_formula': None,
     },
     
     'experience': {
-        'key': 'experience',
-        'db_field': 'years_experience',
         'display_name': 'Exp',
         'section': ['player_info'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
-        'decimal_places': 0,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'years_experience',
+        'team_formula': 'years_experience',
+        'opponents_formula': None,
     },
     
     'age': {
-        'key': 'age',
-        'db_field': 'birthdate',  # Calculate age from birthdate
         'display_name': 'Age',
         'section': ['player_info'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
         'editable': False,
-        'reverse_percentile': True,  # Younger is better
-        'format_as_percentage': False,
+        'reverse_percentile': True,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'age',
+        'team_formula': 'age',
+        'opponents_formula': None,
     },
     
     'height': {
-        'key': 'height',
-        'db_field': 'height_inches',
-        'display_name': 'Height',
+        'display_name': 'Ht',
         'section': ['player_info'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
-        'editable': True,
+        'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
-        'decimal_places': 0,
+        'format': 'height',
+        'decimal_places': 1,
+        'player_formula': 'height_inches',
+        'team_formula': 'height_inches',
+        'opponents_formula': None,
     },
     
     'weight': {
-        'key': 'weight',
-        'db_field': 'weight_lbs',
-        'display_name': 'Weight',
+        'display_name': 'Wt',
         'section': ['player_info'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
-        'editable': True,
+        'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
-        'decimal_places': 0,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'weight_lbs',
+        'team_formula': 'weight_lbs',
+        'opponents_formula': None,
     },
     
     'wingspan': {
-        'key': 'wingspan',
-        'db_field': 'wingspan_inches',
-        'display_name': 'Wingspan',
+        'display_name': 'WS',
         'section': ['player_info'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
-        'format_as_percentage': False,
-        'decimal_places': 0,
+        'format': 'height',
+        'decimal_places': 1,
+        'player_formula': 'wingspan_inches',
+        'team_formula': 'wingspan_inches',
+        'opponents_formula': None,
     },
     
     'hand': {
-        'key': 'hand',
-        'db_field': 'hand',
-        'display_name': 'Hand',
+        'display_name': '🖐️',
         'section': ['player_info'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 0,
+        'player_formula': 'hand',
+        'team_formula': None,
+        'opponents_formula': None,
     },
     
-    # ========================================================================
-    # ANALYSIS SECTION
-    # ========================================================================
-    
     'notes': {
-        'key': 'notes',
-        'db_field': 'notes',
         'display_name': 'Notes',
         'section': ['analysis'],
         'subsection': None,
-        'applies_to_entities': ['player', 'team'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 0,
+        'player_formula': 'notes',
+        'team_formula': 'notes',
+        'opponents_formula': None,
     },
-    
-    # ========================================================================
-    # STATS SECTIONS - RATES SUBSECTION
-    # ========================================================================
+
     'years': {
-        'key': 'games',
-        'db_field': 'years',
         'display_name': 'Yrs',
         'section': ['historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'sheets': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 0,
+        'player_formula': 'year',
+        'team_formula': 'year',
+        'opponents_formula': None,
     },
         
     'games': {
-        'key': 'games',
-        'db_field': 'games_played',
-        'display_name': 'Games',
+        'display_name': 'GMS',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
-        'decimal_places': 0,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'games_played',
+        'team_formula': 'games_played',
+        'opponents_formula': None,
     },
     
     'minutes': {
-        'key': 'minutes',
-        'db_field': 'minutes_x10',
-        'display_name': 'Minutes',
+        'display_name': 'Min',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'divide_by_10': True,
+        'player_formula': 'minutes_x10 / 10',
+        'team_formula': 'minutes_x10 / 10',
+        'opponents_formula': None,
     },
     
-    'possessions': {
-        'key': 'possessions',
-        'db_field': None,
-        'display_name': 'Poss',
+    'pace': {
+        'display_name': 'Pac',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': '2fga + 3fga - off_rebounds + turnovers + (0.44 * fta)',
+        'player_formula': 'possessions / minutes',
+        'team_formula': 'possessions / minutes',
+        'opponents_formula': None,
     },
-    
-    # ========================================================================
-    # STATS SECTIONS - SCORING SUBSECTION
-    # ========================================================================
     
     'points': {
-        'key': 'points',
-        'db_field': None,
         'display_name': 'PTS',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
+        'player_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
+        'team_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
+        'opponents_formula': '(opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm',
     },
     
-    'ts_pct': {
-        'key': 'ts_pct',
-        'db_field': None,
-        'display_name': 'TS%',
+    'true_points_per_shot_attempt': {
+        'display_name': 'TPS',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'points / (2 * (2fga + 3fga + 0.44 * fta))',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': 'points / (2fga + 3fga + 0.44 * fta)',
+        'team_formula': 'points / (2fga + 3fga + 0.44 * fta)',
+        'opponents_formula': 'points / (opp_2fga + opp_3fga + 0.44 * opp_fta)',
     },
     
     '2fga': {
-        'key': '2fga',
-        'db_field': '2fga',
-        'display_name': '2FGA',
+        'display_name': '2A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'basic',  # Hidden on advanced
+        'stat_mode': 'basic',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': '2fga',
+        'team_formula': '2fga',
+        'opponents_formula': 'opp_2fga',
     },
     
-    '2fg_pct': {
-        'key': '2fg_pct',
-        'db_field': None,
-        'display_name': '2FG%',
+    'Points_Per_Two_attempt': {
+        'display_name': 'P2',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'basic',  # Hidden on advanced
+        'stat_mode': 'basic',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': '2fgm / 2fga',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '2 * (2fgm / 2fga)',
+        'team_formula': '2 * (2fgm / 2fga)',
+        'opponents_formula': '2 * (opp_2fgm / opp_2fga)',
     },
     
     '3fga': {
-        'key': '3fga',
-        'db_field': '3fga',
-        'display_name': '3FGA',
+        'display_name': '3A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'basic',  # Hidden on advanced
+        'stat_mode': 'basic',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': '3fga',
+        'team_formula': '3fga',
+        'opponents_formula': 'opp_3fga',
     },
     
-    '3fg_pct': {
-        'key': '3fg_pct',
-        'db_field': None,
-        'display_name': '3FG%',
+    'Points_Per_Three_attempt': {
+        'display_name': 'P3',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'basic',  # Hidden on advanced
+        'stat_mode': 'basic',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': '3fgm / 3fga',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '3 * (3fgm / 3fga)',
+        'team_formula': '3 * (3fgm / 3fga)',
+        'opponents_formula': '3 * (opp_3fgm / opp_3fga)',
     },
     
-    'cont_rim_2fga': {
-        'key': 'cont_rim_2fga',
-        'db_field': 'cont_close_2fga',
-        'display_name': 'Cont <10ft 2FGA',
+    'cont_close_2fga': {
+        'display_name': 'CC2A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'cont_close_2fga',
+        'team_formula': 'cont_close_2fga',
+        'opponents_formula': None,
     },
     
-    'cont_rim_2fg_pct': {
-        'key': 'cont_rim_2fg_pct',
-        'db_field': None,
-        'display_name': 'Cont <10ft 2FG%',
+    'Points_Per_cont_close_2fga': {
+        'display_name': 'PCC2',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'cont_close_2fgm / cont_close_2fga',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '2 * (cont_close_2fgm / cont_close_2fga)',
+        'team_formula': '2 * (cont_close_2fgm / cont_close_2fga)',
+        'opponents_formula': None,
     },
     
-    'open_rim_2fga': {
-        'key': 'open_rim_2fga',
-        'db_field': 'open_close_2fga',
-        'display_name': 'Open <10ft 2FGA',
+    'open_close_2fga': {
+        'display_name': 'OC2A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'open_close_2fga',
+        'team_formula': 'open_close_2fga',
+        'opponents_formula': None,
     },
     
-    'open_rim_2fg_pct': {
-        'key': 'open_rim_2fg_pct',
-        'db_field': None,
-        'display_name': 'Open <10ft 2FG%',
+    'Points_Per_open_close_2fga': {
+        'display_name': 'POC2',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'open_close_2fgm / open_close_2fga',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '2 * (open_close_2fgm / open_close_2fga)',
+        'team_formula': '2 * (open_close_2fgm / open_close_2fga)',
+        'opponents_formula': None,
     },
     
-    'cont_mid_2fga': {
-        'key': 'cont_mid_2fga',
-        'db_field': None,
-        'display_name': 'Cont >10ft 2FGA',
+    'cont_long_2fga': {
+        'display_name': 'CL2A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'cont_2fga - cont_close_2fga',
+        'player_formula': 'cont_2fga - cont_close_2fga',
+        'team_formula': 'cont_2fga - cont_close_2fga',
+        'opponents_formula': None,
     },
     
-    'cont_mid_2fg_pct': {
-        'key': 'cont_mid_2fg_pct',
-        'db_field': None,
-        'display_name': 'Cont >10ft 2FG%',
+    'points_per_cont_long_2fga': {
+        'display_name': 'PCL2',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': '(cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga)',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
+        'team_formula': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
+        'opponents_formula': None,
     },
     
-    'open_mid_2fga': {
-        'key': 'open_mid_2fga',
-        'db_field': None,
-        'display_name': 'Open >10ft 2FGA',
+    'open_long_2fga': {
+        'display_name': 'OL2A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'open_2fga - open_close_2fga',
+        'player_formula': 'open_2fga - open_close_2fga',
+        'team_formula': 'open_2fga - open_close_2fga',
+        'opponents_formula': None,
     },
     
-    'open_mid_2fg_pct': {
-        'key': 'open_mid_2fg_pct',
-        'db_field': None,
-        'display_name': 'Open >10ft 2FG%',
+    'points_per_open_long_2fga': {
+        'display_name': 'POL2',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': '(open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga)',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
+        'team_formula': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
+        'opponents_formula': None,
     },
     
     'cont_3fga': {
-        'key': 'cont_3fga',
-        'db_field': 'cont_3fga',
-        'display_name': 'Cont 3FGA',
+        'display_name': 'C3A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'cont_3fga',
+        'team_formula': 'cont_3fga',
+        'opponents_formula': None,
     },
     
-    'cont_3fg_pct': {
-        'key': 'cont_3fg_pct',
-        'db_field': None,
-        'display_name': 'Cont 3FG%',
+    'points_per_cont_3fga': {
+        'display_name': 'PC3',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'cont_3fgm / cont_3fga',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '3 * (cont_3fgm / cont_3fga)',
+        'team_formula': '3 * (cont_3fgm / cont_3fga)',
+        'opponents_formula': None,
     },
     
     'open_3fga': {
-        'key': 'open_3fga',
-        'db_field': 'open_3fga',
-        'display_name': 'Open 3FGA',
+        'display_name': 'O3A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'open_3fga',
+        'team_formula': 'open_3fga',
+        'opponents_formula': None,
     },
     
-    'open_3fg_pct': {
-        'key': 'open_3fg_pct',
-        'db_field': None,
-        'display_name': 'Open 3FG%',
+    'points_per_open_3fga': {
+        'display_name': 'PO3',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'open_3fgm / open_3fga',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '3 * (open_3fgm / open_3fga)',
+        'team_formula': '3 * (open_3fgm / open_3fga)',
+        'opponents_formula': None,
     },
     
-    'fta': {
-        'key': 'fta',
-        'db_field': 'fta',
-        'display_name': 'FTA',
+    'free_throw_rate': {
+        'display_name': 'FTR',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'percentage',
         'decimal_places': 1,
+        'totals_config': {
+            'display_name': 'FTA',
+            'format': 'number',
+            'decimal_places': 1,
+            'player_formula': 'fta',
+            'team_formula': 'fta',
+            'opponents_formula': 'opp_fta',
+        },
+        'player_formula': 'fta / (2fga + 3fga)',
+        'team_formula': 'fta / (2fga + 3fga)',
+        'opponents_formula': 'opp_fta / (opp_2fga + opp_3fga)',
     },
     
-    'ft_pct': {
-        'key': 'ft_pct',
-        'db_field': None,
-        'display_name': 'FT%',
+    'points_per_fta': {
+        'display_name': 'PFT',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'ftm / fta',
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': 'ftm / fta',
+        'team_formula': 'ftm / fta',
+        'opponents_formula': 'opp_ftm / opp_fta',
     },
-    
-    # ========================================================================
-    # STATS SECTIONS - DISTRIBUTION SUBSECTION (Ball Management)
-    # ========================================================================
     
     'assists': {
-        'key': 'assists',
-        'db_field': 'assists',
         'display_name': 'AST',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'assists',
+        'team_formula': 'assists',
+        'opponents_formula': 'opp_assists',
     },
     
     'potential_assists': {
-        'key': 'potential_assists',
-        'db_field': 'pot_assists',
-        'display_name': 'Pot AST',
+        'display_name': 'PAST',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'pot_assists',
+        'team_formula': 'pot_assists',
+        'opponents_formula': None,
     },
     
     'secondary_assists': {
-        'key': 'secondary_assists',
-        'db_field': 'sec_assists',
-        'display_name': '2nd AST',
+        'display_name': '2AST',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'sec_assists',
+        'team_formula': 'sec_assists',
+        'opponents_formula': None,
     },
     
     'passes': {
-        'key': 'passes',
-        'db_field': 'passes',
-        'display_name': 'Passes',
+        'display_name': 'Pas',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'passes',
+        'team_formula': 'passes',
+        'opponents_formula': None,
     },
     
     'touches': {
-        'key': 'touches',
-        'db_field': 'touches',
-        'display_name': 'Touches',
+        'display_name': 'Tou',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'touches',
+        'team_formula': 'touches',
+        'opponents_formula': None,
     },
     
     'time_on_ball': {
-        'key': 'time_on_ball',
-        'db_field': 'time_on_ball',
-        'display_name': 'Time On Ball',
+        'display_name': 'TOB',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'time_on_ball',
+        'team_formula': 'time_on_ball',
+        'opponents_formula': None,
     },
     
     'turnovers': {
-        'key': 'turnovers',
-        'db_field': 'turnovers',
-        'display_name': 'TO',
+        'display_name': 'TOV',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
-        'reverse_percentile': True,  # Lower is better
-        'format_as_percentage': False,
+        'reverse_percentile': True,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'turnovers',
+        'team_formula': 'turnovers',
+        'opponents_formula': 'opp_turnovers',
     },
     
-    # ========================================================================
-    # STATS SECTIONS - REBOUNDING SUBSECTION
-    # ========================================================================
-    
     'oreb_pct': {
-        'key': 'oreb_pct',
-        'db_field': 'o_reb_pct_x1000',
-        'display_name': 'OREB%',
+        'display_name': 'OR%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
+        'format': 'percentage',
         'decimal_places': 1,
-        'divide_by_1000': True,
-        'db_field_totals': 'off_rebounds',  # In totals mode, use raw count
+        'totals_config': {
+            'display_name': 'OREB',
+            'format': 'number',
+            'decimal_places': 1,
+            'player_formula': 'o_rebounds',
+            'team_formula': 'o_rebounds',
+            'opponents_formula': 'opp_o_rebounds',
+        },
+        'player_formula': 'o_rebound_pct_x1000 / 1000',
+        'team_formula': 'o_rebound_pct_x1000 / 1000',
+        'opponents_formula': 'opp_o_rebound_pct_x1000 / 1000',
     },
     
     'dreb_pct': {
-        'key': 'dreb_pct',
-        'db_field': 'd_reb_pct_x1000',
-        'display_name': 'DREB%',
+        'display_name': 'DR%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'divide_by_1000': True,
-        'db_field_totals': 'def_rebounds',  # In totals mode, use raw count
+        'format': 'percentage',
+        'totals_config': {
+            'display_name': 'DRS',
+            'format': 'number',
+            'decimal_places': 1,
+            'player_formula': 'd_rebounds',
+            'team_formula': 'd_rebounds',
+            'opponents_formula': 'opp_d_rebounds',
+        },
+        'player_formula': 'd_rebound_pct_x1000 / 1000',
+        'team_formula': 'd_rebound_pct_x1000 / 1000',
+        'opponents_formula': 'opp_d_rebound_pct_x1000 / 1000',
     },
     
     'cont_oreb_pct': {
-        'key': 'cont_oreb_pct',
-        'db_field': None,
-        'display_name': 'Cont OREB%',
+        'display_name': 'COR%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
+        'format': 'percentage',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'cont_o_rebs / o_rebounds',
+        'totals_config': {
+            'display_name': 'COR',
+            'format': 'number',
+            'decimal_places': 1,
+            'player_formula': 'cont_o_rebs',
+            'team_formula': 'cont_o_rebs',
+            'opponents_formula': None,
+        },
+        'player_formula': 'cont_o_rebs / o_rebounds',
+        'team_formula': 'cont_o_rebs / o_rebounds',
+        'opponents_formula': None,
     },
     
     'cont_dreb_pct': {
-        'key': 'cont_dreb_pct',
-        'db_field': None,
         'display_name': 'Cont DREB%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
+        'format': 'percentage',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'cont_d_rebs / d_rebounds',
+        'totals_config': {
+            'display_name': 'CDR',
+            'format': 'number',
+            'decimal_places': 1,
+            'player_formula': 'cont_d_rebs',
+            'team_formula': 'cont_d_rebs',
+            'opponents_formula': None,
+        },
+        'player_formula': 'cont_d_rebs / d_rebounds',
+        'team_formula': 'cont_d_rebs / d_rebounds',
+        'opponents_formula': None,
     },
     
-    'putbacks_pct': {
-        'key': 'putbacks_pct',
-        'db_field': None,
-        'display_name': 'Putbacks%',
+    'putbacks': {
+        'display_name': 'Putbacks',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
+        'format': 'number',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'putbacks / o_rebounds',
+        'player_formula': 'putbacks / o_rebounds',
+        'team_formula': 'putbacks / o_rebounds',
+        'opponents_formula': None,
     },
     
-    # ========================================================================
-    # STATS SECTIONS - MOVEMENT SUBSECTION
-    # ========================================================================
-    
     'off_distance': {
-        'key': 'off_distance',
-        'db_field': 'off_distance_x10',
         'display_name': 'Off Dist',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'divide_by_10': True,
+        'player_formula': 'o_dist_x10 / 10',
+        'team_formula': None,
+        'opponents_formula': None,
     },
     
     'def_distance': {
-        'key': 'def_distance',
-        'db_field': 'def_distance_x10',
         'display_name': 'Def Dist',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'divide_by_10': True,
+        'player_formula': 'd_dist_x10 / 10',
+        'team_formula': None,
+        'opponents_formula': None,
     },
     
-    # ========================================================================
-    # STATS SECTIONS - DEFENSE SUBSECTION
-    # ========================================================================
-    
-    'def_rim_2fga': {
-        'key': 'def_rim_2fga',
-        'db_field': 'def_rim_2fga',
-        'display_name': 'Def <10ft 2FGA',
+    'def_close_2fga': {
+        'display_name': 'DC2A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'd_close_2fga',
+        'team_formula': 'd_close_2fga',
+        'opponents_formula': None,
     },
     
-    'def_rim_2fg_pct': {
-        'key': 'def_rim_2fg_pct',
-        'db_field': None,
-        'display_name': 'Def <10ft 2FG%',
+    'points_per_def_close_2fga': {
+        'display_name': 'PDC2',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
-        'reverse_percentile': True,  # Lower is better
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'd_close_2fgm / d_close_2fga',
+        'reverse_percentile': True,
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '2 * (d_close_2fgm / d_close_2fga)',
+        'team_formula': '2 * (d_close_2fgm / d_close_2fga)',
+        'opponents_formula': None,
     },
     
-    'def_mid_2fga': {
-        'key': 'def_mid_2fga',
-        'db_field': None,
-        'display_name': 'Def >10ft 2FGA',
+    'def_long_2fga': {
+        'display_name': 'DL2A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'd_2fga - d_close_2fga',
+        'player_formula': 'd_2fga - d_close_2fga',
+        'team_formula': None,
+        'opponents_formula': None,
     },
     
-    'def_mid_2fg_pct': {
-        'key': 'def_mid_2fg_pct',
-        'db_field': None,
-        'display_name': 'Def >10ft 2FG%',
+    'points_per_def_long_2fga': {
+        'display_name': 'PDL2',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
-        'reverse_percentile': True,  # Lower is better
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': '(d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga)',
+        'reverse_percentile': True,
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
+        'team_formula': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
+        'opponents_formula': None,
     },
     
     'def_3fga': {
-        'key': 'def_3fga',
-        'db_field': 'd_3fga',
-        'display_name': 'Def 3FGA',
+        'display_name': 'D3A',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'd_3fga',
+        'team_formula': 'd_3fga',
+        'opponents_formula': None,
     },
     
-    'def_3fg_pct': {
-        'key': 'def_3fg_pct',
-        'db_field': None,
-        'display_name': 'Def 3FG%',
+    'points_per_def_3fga': {
+        'display_name': 'PD3',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
-        'reverse_percentile': True,  # Lower is better
-        'format_as_percentage': True,
-        'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'd_3fgm / d_3fga',
+        'reverse_percentile': True,
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '3 * (d_3fgm / d_3fga)',
+        'team_formula': '3 * (d_3fgm / d_3fga)',
+        'opponents_formula': None,
     },
     
     'real_def_pct': {
-        'key': 'real_def_pct',
-        'db_field': 'real_d_fg_pct_x1000',
-        'display_name': 'Real Def%',
+        'display_name': 'RD%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
-        'reverse_percentile': True,  # Lower is better
-        'format_as_percentage': True,
+        'reverse_percentile': True,
+        'format': 'percentage',
         'decimal_places': 1,
-        'divide_by_1000': True,
+        'player_formula': 'real_d_fg_pct_x1000 / 1000',
+        'team_formula': 'real_d_fg_pct_x1000 / 1000',
+        'opponents_formula': None,
     },
     
     'block_pct': {
-        'key': 'block_pct',
-        'db_field': None,
-        'display_name': 'Block%',
+        'display_name': 'Blk%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': True,
+        'format': 'percentage',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'blocks / contests',
+        'totals_config': {
+            'display_name': 'BLK',
+            'format': 'number',
+            'decimal_places': 1,
+            'player_formula': 'blocks',
+            'team_formula': 'blocks',
+            'opponents_formula': 'opp_blocks',
+        },
+        'player_formula': 'blocks / contests',
+        'team_formula': 'blocks / (opp_2fga + opp_3fga)',
+        'opponents_formula': 'opp_blocks / (2fga + 3fga)',
     },
     
     'contests': {
-        'key': 'contests',
-        'db_field': 'contests',
         'display_name': 'Contests',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'contests',
+        'team_formula': 'contests',
+        'opponents_formula': 'opp_contests',
     },
     
     'steals_plus_charges': {
-        'key': 'steals_plus_charges',
-        'db_field': None,
-        'display_name': 'Steals+Charges',
+        'display_name': 'TOVF',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'calculated': True,
-        'calculation_formula': 'steals + charges',
+        'player_formula': 'steals + charges',
+        'team_formula': 'steals + charges',
+        'opponents_formula': None,
     },
     
     'deflections': {
-        'key': 'deflections',
-        'db_field': 'deflections',
         'display_name': 'Deflections',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'advanced',  # Hidden on basic
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-    },
-    
-    'charges': {
-        'key': 'charges',
-        'db_field': 'charges',
-        'display_name': 'Charges',
-        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'defense',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
-        'has_percentile': True,
-        'is_stat': True,
-        'editable': False,
-        'reverse_percentile': False,
-        'format_as_percentage': False,
-        'decimal_places': 1,
+        'player_formula': 'deflections',
+        'team_formula': 'deflections',
+        'opponents_formula': 'opp_deflections',
     },
     
     'fouls': {
-        'key': 'fouls',
-        'db_field': 'fouls',
         'display_name': 'Fouls',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
-        'reverse_percentile': True,  # Lower is better
-        'format_as_percentage': False,
+        'reverse_percentile': True,
+        'format': 'number',
         'decimal_places': 1,
+        'player_formula': 'fouls',
+        'team_formula': 'fouls',
+        'opponents_formula': 'opp_fouls',
     },
     
-    # ========================================================================
-    # STATS SECTIONS - ON/OFF SUBSECTION
-    # ========================================================================
-    
     'off_rating': {
-        'key': 'off_rating',
-        'db_field': 'off_rating_x10',
-        'display_name': 'ORtg',
+        'display_name': 'ORT',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'divide_by_10': True,
+        'player_formula': 'off_rating_x10 / 10',
+        'team_formula': 'off_rating_x10 / 10',
+        'opponents_formula': None,
     },
     
     'def_rating': {
-        'key': 'def_rating',
-        'db_field': 'def_rating_x10',
-        'display_name': 'DRtg',
+        'display_name': 'DRT',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
-        'reverse_percentile': True,  # Lower is better
-        'format_as_percentage': False,
+        'reverse_percentile': True,
+        'format': 'number',
         'decimal_places': 1,
-        'divide_by_10': True,
+        'player_formula': 'def_rating_x10 / 10',
+        'team_formula': 'def_rating_x10 / 10',
+        'opponents_formula': None,
     },
     
     'off_onoff': {
-        'key': 'off_onoff',
-        'db_field': 'off_onoff_x10',
-        'display_name': 'Off On/Off',
+        'display_name': 'OO/O',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'divide_by_10': True,
+        'player_formula': 'off_onoff_x10 / 10',
+        'team_formula': None,
+        'opponents_formula': None,
     },
     
     'def_onoff': {
-        'key': 'def_onoff',
-        'db_field': 'def_onoff_x10',
-        'display_name': 'Def On/Off',
+        'display_name': 'DO/O',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 1,
-        'divide_by_10': True,
-    },
-    
-    'years': {
-        'key': 'years',
-        'db_field': 'years',  # Calculated field showing which years are included
-        'display_name': 'Years',
-        'section': ['historical_stats', 'postseason_stats'],
-        'subsection': None,
-        'applies_to_entities': ['player', 'team', 'opponent'],
-        'view_mode': 'both',
-        'has_percentile': False,
-        'is_stat': False,
-        'editable': False,
-        'reverse_percentile': False,
-        'format_as_percentage': False,
-        'decimal_places': 0,
-        'calculated': True,
-        'calculation_formula': 'format_years_range',  # Helper function to format year range
+        'player_formula': 'def_onoff_x10 / 10',
+        'team_formula': None,
+        'opponents_formula': None,
     },
     
     # ========================================================================
     # IDENTITY SECTION
     # ========================================================================
     
-    'player_id': {
-        'key': 'player_id',
-        'db_field': 'player_id',
+    'nba_id': {
         'display_name': 'NBA ID',
         'section': ['identity'],
         'subsection': None,
-        'applies_to_entities': ['player'],
-        'view_mode': 'both',
+        'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
-        'format_as_percentage': False,
+        'format': 'number',
         'decimal_places': 0,
+        'player_formula': 'player_id',
+        'team_formula': 'team_id',
+        'opponents_formula': None,
     },
 }
 
@@ -1317,22 +1236,30 @@ def get_display_columns_by_section(section):
     return {k: v for k, v in DISPLAY_COLUMNS.items() if v['section'] == section}
 
 
-def get_display_columns_by_view(view_mode):
+def get_display_columns_by_view(stat_mode):
     """
     Get display columns for a specific view mode.
     Args:
-        view_mode: 'basic', 'advanced', or 'both'
+        stat_mode: 'basic', 'advanced', or 'both'
     """
-    if view_mode == 'both':
+    if stat_mode == 'both':
         return DISPLAY_COLUMNS
     return {k: v for k, v in DISPLAY_COLUMNS.items() 
-            if v['view_mode'] in [view_mode, 'both']}
+            if v['stat_mode'] in [stat_mode, 'both']}
 
 
 def get_display_columns_by_entity(entity_type):
     """Get display columns applicable to an entity type."""
-    return {k: v for k, v in DISPLAY_COLUMNS.items() 
-            if entity_type in v['applies_to_entities']}
+    result = {}
+    for k, v in DISPLAY_COLUMNS.items():
+        # Check if the entity has a formula (not None)
+        if entity_type == 'player' and v.get('player_formula') is not None:
+            result[k] = v
+        elif entity_type == 'team' and v.get('team_formula') is not None:
+            result[k] = v
+        elif entity_type == 'opponents' and v.get('opponents_formula') is not None:
+            result[k] = v
+    return result
 
 
 def get_display_columns_by_period(period):
@@ -1371,22 +1298,22 @@ def generate_percentile_columns():
         
         percentile_columns[pct_key] = {
             'key': pct_key,
-            'db_field': None,  # Percentiles are calculated, not from DB
             'display_name': f"{col_def['display_name']}%",
             'section': col_def['section'],  # Same sections as base column
             'subsection': col_def.get('subsection'),
-            'applies_to_entities': col_def['applies_to_entities'],
-            'view_mode': col_def['view_mode'],  # Same visibility rules
+            'stat_mode': col_def['stat_mode'],  # Same visibility rules
             'has_percentile': False,  # Percentiles don't have percentiles
             'is_stat': col_def.get('is_stat', False),
             'editable': False,  # Percentiles are never editable
             'reverse_percentile': col_def.get('reverse_percentile', False),
-            'format_as_percentage': False,  # Percentile itself is already 0-100
+            'format': 'number',  # Percentile itself is already 0-100
             'decimal_places': 0,  # Percentiles shown as whole numbers
-            'calculated': True,
             'calculation_formula': f"percentile({col_key})",
             'is_generated_percentile': True,
             'base_stat': col_key,
+            'player_formula': col_def.get('player_formula'),
+            'team_formula': col_def.get('team_formula'),
+            'opponents_formula': col_def.get('opponents_formula'),
         }
     
     return percentile_columns
@@ -1403,7 +1330,7 @@ def get_all_columns_with_percentiles():
 # COLUMN FILTERING AND SELECTION HELPERS
 # ============================================================================
 
-def get_columns_by_filters(section=None, subsection=None, entity=None, view_mode=None, 
+def get_columns_by_filters(section=None, subsection=None, entity=None, stat_mode=None, 
                            include_percentiles=False):
     """
     Get columns matching specified filters.
@@ -1411,8 +1338,8 @@ def get_columns_by_filters(section=None, subsection=None, entity=None, view_mode
     Args:
         section: Filter by section (e.g., 'current_stats', 'player_info')
         subsection: Filter by subsection (e.g., 'scoring', 'defense')
-        entity: Filter by entity type ('player', 'team', 'opponent')
-        view_mode: Filter by view mode ('basic', 'advanced', 'both')
+        entity: Filter by entity type ('player', 'team', 'opponents')
+        stat_mode: Filter by view mode ('basic', 'advanced', 'both')
         include_percentiles: Whether to include auto-generated percentile columns
     
     Returns:
@@ -1433,14 +1360,16 @@ def get_columns_by_filters(section=None, subsection=None, entity=None, view_mode
         if subsection and col_def.get('subsection') != subsection:
             continue
         
-        # Check entity filter
-        if entity and entity not in col_def.get('applies_to_entities', []):
-            continue
+        # Check entity filter - check if entity has a formula (not None)
+        if entity:
+            formula_key = f'{entity}_formula'
+            if col_def.get(formula_key) is None:
+                continue
         
         # Check view mode filter
-        if view_mode:
-            col_view = col_def.get('view_mode', 'both')
-            if col_view != 'both' and col_view != view_mode:
+        if stat_mode:
+            col_view = col_def.get('stat_mode', 'both')
+            if col_view != 'both' and col_view != stat_mode:
                 continue
         
         filtered[col_key] = col_def
@@ -1448,15 +1377,15 @@ def get_columns_by_filters(section=None, subsection=None, entity=None, view_mode
     return filtered
 
 
-def get_columns_for_section_and_entity(section, entity, view_mode='both', include_percentiles=False):
+def get_columns_for_section_and_entity(section, entity, stat_mode='both', include_percentiles=False):
     """
     Get all columns for a specific section and entity combination.
     This is the primary function used when building sheet columns.
     
     Args:
         section: Section name ('current_stats', 'historical_stats', etc.)
-        entity: Entity type ('player', 'team', 'opponent')
-        view_mode: View mode filter ('basic', 'advanced', 'both')
+        entity: Entity type ('player', 'team', 'opponents')
+        stat_mode: View mode filter ('basic', 'advanced', 'both')
         include_percentiles: Whether to include percentile columns
     
     Returns:
@@ -1465,7 +1394,7 @@ def get_columns_for_section_and_entity(section, entity, view_mode='both', includ
     columns = get_columns_by_filters(
         section=section,
         entity=entity,
-        view_mode=view_mode,
+        stat_mode=stat_mode,
         include_percentiles=include_percentiles
     )
     
@@ -1492,13 +1421,13 @@ def get_columns_for_section_and_entity(section, entity, view_mode='both', includ
         return [(k, v) for k, v in columns.items()]
 
 
-def build_sheet_columns(entity='player', view_mode='both', show_percentiles=False):
+def build_sheet_columns(entity='player', stat_mode='both', show_percentiles=False):
     """
     Build complete column structure for a sheet.
     
     Args:
-        entity: Entity type ('player', 'team', 'opponent')
-        view_mode: View mode ('basic', 'advanced', 'both')
+        entity: Entity type ('player', 'team', 'opponents')
+        stat_mode: View mode ('basic', 'advanced', 'both')
         show_percentiles: Whether percentile columns should be visible (vs value columns)
     
     Returns:
@@ -1510,7 +1439,7 @@ def build_sheet_columns(entity='player', view_mode='both', show_percentiles=Fals
         section_cols = get_columns_for_section_and_entity(
             section=section,
             entity=entity,
-            view_mode=view_mode,
+            stat_mode=stat_mode,
             include_percentiles=True
         )
         
@@ -1659,54 +1588,47 @@ def build_headers(columns_list):
 # STAT CALCULATION HELPERS
 # ============================================================================
 
-def calculate_stat_value(entity_data, col_def, stats_mode='per_100_poss'):
+def calculate_stat_value(entity_data, col_def, entity_type='player', stats_mode='per_100_poss'):
     """
     Calculate a single stat value based on column definition and stats mode.
     
     Args:
         entity_data: Dict with raw data from database
         col_def: Column definition from DISPLAY_COLUMNS
+        entity_type: 'player', 'team', or 'opponents'
         stats_mode: 'totals', 'per_game', 'per_36', 'per_100_poss', etc.
     
     Returns:
         Calculated stat value
     """
-    # Handle calculated fields
-    if col_def.get('calculated'):
-        formula = col_def.get('calculation_formula', '')
-        
-        # Parse and evaluate formula
-        # Examples: 'steals + charges', '(2fgm * 2) + (3fgm * 3) + ftm'
-        try:
-            # Build local namespace with entity data
-            local_vars = dict(entity_data)
-            local_vars['STAT_CONSTANTS'] = STAT_CONSTANTS
-            
-            # Evaluate formula
-            result = eval(formula, {"__builtins__": {}}, local_vars)
-            return result
-        except Exception as e:
-            return 0
+    # Get the formula for this entity type
+    formula_key = f'{entity_type}_formula'
+    formula = col_def.get(formula_key)
+    
+    if formula is None:
+        return 0
     
     # Handle totals mode override (e.g., OREB% becomes OREB count)
     if stats_mode == 'totals' and col_def.get('db_field_totals'):
         db_field = col_def['db_field_totals']
         return entity_data.get(db_field, 0)
     
-    # Get raw value from database
-    db_field = col_def.get('db_field')
-    if not db_field:
-        return 0
-    
-    raw_value = entity_data.get(db_field, 0)
-    if raw_value is None:
-        raw_value = 0
-    
-    # Apply scaling (divide_by_10, divide_by_1000)
-    if col_def.get('divide_by_10'):
-        raw_value = raw_value / 10.0
-    elif col_def.get('divide_by_1000'):
-        raw_value = raw_value / 1000.0
+    # If formula is a simple field name (no operators), just get the value
+    if formula and not any(op in formula for op in ['+', '-', '*', '/', '(', ')']):
+        raw_value = entity_data.get(formula, 0)
+        if raw_value is None:
+            raw_value = 0
+    else:
+        # Parse and evaluate formula
+        try:
+            # Build local namespace with entity data
+            local_vars = dict(entity_data)
+            local_vars['STAT_CONSTANTS'] = STAT_CONSTANTS
+            
+            # Evaluate formula
+            raw_value = eval(formula, {"__builtins__": {}}, local_vars)
+        except Exception as e:
+            return 0
     
     # Apply stats mode scaling
     if stats_mode != 'totals' and col_def.get('is_stat'):
@@ -1724,7 +1646,7 @@ def calculate_stat_value(entity_data, col_def, stats_mode='per_100_poss'):
             factor = 1.0
         
         # Don't scale percentage fields
-        if not col_def.get('format_as_percentage'):
+        if col_def.get('format') != 'percentage':
             raw_value = raw_value * factor
     
     return raw_value
@@ -1746,7 +1668,7 @@ def format_stat_value(value, col_def, stats_mode='per_100_poss'):
         return 0
     
     # Handle percentages
-    if col_def.get('format_as_percentage'):
+    if col_def.get('format') == 'percentage':
         value = value * 100  # Convert 0.456 to 45.6
     
     # Round to specified decimal places

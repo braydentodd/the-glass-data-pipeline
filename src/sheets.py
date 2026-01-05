@@ -24,16 +24,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import configuration
-from config.db import DB_CONFIG, NBA_CONFIG, get_nba_teams
+from config.etl import DB_CONFIG, NBA_CONFIG, get_nba_teams
 from config.sheets import (
     GOOGLE_SHEETS_CONFIG,
-    SECTIONS,
     SECTION_CONFIG,
     SUBSECTIONS,
     DISPLAY_COLUMNS,
     COLORS,
     STAT_CONSTANTS,
-    SHEET_FORMAT,
     # Helper functions
     get_columns_by_filters,
     get_columns_for_section_and_entity,
@@ -92,12 +90,13 @@ def _get_columns_for_query(section, entity_type='player', include_stats=True):
         include_stats: Whether to include stat columns
     
     Returns:
-        Dict with 'player_cols', 'team_cols', and 'stat_cols' lists
+        Dict with 'player_cols', 'team_cols', 'stat_cols', and 'stat_defs' (col_def for each stat)
     """
     result = {
         'player_cols': [],
         'team_cols': [],
-        'stat_cols': []
+        'stat_cols': [],
+        'stat_defs': {}  # Map db_field -> col_def for aggregation logic
     }
     
     # Get all columns that apply to this entity and section
@@ -128,6 +127,7 @@ def _get_columns_for_query(section, entity_type='player', include_stats=True):
         
         if is_stat and include_stats:
             result['stat_cols'].append(db_field)
+            result['stat_defs'][db_field] = col_def  # Store def for aggregation
         elif not is_stat:
             # Determine which table the field comes from
             # Player fields: player_id, name, height, wingspan, birthdate, notes, etc.
@@ -146,6 +146,38 @@ def _get_columns_for_query(section, entity_type='player', include_stats=True):
     result['stat_cols'] = list(dict.fromkeys(result['stat_cols']))
     
     return result
+
+
+def _build_aggregation_field(col_name, col_def, table_alias='s'):
+    """
+    Build SQL aggregation expression for a column based on its config.
+    
+    Args:
+        col_name: Database column name
+        col_def: Column definition from DISPLAY_COLUMNS
+        table_alias: SQL table alias (default 's')
+    
+    Returns:
+        SQL aggregation expression (e.g., 'SUM(s."col")', 'COUNT(DISTINCT s.year)')
+    """
+    aggregation = col_def.get('aggregation', 'SUM')  # Default to SUM
+    
+    if aggregation == 'COUNT_DISTINCT_YEAR':
+        # Special case: Count distinct years
+        return f'COUNT(DISTINCT {table_alias}.year) as "{col_name}"'
+    elif aggregation == 'SUM':
+        return f'SUM({table_alias}."{col_name}") as "{col_name}"'
+    elif aggregation == 'AVG':
+        return f'AVG({table_alias}."{col_name}") as "{col_name}"'
+    elif aggregation == 'MAX':
+        return f'MAX({table_alias}."{col_name}") as "{col_name}"'
+    elif aggregation == 'MIN':
+        return f'MIN({table_alias}."{col_name}") as "{col_name}"'
+    elif aggregation == 'COUNT':
+        return f'COUNT({table_alias}."{col_name}") as "{col_name}"'
+    else:
+        # Unknown aggregation, default to SUM
+        return f'SUM({table_alias}."{col_name}") as "{col_name}"'
 
 
 def fetch_players_for_team(conn, team_abbr, section='current_stats', years_config=None):
@@ -195,10 +227,10 @@ def fetch_players_for_team(conn, team_abbr, section='current_stats', years_confi
     elif section == 'historical_stats':
         year_filter, params = _build_year_filter(years_config, current_year, season_type=1)
         
-        # For aggregated stats, we need SUM() for stat columns
+        # For aggregated stats, use config-driven aggregation functions
         player_fields = [f'p."{col}"' if not col.isidentifier() else f'p.{col}' for col in cols['player_cols']]
         team_fields = [f't."{col}"' if not col.isidentifier() else f't.{col}' for col in cols['team_cols']]
-        stat_fields = [f'SUM(s."{col}") as "{col}"' for col in cols['stat_cols']]
+        stat_fields = [_build_aggregation_field(col, cols['stat_defs'][col]) for col in cols['stat_cols']]
         
         # For GROUP BY, only include player and team fields
         group_by_fields = player_fields + team_fields
@@ -225,7 +257,7 @@ def fetch_players_for_team(conn, team_abbr, section='current_stats', years_confi
         
         player_fields = [f'p."{col}"' if not col.isidentifier() else f'p.{col}' for col in cols['player_cols']]
         team_fields = [f't."{col}"' if not col.isidentifier() else f't.{col}' for col in cols['team_cols']]
-        stat_fields = [f'SUM(s."{col}") as "{col}"' for col in cols['stat_cols']]
+        stat_fields = [_build_aggregation_field(col, cols['stat_defs'][col]) for col in cols['stat_cols']]
         
         group_by_fields = player_fields + team_fields
         
@@ -287,7 +319,7 @@ def fetch_all_players(conn, section='current_stats', years_config=None):
         
         player_fields = [f'p."{col}"' if not col.isidentifier() else f'p.{col}' for col in cols['player_cols']]
         team_fields = [f't."{col}"' if not col.isidentifier() else f't.{col}' for col in cols['team_cols']]
-        stat_fields = [f'SUM(s."{col}") as "{col}"' for col in cols['stat_cols']]
+        stat_fields = [_build_aggregation_field(col, cols['stat_defs'][col]) for col in cols['stat_cols']]
         
         group_by_fields = player_fields + team_fields
         
@@ -357,15 +389,20 @@ def fetch_team_stats(conn, team_abbr, section='current_stats', years_config=None
         year_filter, params = _build_year_filter(years_config, current_year, season_type=season_filter)
         
         team_fields = [f't."{col}"' if not col.isidentifier() else f't.{col}' for col in cols['team_cols']]
-        stat_fields = [f'SUM(s."{col}") as "{col}"' for col in cols['stat_cols']]
+        stat_fields = [_build_aggregation_field(col, cols['stat_defs'][col]) for col in cols['stat_cols']]
         
-        # Get opponent stat columns
+        # Get opponent stat columns with aggregation
         opp_stat_fields = []
         for col_key, col_def in DISPLAY_COLUMNS.items():
             if col_def.get('is_stat') and section in col_def.get('section', []) and 'opponent' in col_def.get('applies_to_entities', []):
                 db_field = col_def.get('db_field')
                 if db_field and f'opp_{db_field}' in _get_all_db_fields():
-                    opp_stat_fields.append(f'SUM(s."opp_{db_field}") as "opp_{db_field}"')
+                    # Use aggregation logic for opponent stats too
+                    agg = col_def.get('aggregation', 'SUM')
+                    if agg == 'COUNT_DISTINCT_YEAR':
+                        opp_stat_fields.append(f'COUNT(DISTINCT s.year) as "opp_{db_field}"')
+                    else:
+                        opp_stat_fields.append(f'{agg}(s."opp_{db_field}") as "opp_{db_field}"')
         
         all_fields = team_fields + stat_fields + opp_stat_fields
         group_by_fields = team_fields
@@ -438,15 +475,20 @@ def fetch_all_teams(conn, section='current_stats', years_config=None):
         year_filter, params = _build_year_filter(years_config, current_year, season_type=season_filter)
         
         team_fields = [f't."{col}"' if not col.isidentifier() else f't.{col}' for col in cols['team_cols']]
-        stat_fields = [f'SUM(s."{col}") as "{col}"' for col in cols['stat_cols']]
+        stat_fields = [_build_aggregation_field(col, cols['stat_defs'][col]) for col in cols['stat_cols']]
         
-        # Get opponent stat columns
+        # Get opponent stat columns with aggregation
         opp_stat_fields = []
         for col_key, col_def in DISPLAY_COLUMNS.items():
             if col_def.get('is_stat') and section in col_def.get('section', []) and 'opponent' in col_def.get('applies_to_entities', []):
                 db_field = col_def.get('db_field')
                 if db_field and f'opp_{db_field}' in _get_all_db_fields():
-                    opp_stat_fields.append(f'SUM(s."opp_{db_field}") as "opp_{db_field}"')
+                    # Use aggregation logic for opponent stats
+                    agg = col_def.get('aggregation', 'SUM')
+                    if agg == 'COUNT_DISTINCT_YEAR':
+                        opp_stat_fields.append(f'COUNT(DISTINCT s.year) as "opp_{db_field}"')
+                    else:
+                        opp_stat_fields.append(f'{agg}(s."opp_{db_field}") as "opp_{db_field}"')
         
         all_fields = team_fields + stat_fields + opp_stat_fields
         group_by_fields = team_fields

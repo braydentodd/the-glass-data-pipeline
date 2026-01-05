@@ -12,7 +12,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import numpy as np
 
-from config.db import DB_CONFIG
+from config.etl import DB_CONFIG
 from config.sheets import (
     API_CONFIG, NBA_TEAMS, COLUMN_DEFINITIONS,
     get_reverse_stats, get_editable_fields, get_config_for_export,
@@ -403,8 +403,8 @@ def calculate_stats():
                 s.fta,
                 s.off_rebounds,
                 s.def_rebounds,
-                s.off_reb_pct_x1000::float / 1000 AS oreb_pct,
-                s.def_reb_pct_x1000::float / 1000 AS dreb_pct,
+                s.off_rebound_pct_x1000::float / 1000 AS oreb_pct,
+                s.def_rebound_pct_x1000::float / 1000 AS dreb_pct,
                 s.assists,
                 s.turnovers,
                 s.steals,

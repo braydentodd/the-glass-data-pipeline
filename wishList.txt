@@ -1,18 +1,7 @@
 Passes Leading to Fouls
-Secondary Assists (Pass leading to an assist)
-Putbacks
-On-Ball % (percentage of time on offense with the ball in your hands in the halfcourt)
-Avg Sec/Touch (average amount of time you hold the ball before passing it in the halfcourt)
 oRAPM (Offensive Real Adjusted Plus Minus)
 dRAPM (Defensive Real Adjusted Plus Minus)
-On-Off
 On-Off Stats
-Unassisted Rim FGA
-Unassisted Rim FGM
-Unassisted 2FGA
-Unassisted 2FGM
-Unassisted 2FGA
-Unassisted 2FGM
 Rebound own misses
 Shooting Fouls
 Shooting Foul Locations
@@ -20,19 +9,21 @@ Technical FTs
 And Ones
 Injury data
 Contract data
-Wingspan data
 Real Possessions
 Real Offensive/Defensive Rating
-Real TS%
 Real O/D Reb %s
-points per shots
 playtype data
-grenades
-heaves
-handedness
-draft class
-draft selection
+Gravity
 
-Standardize ####-## year format
+null vs 0... use minutes or games as distinguisher?
+etl backfill all seasons of player's stats when new one added
 
-does the etl backfill all seasons of a player's stats when a new one is found and added?
+
+heaves !!
+draft class !!
+draft selection !!
+dunks !!
+What to do with time on ball and touches !!
+etl backfill !!
+etl backfill on player addition !!
+standardize/clean up etl logs !!
