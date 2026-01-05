@@ -573,7 +573,7 @@ def handle_etl_error(e, operation_name, conn=None):
         log("  Rolled back transaction - continuing ETL", "WARN")
 
 
-def build_endpoint_params(endpoint_name, season, season_type_name, entity='player', custom_params=None):
+def build_endpoint_params(endpoint_name, season, season_type_name, entity='player', custom_params=None, col_sources=None):
     """
     Build standardized parameters for NBA API endpoints based on endpoint type.
     Centralizes parameter selection logic to ensure consistency across execution paths.
@@ -584,6 +584,7 @@ def build_endpoint_params(endpoint_name, season, season_type_name, entity='playe
         season_type_name: Season type name (e.g., 'Regular Season')
         entity: 'player' or 'team' (for endpoints with player_or_team parameter)
         custom_params: Additional endpoint-specific parameters to merge
+        col_sources: Optional list of column source configs to check for season-type-specific params
         
     Returns:
         Dict of parameters ready for endpoint call
@@ -665,6 +666,13 @@ def execute_generic_endpoint(endpoint_name, endpoint_params, season,
         for col in cols.values()
     )
     
+    # Pass column sources to parameter builder for season-type-specific overrides
+    col_sources = [col.get(source_key) for col in cols.values() if col.get(source_key)]
+    endpoint_params = build_endpoint_params(
+        endpoint_name, season, season_type_name, entity, 
+        endpoint_params, col_sources=col_sources
+    )
+    
     if needs_team_iteration:
         # PER-TEAM EXECUTION: Loop through all 30 teams and aggregate results
         return _execute_per_team_endpoint(
@@ -738,35 +746,19 @@ def _execute_league_wide_endpoint(endpoint_name, endpoint_params, season,
         
         # Handle multiple result sets
         all_records = []
-        
-        # Check if ANY column needs per-game to total conversion (config-driven)
-        source_key = f'{entity}_source' if entity in ['player', 'team'] else 'source'
-        needs_per_game_conversion = any(
-            col.get(source_key, {}).get('per_game', False)
-            for col in cols.values()
-        )
-        
         for rs in result['resultSets']:
             headers = rs['headers']
-            
             for row in rs['rowSet']:
                 entity_id = row[0]  # PLAYER_ID or TEAM_ID
-                
-                # Get GP (games played) for per-game to total conversion if needed
-                games_played = 1
-                if needs_per_game_conversion and 'GP' in headers:
-                    games_played = safe_int(row[headers.index('GP')], 1)
-                    if games_played == 0:
-                        games_played = 1  # Avoid division by zero
                 
                 # Extract each stat from API response using config
                 values = []
                 for stat_name, stat_cfg in cols.items():
+                    source_key = f'{entity}_source' if entity in ['player', 'team'] else 'source'
                     source = stat_cfg.get(source_key, {})
                     nba_field = source.get('field')
                     scale = source.get('scale', 1)
                     transform_name = source.get('transform', 'safe_int')
-                    convert_to_total = source.get('per_game', False)
                     
                     if nba_field not in headers:
                         raw_value = 0
@@ -775,19 +767,10 @@ def _execute_league_wide_endpoint(endpoint_name, endpoint_params, season,
                     
                     if transform_name == 'safe_int':
                         value = safe_int(raw_value, scale)
-                        # Convert per-game to total if configured
-                        if convert_to_total:
-                            value = round(value * games_played)
                     elif transform_name == 'safe_float':
                         value = safe_float(raw_value, scale)
-                        # Convert per-game to total if configured
-                        if convert_to_total:
-                            value = round(value * games_played)
                     else:
                         value = safe_int(raw_value, scale)
-                        # Convert per-game to total if configured
-                        if convert_to_total:
-                            value = round(value * games_played)
                         
                     values.append(value)
                 

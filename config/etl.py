@@ -47,7 +47,7 @@ NBA_CONFIG = {
     'current_season': get_current_season(),
     'current_season_year': get_current_season_year(),
     'season_type': int(os.getenv('SEASON_TYPE', '1')),
-    'backfill_start_season': '2023-24',
+    'backfill_start_season': '2003-04',
     'combine_start_year': 2003,
 }
 
@@ -1548,14 +1548,12 @@ DB_COLUMNS = {
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'DEFLECTIONS',
-            'transform': 'safe_int',
-            'per_game': True  # API uses PerGame mode, multiply by GP
+            'transform': 'safe_int'
         },
         'team_source': {
             'endpoint': 'leaguehustlestatsteam',
             'field': 'DEFLECTIONS',
-            'transform': 'safe_int',
-            'per_game': True  # API uses PerGame mode, multiply by GP
+            'transform': 'safe_int'
         },
         'opponent_source': None
     },
@@ -1569,14 +1567,12 @@ DB_COLUMNS = {
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'CHARGES_DRAWN',
-            'transform': 'safe_int',
-            'per_game': True  # API uses PerGame mode, multiply by GP
+            'transform': 'safe_int'
         },
         'team_source': {
             'endpoint': 'leaguehustlestatsteam',
             'field': 'CHARGES_DRAWN',
-            'transform': 'safe_int',
-            'per_game': True  # API uses PerGame mode, multiply by GP
+            'transform': 'safe_int'
         },
         'opponent_source': None
     },
@@ -1590,14 +1586,12 @@ DB_COLUMNS = {
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'CONTESTED_SHOTS',
-            'transform': 'safe_int',
-            'per_game': True  # API uses PerGame mode, multiply by GP
+            'transform': 'safe_int'
         },
         'team_source': {
             'endpoint': 'leaguehustlestatsteam',
             'field': 'CONTESTED_SHOTS',
-            'transform': 'safe_int',
-            'per_game': True  # API uses PerGame mode, multiply by GP
+            'transform': 'safe_int'
         },
         'opponent_source': None
     },
@@ -2157,7 +2151,7 @@ API_CONFIG = {
     # Standard NBA API parameters (single source of truth)
     'league_id': '00',  # NBA league
     'per_mode_simple': 'Totals',
-    'per_mode_time': 'PerGame',  # Hustle stats require PerGame (Totals fails for some seasons)
+    'per_mode_time': 'Totals',
     'per_mode_detailed': 'Totals',
     'last_n_games': '0',
     'month': '0',
