@@ -118,10 +118,10 @@ COLOR_THRESHOLDS = {
 }
 
 # ============================================================================
-# DISPLAY_COLUMNS - Master dictionary for all display columns
+# SHEETS_COLUMNS - Master dictionary for all display columns
 # ============================================================================
 
-DISPLAY_COLUMNS = {
+SHEETS_COLUMNS = {
 
     'names': {
         'display_name': 'Names',
@@ -1231,27 +1231,27 @@ DISPLAY_COLUMNS = {
 # HELPER FUNCTIONS
 # ============================================================================
 
-def get_display_columns_by_section(section):
+def get_sheets_columns_by_section(section):
     """Get all display columns for a specific section."""
-    return {k: v for k, v in DISPLAY_COLUMNS.items() if v['section'] == section}
+    return {k: v for k, v in SHEETS_COLUMNS.items() if v['section'] == section}
 
 
-def get_display_columns_by_view(stat_mode):
+def get_sheets_columns_by_view(stat_mode):
     """
     Get display columns for a specific view mode.
     Args:
         stat_mode: 'basic', 'advanced', or 'both'
     """
     if stat_mode == 'both':
-        return DISPLAY_COLUMNS
-    return {k: v for k, v in DISPLAY_COLUMNS.items() 
+        return SHEETS_COLUMNS
+    return {k: v for k, v in SHEETS_COLUMNS.items() 
             if v['stat_mode'] in [stat_mode, 'both']}
 
 
-def get_display_columns_by_entity(entity_type):
+def get_sheets_columns_by_entity(entity_type):
     """Get display columns applicable to an entity type."""
     result = {}
-    for k, v in DISPLAY_COLUMNS.items():
+    for k, v in SHEETS_COLUMNS.items():
         # Check if the entity has a formula (not None)
         if entity_type == 'player' and v.get('player_formula') is not None:
             result[k] = v
@@ -1262,15 +1262,15 @@ def get_display_columns_by_entity(entity_type):
     return result
 
 
-def get_display_columns_by_period(period):
+def get_sheets_columns_by_period(period):
     """Get display columns applicable to a period."""
-    return {k: v for k, v in DISPLAY_COLUMNS.items() 
+    return {k: v for k, v in SHEETS_COLUMNS.items() 
             if period in v['applies_to_periods']}
 
 
 def get_editable_columns():
     """Get all editable columns (notes, wingspan)."""
-    return {k: v for k, v in DISPLAY_COLUMNS.items() if v['editable']}
+    return {k: v for k, v in SHEETS_COLUMNS.items() if v['editable']}
 
 
 def generate_percentile_columns():
@@ -1288,7 +1288,7 @@ def generate_percentile_columns():
     """
     percentile_columns = {}
     
-    for col_key, col_def in DISPLAY_COLUMNS.items():
+    for col_key, col_def in SHEETS_COLUMNS.items():
         if not col_def.get('has_percentile'):
             continue
         
@@ -1320,8 +1320,8 @@ def generate_percentile_columns():
 
 
 def get_all_columns_with_percentiles():
-    """Get DISPLAY_COLUMNS plus all auto-generated percentile columns."""
-    all_cols = dict(DISPLAY_COLUMNS)
+    """Get SHEETS_COLUMNS plus all auto-generated percentile columns."""
+    all_cols = dict(SHEETS_COLUMNS)
     all_cols.update(generate_percentile_columns())
     return all_cols
 
@@ -1348,7 +1348,7 @@ def get_columns_by_filters(section=None, subsection=None, entity=None, stat_mode
     if include_percentiles:
         columns = get_all_columns_with_percentiles()
     else:
-        columns = DISPLAY_COLUMNS
+        columns = SHEETS_COLUMNS
     
     filtered = {}
     for col_key, col_def in columns.items():
@@ -1594,7 +1594,7 @@ def calculate_stat_value(entity_data, col_def, entity_type='player', stats_mode=
     
     Args:
         entity_data: Dict with raw data from database
-        col_def: Column definition from DISPLAY_COLUMNS
+        col_def: Column definition from SHEETS_COLUMNS
         entity_type: 'player', 'team', or 'opponents'
         stats_mode: 'totals', 'per_game', 'per_36', 'per_100_poss', etc.
     

@@ -1,319 +1,49 @@
-# The Glass - NBA Data Pipeline# The Glass - NBA Data Pipeline
+# The Glass - NBA Data Pipeline
 
+Automated ETL pipeline that syncs NBA statistics from the NBA API to PostgreSQL and Google Sheets.
 
+## Quick Start
 
-A comprehensive data pipeline that collects, processes, and displays NBA player statistics in Google Sheets.An automated NBA basketball analytics pipeline that syncs player statistics from the NBA API to an OCI PostgreSQL database and Google Sheets with percentile-based color coding.
+### Run ETL
+\`\`\`bash
+# Test mode (single player/team)
+python3 -m src.etl --test
 
+# Full ETL
+python3 -m src.etl
+\`\`\`
 
+### Sync to Google Sheets
+\`\`\`bash
+python3 -m src.sheets_sync
+\`\`\`
 
-## 🏀 System Overview## Features
+## Environment Variables
 
+Create a `.env` file:
+\`\`\`bash
+DB_HOST=your_host
+DB_NAME=the_glass_db
+DB_USER=the_glass_user
+DB_PASSWORD=your_password
+\`\`\`
 
+## Configuration
 
-```- **Automated Data Collection**: Nightly ETL jobs fetch player rosters, stats, and team data from the NBA API
-
-NBA API → PostgreSQL → Flask API + Google Sheets → Users- **Database Storage**: OCI PostgreSQL database stores historical player and team statistics
-
-                    ↓- **Google Sheets Integration**: Syncs all 30 NBA teams to Google Sheets with color-coded percentile rankings
-
-              Nightly ETL (GitHub Actions)- **Interactive Stats API**: Flask API for switching between stat modes (totals, per-game, per-100, per-36, custom)
-
-```- **Percentile Color Coding**: Visual representation of player performance (Red 0-33%, Yellow 33-66%, Green 66-100%)
-
-- **GitHub Actions**: Automated workflows for nightly updates and monthly roster syncs
-
-## 📁 Project Structure
+All settings in `config/etl.py`:
+- Database schema and column definitions
+- API endpoints and transformations
+- Test subjects (player/team for validation)
 
 ## Project Structure
 
-```
-
-├── apps-script/             # Google Apps Script (frontend)```
-
-├── src/the-glass-data-pipeline/
-
-│   ├── etl/nightly.py      # Consolidated ETL pipeline├── src/                               # Core synchronization modules
-
-│   ├── sheets/             # Google Sheets sync│   ├── config.py                      # Centralized configuration
-
-│   ├── api.py              # Flask REST API│   ├── sync_all_teams.py              # Sync all 30 teams to Google Sheets
-
-│   ├── config.py           # Central configuration│   ├── stat_calculator.py             # Stat calculation utilities (multiple modes)
-
-│   └── stat_calculator.py  # Statistics calculations│   └── api.py                         # Flask API for interactive stats
-
-├── .github/workflows/       # Automated jobs│
-
-├── deploy.sh               # Simple deployment script├── scripts/                           # ETL and automation scripts
-
-└── requirements.txt│   ├── nightly_etl_job.py             # ETL orchestrator
-
-```│   ├── nightly_player_roster_update.py # Player roster updates
-
-│   ├── nightly_stats_update.py        # Player stats updates
-
-## ⚙️ Quick Start│   ├── nightly_team_stats_update.py   # Team stats updates
-
-│   ├── monthly_player_update.py       # Monthly comprehensive update
-
-**Deploy to server**:│   ├── backfill_historical_stats.py   # Historical data backfill utility
-
-```bash│   └── test_api.py                    # API test suite
-
-./deploy.sh│
-
-```├── .github/
-
-│   └── workflows/                     # GitHub Actions workflows
-
-**Run ETL locally**:│       ├── nightly_season_stats.yml   # Runs daily at 5 AM EST
-
-```bash│       ├── monthly_player_update.yml  # Runs 1st of each month
-
-DB_PASSWORD=xxx python src/etl/nightly.py│       └── sync_google_sheets.yml     # Manual/scheduled Sheets sync
-
-```│
-
-├── google_apps_script.gs              # Google Sheets Apps Script for UI
-
-**Push Apps Script**:├── API_SETUP_GUIDE.md                 # Comprehensive API deployment guide
-
-```bash├── README.md
-
-npx @google/clasp push├── requirements.txt
-
-```└── .gitignore
-
-```
-
-## 🔄 Automated Workflows
-
-## Setup
-
-- **5:00 AM EST**: Nightly ETL (update database)
-
-- **5:30 AM EST**: Sync database → Sheets### Prerequisites
-
-- **Monthly**: Update player details
-
-- Python 3.11+
-
-## 📊 Features- OCI PostgreSQL database
-
-- Google Cloud Service Account with Sheets API access
-
-- Switch stat views (Totals/Per Game/Per X Mins)- GitHub repository (for automated workflows)
-
-- Historical stats (career/years/specific seasons)
-
-- Percentile rankings with color coding### Local Development
-
-- Live editing (wingspan, notes)
-
-1. **Clone the repository**
-
-## 🚀 Deployment   ```bash
-
-   git clone <repository-url>
-
-API runs on Oracle Cloud (`150.136.255.23:5001`) as systemd service.   cd the-glass-data-pipeline
-
-   ```
-
-Check status:
-
-```bash2. **Create virtual environment**
-
-ssh ubuntu@150.136.255.23 'sudo systemctl status flask-api'   ```bash
-
-```   python -m venv venv
-
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-## 📝 Environment Variables   ```
-
-
-
-See `.env.example` or CLEANUP_PLAN.md for full configuration details.3. **Install dependencies**
-
-   ```bash
-
-## 🐛 Troubleshooting   pip install -r requirements.txt
-
-   ```
-
-**API issues**: `ssh ubuntu@150.136.255.23 'sudo systemctl restart flask-api'`
-
-4. **Configure environment variables**
-
-**Sheets not updating**: Check GitHub Actions logs   
-
-   Create a `.env` file in the project root:
-
-**Rate limiting**: Increase `API_RATE_LIMIT_DELAY` in config   ```bash
-
-   # Database Configuration
-
----   DB_HOST=your_database_host
-
-   DB_NAME=the_glass_db
-
-For detailed information, see `CLEANUP_PLAN.md`   DB_USER=the_glass_user
-
-   DB_PASSWORD=your_password
-   
-   # Google Sheets (optional, defaults work for most cases)
-   SPREADSHEET_NAME=The Glass
-   ```
-
-5. **Add Google credentials**
-   
-   Place your `google-credentials.json` service account key in the project root.
-
-### Configuration
-
-All configuration is centralized in `src/config.py`:
-
-- **Database**: Connection parameters (supports environment variables)
-- **Google Sheets**: Spreadsheet name, credentials file, scopes
-- **NBA API**: Current season year (auto-calculated), season type, rate limiting
-- **Stats**: 17 tracked statistics with column mappings
-- **Formatting**: Colors, fonts, column widths, frozen panes
-- **Percentiles**: Thresholds, weight factors, color gradients
-
-## Usage
-
-### Interactive Stats API
-
-The Glass now includes a Flask API for switching between different stat modes in Google Sheets.
-
-See **[API_SETUP_GUIDE.md](./API_SETUP_GUIDE.md)** for complete setup and deployment instructions.
-
-**Quick Start:**
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Start API locally
-DB_PASSWORD='your_password' python -m src.api
-
-# Test all endpoints
-python scripts/test_api.py
-```
-
-**Supported Modes:**
-- **Totals**: Season cumulative stats
-- **Per Game**: Stats per game played
-- **Per 100 Possessions**: Current default
-- **Per 36 Minutes**: Standard game length
-- **Per X Minutes**: Custom minutes
-- **Per X Possessions**: Custom possessions
-
-### Sync All Teams to Google Sheets
-
-```bash
-DB_PASSWORD='your_password' python src/sync_all_teams.py
-```
-
-This creates/updates sheets for all 30 NBA teams with:
-- Player roster information (name, jersey #, experience, age, height, wingspan, weight)
-- 17 statistics (default: per-100 possession)
-- Percentile-based color coding for quick visual analysis
-
-### Run Nightly ETL
-
-```bash
-DB_PASSWORD='your_password' python scripts/nightly_etl_job.py
-```
-
-This orchestrates:
-1. Player roster updates (new players, trades)
-2. Player statistics updates (latest games)
-3. Team statistics aggregation
-
-### Backfill Historical Data
-
-```bash
-DB_PASSWORD='your_password' python scripts/backfill_historical_stats.py
-```
-
-## Tracked Statistics (Per 100 Possessions)
-
-1. Games Played
-2. Minutes
-3. Points
-4. True Shooting % (TS%)
-5. 2-Point Attempts (2PA)
-6. 2-Point % (2P%)
-7. 3-Point Attempts (3PA)
-8. 3-Point % (3P%)
-9. Free Throw Attempts (FTA)
-10. Free Throw % (FT%)
-11. Assists (Ast)
-12. Turnovers (Tov) - *reversed scale*
-13. Offensive Rebound % (OR%)
-14. Defensive Rebound % (DR%)
-15. Steals (Stl)
-16. Blocks (Blk)
-17. Fouls (Fls) - *reversed scale*
-
-## GitHub Actions
-
-### Nightly Stats Update
-- **Schedule**: Daily at 9:00 AM EST
-- **Workflow**: `.github/workflows/nightly-stats-update.yml`
-- **Tasks**: Updates rosters, player stats, and team stats
-
-### Monthly Player Update
-- **Schedule**: 1st day of each month at 3:00 AM EST
-- **Workflow**: `.github/workflows/monthly-player-update.yml`
-- **Tasks**: Comprehensive player database refresh
-
-### Sheets Sync
-- **Trigger**: Manual (workflow_dispatch)
-- **Workflow**: `.github/workflows/sync-sheets.yml`
-- **Tasks**: Syncs all 30 teams to Google Sheets
-
-## Database Schema
-
-### Tables
-
-- **teams**: NBA team information
-- **players**: Player roster data
-- **player_season_stats**: Per-season statistics per player
-- **team_season_stats**: Aggregated team statistics
-
-## Color Coding System
-
-Statistics are color-coded based on percentile rankings across all players:
-
-- 🔴 **Red (0-33%)**: Below average performance
-- 🟡 **Yellow (33-66%)**: Average performance
-- 🟢 **Green (66-100%)**: Above average performance
-
-*Note: Turnovers and Fouls use reversed scale (lower is better)*
-
-## Development
-
-### Adding New Statistics
-
-1. Add stat to `STAT_COLUMNS` in `src/config.py`
-2. Update database query in sync scripts
-3. Add column to `HEADERS['row_2']` in `src/config.py`
-4. Update `SHEET_FORMAT['total_columns']` if needed
-
-### Modifying Colors/Formatting
-
-All visual styling is configured in `src/config.py`:
-- `COLORS`: RGB values for red, yellow, green, black, white, gray
-- `COLOR_THRESHOLDS`: Percentile breakpoints (default: 33, 66, 100)
-- `SHEET_FORMAT`: Fonts, column widths, frozen rows/columns
-
-## License
-
-Private project for The Glass basketball analytics.
-
-## Support
-
-For issues or questions, contact the repository owner.
+\`\`\`
+├── src/
+│   ├── etl.py           # Core ETL logic
+│   ├── sheets_sync.py   # Google Sheets sync
+│   └── api.py           # Flask API
+├── config/
+│   └── etl.py           # All configuration
+└── apps-script/
+    └── Code.js          # Google Sheets UI
+\`\`\`

@@ -6,7 +6,7 @@ Architecture:
 1. Fetch data from database (players, teams, stats)
 2. Calculate stats based on view mode (per_game, per_100, per_36, totals)
 3. Calculate percentiles for all stats
-4. Build rows dynamically from DISPLAY_COLUMNS config
+4. Build rows dynamically from SHEETS_COLUMNS config
 5. Format and sync to Google Sheets
 
 NO HARDCODING. Everything driven by config/sheets.py and config/db.py.
@@ -29,7 +29,7 @@ from config.sheets import (
     GOOGLE_SHEETS_CONFIG,
     SECTION_CONFIG,
     SUBSECTIONS,
-    DISPLAY_COLUMNS,
+    SHEETS_COLUMNS,
     COLORS,
     STAT_CONSTANTS,
     # Helper functions
@@ -75,7 +75,7 @@ def get_sheets_client():
 # ============================================================================
 # DATA FETCHING - 100% CONFIG-DRIVEN (ZERO HARDCODING)
 # ============================================================================
-# All SQL queries are dynamically generated from DISPLAY_COLUMNS config.
+# All SQL queries are dynamically generated from SHEETS_COLUMNS config.
 # NO column names are hardcoded anywhere - everything comes from the config.
 # This ensures the system remains flexible and maintainable.
 # ============================================================================
@@ -100,7 +100,7 @@ def _get_columns_for_query(section, entity_type='player', include_stats=True):
     }
     
     # Get all columns that apply to this entity and section
-    for col_key, col_def in DISPLAY_COLUMNS.items():
+    for col_key, col_def in SHEETS_COLUMNS.items():
         if entity_type not in col_def.get('applies_to_entities', []):
             continue
         
@@ -154,7 +154,7 @@ def _build_aggregation_field(col_name, col_def, table_alias='s'):
     
     Args:
         col_name: Database column name
-        col_def: Column definition from DISPLAY_COLUMNS
+        col_def: Column definition from SHEETS_COLUMNS
         table_alias: SQL table alias (default 's')
     
     Returns:
@@ -362,7 +362,7 @@ def fetch_team_stats(conn, team_abbr, section='current_stats', years_config=None
         
         # Get opponent stat columns
         opp_stat_fields = []
-        for col_key, col_def in DISPLAY_COLUMNS.items():
+        for col_key, col_def in SHEETS_COLUMNS.items():
             if col_def.get('is_stat') and section in col_def.get('section', []) and 'opponent' in col_def.get('applies_to_entities', []):
                 db_field = col_def.get('db_field')
                 if db_field and f'opp_{db_field}' in _get_all_db_fields():
@@ -393,7 +393,7 @@ def fetch_team_stats(conn, team_abbr, section='current_stats', years_config=None
         
         # Get opponent stat columns with aggregation
         opp_stat_fields = []
-        for col_key, col_def in DISPLAY_COLUMNS.items():
+        for col_key, col_def in SHEETS_COLUMNS.items():
             if col_def.get('is_stat') and section in col_def.get('section', []) and 'opponent' in col_def.get('applies_to_entities', []):
                 db_field = col_def.get('db_field')
                 if db_field and f'opp_{db_field}' in _get_all_db_fields():
@@ -449,7 +449,7 @@ def fetch_all_teams(conn, section='current_stats', years_config=None):
         
         # Get opponent stat columns
         opp_stat_fields = []
-        for col_key, col_def in DISPLAY_COLUMNS.items():
+        for col_key, col_def in SHEETS_COLUMNS.items():
             if col_def.get('is_stat') and section in col_def.get('section', []) and 'opponent' in col_def.get('applies_to_entities', []):
                 db_field = col_def.get('db_field')
                 if db_field and f'opp_{db_field}' in _get_all_db_fields():
@@ -479,7 +479,7 @@ def fetch_all_teams(conn, section='current_stats', years_config=None):
         
         # Get opponent stat columns with aggregation
         opp_stat_fields = []
-        for col_key, col_def in DISPLAY_COLUMNS.items():
+        for col_key, col_def in SHEETS_COLUMNS.items():
             if col_def.get('is_stat') and section in col_def.get('section', []) and 'opponent' in col_def.get('applies_to_entities', []):
                 db_field = col_def.get('db_field')
                 if db_field and f'opp_{db_field}' in _get_all_db_fields():
@@ -561,8 +561,8 @@ def _build_year_filter(years_config, current_year, season_type):
 
 
 def _get_all_db_fields():
-    """Get set of all db_field values from DISPLAY_COLUMNS."""
-    return {col.get('db_field') for col in DISPLAY_COLUMNS.values() if col.get('db_field')}
+    """Get set of all db_field values from SHEETS_COLUMNS."""
+    return {col.get('db_field') for col in SHEETS_COLUMNS.values() if col.get('db_field')}
 
 
 # ============================================================================
@@ -589,7 +589,7 @@ def calculate_all_percentiles(all_players, all_teams_data, section='current_stat
     
     # Get columns that need percentiles for this section
     cols_with_percentiles = {
-        k: v for k, v in DISPLAY_COLUMNS.items()
+        k: v for k, v in SHEETS_COLUMNS.items()
         if v.get('has_percentile') and section in v.get('section', [])
     }
     
@@ -679,7 +679,7 @@ def build_player_row(player_data, columns, percentiles, entity_type='player', ye
         # Check if this is a percentile column
         if col_key.endswith('_pct'):
             base_key = col_key[:-4]  # Remove _pct suffix
-            base_col = DISPLAY_COLUMNS.get(base_key)
+            base_col = SHEETS_COLUMNS.get(base_key)
             
             if base_col and entity_type in percentiles:
                 db_field = base_col['db_field']
@@ -750,7 +750,7 @@ def build_team_row(team_data, columns, percentiles, entity_type='team', years_st
         # Check if this is a percentile column
         if col_key.endswith('_pct'):
             base_key = col_key[:-4]
-            base_col = DISPLAY_COLUMNS.get(base_key)
+            base_col = SHEETS_COLUMNS.get(base_key)
             
             if base_col and entity_type in percentiles:
                 db_field = base_col['db_field']

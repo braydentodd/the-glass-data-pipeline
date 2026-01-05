@@ -1,107 +1,42 @@
-"""
-THE GLASS - Database Configuration
-Single source of truth for all database columns, schema, and API mappings.
-
-This module defines DB_COLUMNS - the complete database schema with:
-- Column names and data types
-- API source mappings (which endpoint provides which data)
-- Entity applicability (player, team, opponent)
-
-NO HARDCODING. Everything is driven by this config.
-"""
-
 import os
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load environment variables first
 load_dotenv()
 
-# ============================================================================
-# DATABASE CONNECTION
-# ============================================================================
-
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', '150.136.255.23'),
-    'port': int(os.getenv('DB_PORT', '5432')),
-    'database': os.getenv('DB_NAME', 'the_glass_db'),
-    'user': os.getenv('DB_USER', 'the_glass_user'),
+    'host': os.getenv('DB_HOST', ''),
+    'port': int(os.getenv('DB_PORT', '')),
+    'database': os.getenv('DB_NAME', ''),
+    'user': os.getenv('DB_USER', ''),
     'password': os.getenv('DB_PASSWORD', '')
 }
 
-# ============================================================================
-# TABLE NAMES - Single source of truth (no hardcoding!)
-# ============================================================================
-
 TABLES = ['teams', 'players', 'player_season_stats', 'team_season_stats']
 
-# ============================================================================
-# ENDPOINT EXECUTION TIER INFERENCE
-# ============================================================================
-# These functions infer execution tiers from endpoint names dynamically
-# This eliminates hardcoding and makes DB_COLUMNS the single source of truth
-
 def infer_execution_tier_from_endpoint(endpoint_name):
-    """
-    Infer execution tier from endpoint name pattern.
-    
-    Tier Classification:
-    - TIER 1 (league): Single API call returns all entities
-      Pattern: league* endpoints (leaguedashplayerstats, leaguehustlestatsplayer, etc.)
-      Strategy: 10 workers, no batching
-      
-    - TIER 2 (team): One API call per team (30 total)
-      Pattern: team* endpoints (teamdash*, teamplayeron*, etc.)
-      Strategy: 10 workers, no batching needed
-      
-    - TIER 3 (player): One API call per player (536 total)
-      Pattern: playerdash*, commonplayer* (per-player endpoints)
-      Strategy: 3 workers, batched execution with cooldowns
-      
-    Args:
-        endpoint_name (str): Name of the NBA API endpoint
-        
-    Returns:
-        str: 'league', 'team', or 'player'
-    """
     endpoint_lower = endpoint_name.lower()
     
-    # Player-specific endpoints (per-player API calls)
-    # MUST check these BEFORE team* to avoid misclassifying teamplayer* endpoints
+    # Check player before team to avoid misclassifying teamplayer* endpoints
     if endpoint_lower.startswith('playerdash') or endpoint_lower.startswith('commonplayer'):
         return 'player'
     
-    # Team-specific endpoints (per-team API calls)
-    # Covers: teamdash*, teamplayeron*, etc.
     if endpoint_lower.startswith('team'):
         return 'team'
     
-    # League-wide endpoints (single API call)
     if endpoint_lower.startswith('league'):
         return 'league'
     
-    # Default to league tier for unknown patterns (safest)
     return 'league'
 
-# ============================================================================
-# NBA CONFIGURATION
-# ============================================================================
-
 def get_current_season_year():
-    """Get current NBA season year (e.g., 2026 for 2025-26 season)
-    
-    NOTE: Database uses ENDING year of season (2026 for 2025-26 season)
-    """
     now = datetime.now()
-    # Return ending year: if December 2025, return 2026 (for 2025-26 season)
     return now.year + 1 if now.month > 8 else now.year
 
 def get_current_season():
-    """Get current NBA season string (e.g., '2025-26')"""
     year = get_current_season_year()
     return f"{year - 1}-{str(year)[-2:]}"
 
-# Season type mapping (used throughout ETL to avoid magic numbers)
 SEASON_TYPE_MAP = {
     'Regular Season': 1,
     'Playoffs': 2,
@@ -110,53 +45,21 @@ SEASON_TYPE_MAP = {
 
 NBA_CONFIG = {
     'current_season': get_current_season(),
-    'season_type': int(os.getenv('SEASON_TYPE', '1')),  # 1=regular, 2=playoffs, 3=play-in
+    'current_season_year': get_current_season_year(),
+    'season_type': int(os.getenv('SEASON_TYPE', '1')),
+    'backfill_start_season': '2023-24',
+    'combine_start_year': 2003,
 }
-
-# ============================================================================
-# API FILTERING MAPS
-# ============================================================================
-# Maps config filter values to NBA API result bucket names
-# Used by per-team aggregation endpoints (teamdashptshots, teamdashptreb)
-
-# Defender distance categories (closest defender distance)
-# Threshold: 4ft defender distance separates contested/open shots
-# API buckets: "0-2 Feet - Very Tight", "2-4 Feet - Tight", "4-6 Feet - Open", "6+ Feet - Wide Open"
-DEFENDER_DISTANCE_API_MAP = {
-    'contested': ['0-2 Feet - Very Tight', '2-4 Feet - Tight'],  # Contested (<4ft)
-    'open': ['4-6 Feet - Open', '6+ Feet - Wide Open']  # Open (>=4ft)
-}
-
-# Shot distance filtering via result set selection
-# teamdashptshots/playerdashptshots provide two result sets:
-#   - ClosestDefenderShooting: ALL shots with defender distance breakdown
-#   - ClosestDefender10ftPlusShooting: ONLY 10ft+ shots with defender distance breakdown
-# To get close (<10ft) shots: ClosestDefenderShooting - ClosestDefender10ftPlusShooting
-# To get far (10ft+) shots: ClosestDefender10ftPlusShooting directly
-
-# ============================================================================
-# TEST MODE CONFIGURATION
-# ============================================================================
-# Single test subject for rapid ETL validation
-# Change these IDs to test with different player/team
 
 TEST_MODE_CONFIG = {
     'player_id': 1631170,
     'player_name': 'Jaime Jaquez Jr.',
     'team_id': 1610612748,
     'team_name': 'Miami Heat',
-    'season': '2024-25',  # Use 2024-25 for testing (has complete playoff/playin data)
+    'season': '2024-25',
 }
 
-# ============================================================================
-# NBA TEAMS
-# ============================================================================
-
 def get_teams_from_db():
-    """
-    Fetch teams from database instead of hardcoding.
-    Returns: dict of {team_id: (abbreviation, full_name)}
-    """
     import psycopg2
     
     conn = psycopg2.connect(
@@ -173,77 +76,26 @@ def get_teams_from_db():
     conn.close()
     return teams
 
-# Lazy-loaded team data (fetched from DB on first access)
 _teams_cache = None
 
 def get_team_ids():
-    """Get dict of team IDs from database"""
     global _teams_cache
     if _teams_cache is None:
         _teams_cache = get_teams_from_db()
     return {abbr: tid for tid, (abbr, name) in _teams_cache.items()}
 
-def get_teams_by_id():
-    """Get dict of {team_id: full_name}"""
-    global _teams_cache
-    if _teams_cache is None:
-        _teams_cache = get_teams_from_db()
-    return {tid: name for tid, (abbr, name) in _teams_cache.items()}
-
-def get_teams_by_abbr():
-    """Get dict of {abbreviation: full_name}"""
-    global _teams_cache
-    if _teams_cache is None:
-        _teams_cache = get_teams_from_db()
-    return {abbr: name for tid, (abbr, name) in _teams_cache.items()}
-
-# Team data - lazy-loaded from database
-TEAM_IDS = get_team_ids()  # {abbreviation: team_id}
-
-# NBA_TEAMS - Complete team information
-# Usage: NBA_TEAMS = [{'abbr': 'LAL', 'name': 'Los Angeles Lakers', 'id': 1610612747}, ...]
-def get_nba_teams():
-    """
-    Get list of all NBA teams with complete information.
-    Returns list of dicts with 'abbr', 'name', and 'id' keys.
-    """
-    global _teams_cache
-    if _teams_cache is None:
-        _teams_cache = get_teams_from_db()
-    
-    return [
-        {'abbr': abbr, 'name': name, 'id': tid}
-        for tid, (abbr, name) in sorted(_teams_cache.items(), key=lambda x: x[1][0])
-    ]
-
-NBA_TEAMS = get_nba_teams()  # List of all teams for iteration
-
-# ============================================================================
-# DATABASE SCHEMA - Dynamically generated from DB_COLUMNS
-# ============================================================================
+TEAM_IDS = get_team_ids()
 
 def get_editable_fields():
-    """
-    Dynamically determine which fields are user-editable.
-    Editable fields are typically:
-    - Entity table fields (not stats)
-    - Nullable fields
-    - Non-API fields or annual update fields that can be manually corrected
-    
-    Returns list of column names that users can manually edit.
-    """
     editable = []
     
     for col_name, col_meta in DB_COLUMNS.items():
-        # Only entity table fields (not stats)
         if col_meta.get('table') not in ['entity', 'both']:
             continue
             
-        # Must be nullable
         if not col_meta.get('nullable', False):
             continue
         
-        # Either non-API field or annual update field (can be manually corrected)
         is_non_api = not col_meta.get('api', False)
         is_annual = col_meta.get('update_frequency') == 'annual'
         
@@ -415,29 +267,6 @@ def generate_schema_ddl():
     
     return '\n\n'.join(ddl_statements)
 
-
-# ============================================================================
-# DB_COLUMNS - Complete Database Schema
-# ============================================================================
-# Format:
-# 'db_column_name': {
-#     'table': 'player_season_stats' or 'team_season_stats',
-#     'type': 'INTEGER', 'SMALLINT', 'VARCHAR(50)', etc.,
-#     'nullable': True/False,
-#     'default': default value (optional),
-#     'update_frequency': 'daily' or 'annual' (tells ETL when to update this field),
-#     'data_source': {
-#         'endpoint': 'leaguedashplayerstats',
-#         'field': 'GP',
-#         'transform': 'safe_int' (function name to call),
-#         'scale': 10 or 1000 (optional - multiplier for transform function),
-#         'shot_zone': 'RestrictedArea' (optional filter),
-#         'defender_distance': '0-4 Feet - Tight' (optional filter),
-#         'defense_category': '2 Pointers' (optional filter)
-#     } or None for ETL-derived fields,
-#     'entities': ['player', 'team', 'opponent']
-# }
-
 DB_COLUMNS = {
     'player_id': {
         'table': 'both',
@@ -458,7 +287,7 @@ DB_COLUMNS = {
         'table': 'entity',
         'type': 'VARCHAR(50)',
         'nullable': True,
-        'update_frequency': 'daily',
+        'update_frequency': 'annual',
         'api': True,
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
@@ -561,6 +390,21 @@ DB_COLUMNS = {
             'endpoint': 'commonplayerinfo',
             'field': 'JERSEY',
             'transform': 'safe_str'
+        },
+        'team_source': None,
+        'opponent_source': None
+    },
+    
+    'years_experience': {
+        'table': 'entity',
+        'type': 'SMALLINT',
+        'nullable': True,
+        'update_frequency': 'annual',
+        'api': True,
+        'player_source': {
+            'endpoint': 'commonplayerinfo',
+            'field': 'SEASON_EXP',
+            'transform': 'safe_int'
         },
         'team_source': None,
         'opponent_source': None
@@ -1096,11 +940,16 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'result_set': 'ClosestDefender10ftPlusShooting',
-            'defender_distance_category': 'contested',
-            'field': 'FG3M',
-            'transform': 'safe_int'
+            'execution_tier': 'league',
+            'transformation': {
+                'type': 'filter_aggregate',
+                'result_set': 'ClosestDefender10ftPlusShooting',
+                'filter_field': 'CLOSE_DEF_DIST_RANGE',
+                'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight'],
+                'aggregate': 'sum',
+                'field': 'FG3M',
+                'endpoint_params': {}
+            }
         },
         'opponent_source': None
     },
@@ -1127,11 +976,16 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'result_set': 'ClosestDefender10ftPlusShooting',
-            'defender_distance_category': 'contested',
-            'field': 'FG3A',
-            'transform': 'safe_int'
+            'execution_tier': 'league',
+            'transformation': {
+                'type': 'filter_aggregate',
+                'result_set': 'ClosestDefender10ftPlusShooting',
+                'filter_field': 'CLOSE_DEF_DIST_RANGE',
+                'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight'],
+                'aggregate': 'sum',
+                'field': 'FG3A',
+                'endpoint_params': {}
+            }
         },
         'opponent_source': None
     },
@@ -1158,11 +1012,16 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'result_set': 'ClosestDefender10ftPlusShooting',
-            'defender_distance_category': 'open',
-            'field': 'FG3M',
-            'transform': 'safe_int'
+            'execution_tier': 'league',
+            'transformation': {
+                'type': 'filter_aggregate',
+                'result_set': 'ClosestDefender10ftPlusShooting',
+                'filter_field': 'CLOSE_DEF_DIST_RANGE',
+                'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open'],
+                'aggregate': 'sum',
+                'field': 'FG3M',
+                'endpoint_params': {}
+            }
         },
         'opponent_source': None
     },
@@ -1189,11 +1048,16 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'result_set': 'ClosestDefender10ftPlusShooting',
-            'defender_distance_category': 'open',
-            'field': 'FG3A',
-            'transform': 'safe_int'
+            'execution_tier': 'league',
+            'transformation': {
+                'type': 'filter_aggregate',
+                'result_set': 'ClosestDefender10ftPlusShooting',
+                'filter_field': 'CLOSE_DEF_DIST_RANGE',
+                'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open'],
+                'aggregate': 'sum',
+                'field': 'FG3A',
+                'endpoint_params': {}
+            }
         },
         'opponent_source': None
     },
@@ -1605,10 +1469,7 @@ DB_COLUMNS = {
             'transform': 'safe_int'
         }
     },
-    
-    # ========================================================================
-    # DEFENSE STATS
-    # ========================================================================
+
     'steals': {
         'table': 'stats',
         'type': 'SMALLINT',
@@ -1687,12 +1548,14 @@ DB_COLUMNS = {
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'DEFLECTIONS',
-            'transform': 'safe_int'
+            'transform': 'safe_int',
+            'per_game': True  # API uses PerGame mode, multiply by GP
         },
         'team_source': {
             'endpoint': 'leaguehustlestatsteam',
             'field': 'DEFLECTIONS',
-            'transform': 'safe_int'
+            'transform': 'safe_int',
+            'per_game': True  # API uses PerGame mode, multiply by GP
         },
         'opponent_source': None
     },
@@ -1706,12 +1569,14 @@ DB_COLUMNS = {
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'CHARGES_DRAWN',
-            'transform': 'safe_int'
+            'transform': 'safe_int',
+            'per_game': True  # API uses PerGame mode, multiply by GP
         },
         'team_source': {
             'endpoint': 'leaguehustlestatsteam',
             'field': 'CHARGES_DRAWN',
-            'transform': 'safe_int'
+            'transform': 'safe_int',
+            'per_game': True  # API uses PerGame mode, multiply by GP
         },
         'opponent_source': None
     },
@@ -1725,12 +1590,14 @@ DB_COLUMNS = {
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'CONTESTED_SHOTS',
-            'transform': 'safe_int'
+            'transform': 'safe_int',
+            'per_game': True  # API uses PerGame mode, multiply by GP
         },
         'team_source': {
             'endpoint': 'leaguehustlestatsteam',
             'field': 'CONTESTED_SHOTS',
-            'transform': 'safe_int'
+            'transform': 'safe_int',
+            'per_game': True  # API uses PerGame mode, multiply by GP
         },
         'opponent_source': None
     },
@@ -1994,13 +1861,7 @@ DB_SCHEMA = {
     'create_schema_sql': _GENERATED_SCHEMA
 }
 
-
-# ============================================================================
-# ETL HELPER FUNCTIONS
-# ============================================================================
-
 def generate_create_table_ddl():
-    """Generate CREATE TABLE statements from DB_COLUMNS."""
     tables = {}
     for col_name, col_config in DB_COLUMNS.items():
         table_name = col_config.get('table')
@@ -2028,20 +1889,7 @@ def generate_create_table_ddl():
     return '\n\n'.join(ddl_statements)
 
 def get_columns_by_endpoint(endpoint_name, entity='player', table=None, pt_measure_type=None, measure_type_detailed_defense=None, defense_category=None):
-    """
-    Get all columns that use a specific API endpoint for a given entity.
-    
-    Args:
-        endpoint_name: NBA API endpoint (e.g., 'leaguedashplayerstats')
-        entity: 'player', 'team', or 'opponent'
-        table: Optional table filter (e.g., 'player_season_stats', 'team_season_stats')
-        pt_measure_type: Optional filter for endpoints that use pt_measure_type (e.g., 'Passing', 'Possessions')
-        measure_type_detailed_defense: Optional filter for endpoints that use measure_type_detailed_defense (e.g., 'Advanced')
-        defense_category: Optional filter for endpoints that use defense_category (e.g., '2 Pointers', 'Less Than 10Ft')
-    
-    Returns:
-        Dict of {column_name: column_config} for matching columns
-    """
+
     result = {}
     source_key = f'{entity}_source'
     
@@ -2158,16 +2006,6 @@ def get_opponent_columns():
 
 
 def get_column_list_for_insert(entity='player', include_opponent=False):
-    """
-    Get ordered list of column names for SQL INSERT statements.
-    
-    Args:
-        entity: 'player' or 'team'
-        include_opponent: If True, include opponent columns (for team stats)
-    
-    Returns:
-        List of column names in logical order
-    """
     columns = []
     
     # Identity columns first
@@ -2189,19 +2027,7 @@ def get_column_list_for_insert(entity='player', include_opponent=False):
     
     return columns
 
-
 def execute_transform(value, transform_name, scale=1):
-    """
-    Execute a transform function dynamically from config.
-    
-    Args:
-        value: Raw value from API
-        transform_name: Function name (e.g., 'safe_int', 'safe_float')
-        scale: Optional multiplier
-    
-    Returns:
-        Transformed value
-    """
     # Import transform functions (must be available in calling context)
     # This is a helper - the actual functions are in etl.py
     transform_functions = {
@@ -2276,13 +2102,6 @@ def parse_birthdate(date_str):
     except Exception:
         return None
 
-
-# ============================================================================
-# ENTITY KEY CONFIGURATION
-# ============================================================================
-# Primary keys and composite key fields for each entity type
-# Eliminates hardcoded column names throughout ETL
-
 PRIMARY_KEYS = {
     'player': 'player_id',
     'team': 'team_id'
@@ -2291,79 +2110,41 @@ PRIMARY_KEYS = {
 COMPOSITE_KEY_FIELDS = ['year', 'season_type']
 
 def get_primary_key(entity):
-    """Get the primary key column name for an entity type."""
     return PRIMARY_KEYS.get(entity, 'id')
 
 def get_composite_keys():
-    """Get the list of composite key fields used with primary keys."""
     return COMPOSITE_KEY_FIELDS
 
 def get_all_key_fields(entity):
-    """Get all key fields (primary + composite) for an entity."""
     return [get_primary_key(entity)] + get_composite_keys()
-
-
-# ============================================================================
-# ETL EXECUTION CONFIGURATION
-# ============================================================================
-# Defines how the ETL runs (parallelism, rate limiting, retries)
-# Merged from config/etl.py - single config file for everything!
-
-# ============================================================================
-# PARALLEL EXECUTION STRATEGY
-# ============================================================================
-# Three-tier execution strategy based on API endpoint patterns
 
 PARALLEL_EXECUTION = {
     'league': {
-        'max_workers': 10,              # League-wide endpoints: fast, reliable, max parallelism
+        'max_workers': 10,
         'timeout': 30,
-        'description': 'Single API call returns ALL entities (never fails)'
+        'description': 'Single API call returns ALL entities'
     },
     'team': {
-        'max_workers': 10,              # Per-team endpoints: 30 calls, high parallelism OK
+        'max_workers': 10,
         'timeout': 30,
-        'description': 'One API call per team (30 total, very reliable)'
+        'description': 'One API call per team (30 total)'
     },
     'player': {
-        'max_workers': 1,               # Per-player endpoints: MUST BE 1! Concurrency causes failures
-        'description': 'One API call per player (536 total) - NEEDS RATE LIMITING'
+        'max_workers': 1,
+        'description': 'One API call per player (536 total)'
     }
 }
 
-# ============================================================================
-# SUBPROCESS EXECUTION - Per-Player Endpoints ONLY
-# ============================================================================
-# NBA API enforces a hard ~600 call limit per connection/process.
-# Solution: Run each per-player endpoint in a SEPARATE OS subprocess.
-# Each subprocess gets a fresh 500-call quota, bypassing the limit entirely.
-#
-# Strategy:
-# - League-wide endpoints (1 call): Run in main process
-# - Per-team endpoints (30 calls): Run in main process  
-# - Per-player endpoints (500+ calls): SPAWN SUBPROCESS with batch of 500 players
-#
-# Proven in production: 1500/1500 API calls (100% success) across 3 subprocesses
-
 SUBPROCESS_CONFIG = {
-    # Subprocess batching (each subprocess handles this many players)
-    'players_per_subprocess': 1000,      # Split into 2 subprocesses (540 players / 2 = 270 each)
-    
-    # Per-request timing (within each subprocess)
-    'delay_between_calls': 1.5,         # Seconds between API calls (conservative)
-    'timeout': 20,                      # Request timeout
-    
-    # Subprocess management
-    'max_retries': 3,                   # Retries for failed subprocess
-    'subprocess_timeout': 1500,          # Max seconds per subprocess (25 min for 1000 players: 1000 * 1.5s = 1500s + overhead)
-    'queue_timeout': 30,                # Timeout for getting results from subprocess queue
-    'thread_join_timeout': 2,           # Timeout for joining progress/refresh threads
-    'failure_log_limit': 3,             # Max failures to log before truncating
+    'players_per_subprocess': 1000,
+    'delay_between_calls': 1.5,
+    'timeout': 20,
+    'max_retries': 3,
+    'subprocess_timeout': 1500,
+    'queue_timeout': 30,
+    'thread_join_timeout': 2,
+    'failure_log_limit': 3,
 }
-
-# ============================================================================
-# API CONFIGURATION
-# ============================================================================
 
 API_CONFIG = {
     'rate_limit_delay': float(os.getenv('API_RATE_LIMIT_DELAY', '0.6')),
@@ -2376,7 +2157,7 @@ API_CONFIG = {
     # Standard NBA API parameters (single source of truth)
     'league_id': '00',  # NBA league
     'per_mode_simple': 'Totals',
-    'per_mode_time': 'Totals',
+    'per_mode_time': 'PerGame',  # Hustle stats require PerGame (Totals fails for some seasons)
     'per_mode_detailed': 'Totals',
     'last_n_games': '0',
     'month': '0',
@@ -2411,25 +2192,15 @@ API_FIELD_NAMES = {
 }
 
 def get_entity_id_field(entity):
-    """Get the API field name for entity ID (PLAYER_ID or TEAM_ID)."""
     return API_FIELD_NAMES['entity_id'].get(entity, 'ID')
 
 def get_entity_name_field(entity):
-    """Get the API field name for entity name (PLAYER_NAME or TEAM_NAME)."""
     return API_FIELD_NAMES['entity_name'].get(entity, 'NAME')
-
-# ============================================================================
-# RETRY & ERROR HANDLING
-# ============================================================================
 
 RETRY_CONFIG = {
     'max_retries': 3,
     'backoff_base': 10,
 }
-
-# ============================================================================
-# DATABASE OPERATIONS
-# ============================================================================
 
 DB_OPERATIONS = {
     'bulk_insert_batch_size': 1000,
