@@ -94,9 +94,6 @@ SUBSECTIONS = [
     'onoff',          # Offensive/Defensive Rating, Off-court ratings
 ]
 
-# List of all sections (for backwards compatibility)
-SECTIONS = list(SECTION_CONFIG.keys())
-
 # ============================================================================
 # COLORS & PERCENTILES
 # ============================================================================
@@ -766,8 +763,8 @@ SHEETS_COLUMNS = {
         'opponents_formula': None,
     },
     
-    'time_on_ball': {
-        'display_name': 'TOB',
+    'seconds_per_touch': {
+        'display_name': 'SPT',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'advanced',
@@ -777,8 +774,8 @@ SHEETS_COLUMNS = {
         'reverse_percentile': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'time_on_ball',
-        'team_formula': 'time_on_ball',
+        'player_formula': 'time_on_ball / touches',
+        'team_formula': 'time_on_ball / touches',
         'opponents_formula': None,
     },
     

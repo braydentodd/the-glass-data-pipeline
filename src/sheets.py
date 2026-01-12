@@ -25,6 +25,7 @@ load_dotenv()
 
 # Import configuration
 from config.etl import DB_CONFIG, NBA_CONFIG, get_nba_teams
+from lib.etl import get_table_name
 from config.sheets import (
     GOOGLE_SHEETS_CONFIG,
     SECTION_CONFIG,
@@ -208,12 +209,16 @@ def fetch_players_for_team(conn, team_abbr, section='current_stats', years_confi
         
         all_fields = player_fields + team_fields + stat_fields
         
+        players_table = get_table_name('player', 'entity')
+        teams_table = get_table_name('team', 'entity')
+        player_stats_table = get_table_name('player', 'stats')
+        
         query = f"""
         SELECT 
             {', '.join(all_fields)}
-        FROM players p
-        INNER JOIN teams t ON p.team_id = t.team_id
-        LEFT JOIN player_season_stats s 
+        FROM {players_table} p
+        INNER JOIN {teams_table} t ON p.team_id = t.team_id
+        LEFT JOIN {player_stats_table} s 
             ON s.player_id = p.player_id 
             AND s.year = %s
             AND s.season_type = %s
@@ -235,12 +240,16 @@ def fetch_players_for_team(conn, team_abbr, section='current_stats', years_confi
         # For GROUP BY, only include player and team fields
         group_by_fields = player_fields + team_fields
         
+        players_table = get_table_name('player', 'entity')
+        teams_table = get_table_name('team', 'entity')
+        player_stats_table = get_table_name('player', 'stats')
+        
         query = f"""
         SELECT 
             {', '.join(player_fields + team_fields + stat_fields)}
-        FROM players p
-        INNER JOIN teams t ON p.team_id = t.team_id
-        LEFT JOIN player_season_stats s 
+        FROM {players_table} p
+        INNER JOIN {teams_table} t ON p.team_id = t.team_id
+        LEFT JOIN {player_stats_table} s 
             ON s.player_id = p.player_id 
             {year_filter}
             AND s.season_type = 1
@@ -261,12 +270,16 @@ def fetch_players_for_team(conn, team_abbr, section='current_stats', years_confi
         
         group_by_fields = player_fields + team_fields
         
+        players_table = get_table_name('player', 'entity')
+        teams_table = get_table_name('team', 'entity')
+        player_stats_table = get_table_name('player', 'stats')
+        
         query = f"""
         SELECT 
             {', '.join(player_fields + team_fields + stat_fields)}
-        FROM players p
-        INNER JOIN teams t ON p.team_id = t.team_id
-        LEFT JOIN player_season_stats s 
+        FROM {players_table} p
+        INNER JOIN {teams_table} t ON p.team_id = t.team_id
+        LEFT JOIN {player_stats_table} s 
             ON s.player_id = p.player_id 
             {year_filter}
             AND s.season_type IN (2, 3)
@@ -298,12 +311,16 @@ def fetch_all_players(conn, section='current_stats', years_config=None):
         
         all_fields = player_fields + team_fields + stat_fields
         
+        players_table = get_table_name('player', 'entity')
+        teams_table = get_table_name('team', 'entity')
+        player_stats_table = get_table_name('player', 'stats')
+        
         query = f"""
         SELECT 
             {', '.join(all_fields)}
-        FROM players p
-        LEFT JOIN teams t ON p.team_id = t.team_id
-        LEFT JOIN player_season_stats s 
+        FROM {players_table} p
+        LEFT JOIN {teams_table} t ON p.team_id = t.team_id
+        LEFT JOIN {player_stats_table} s 
             ON s.player_id = p.player_id 
             AND s.year = %s
             AND s.season_type = %s
@@ -323,12 +340,16 @@ def fetch_all_players(conn, section='current_stats', years_config=None):
         
         group_by_fields = player_fields + team_fields
         
+        players_table = get_table_name('player', 'entity')
+        teams_table = get_table_name('team', 'entity')
+        player_stats_table = get_table_name('player', 'stats')
+        
         query = f"""
         SELECT 
             {', '.join(player_fields + team_fields + stat_fields)}
-        FROM players p
-        LEFT JOIN teams t ON p.team_id = t.team_id
-        LEFT JOIN player_season_stats s 
+        FROM {players_table} p
+        LEFT JOIN {teams_table} t ON p.team_id = t.team_id
+        LEFT JOIN {player_stats_table} s 
             ON s.player_id = p.player_id 
             {year_filter}
             AND s.season_type IN ({season_filter})

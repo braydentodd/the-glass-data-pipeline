@@ -112,13 +112,6 @@ function getColors() {
   return config.colors;
 }
 
-// Backward compatibility - these constants now load from config
-const API_BASE_URL = getApiBaseUrl();
-const SHEET_ID = getSheetId();
-const NBA_TEAMS = getNbaTeams();
-const STAT_COLUMNS = getStatColumns();
-const REVERSE_STATS = getReverseStats();
-
 /**
  * Get current NBA season based on date
  */

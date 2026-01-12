@@ -15,15 +15,7 @@ Real O/D Reb %s
 playtype data
 Gravity
 
-null vs 0... use minutes or games as distinguisher?
-etl backfill all seasons of player's stats when new one added
-
-
+off-court team o and d rating !!
 heaves !!
-draft class !!
-draft selection !!
 dunks !!
 What to do with time on ball and touches !!
-etl backfill !!
-etl backfill on player addition !!
-standardize/clean up etl logs !!

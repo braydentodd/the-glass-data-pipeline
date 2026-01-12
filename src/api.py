@@ -13,6 +13,7 @@ from psycopg2.extras import RealDictCursor
 import numpy as np
 
 from config.etl import DB_CONFIG
+from lib.etl import get_table_name
 from config.sheets import (
     API_CONFIG, NBA_TEAMS, COLUMN_DEFINITIONS,
     get_reverse_stats, get_editable_fields, get_config_for_export,
@@ -537,9 +538,10 @@ def get_player_stats(player_id):
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        query = """
+        player_stats_table = get_table_name('player', 'stats')
+        query = f"""
             SELECT *
-            FROM player_season_stats
+            FROM {player_stats_table}
             WHERE player_id = %s AND season = %s
         """
         
