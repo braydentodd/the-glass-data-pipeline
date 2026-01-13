@@ -233,6 +233,9 @@ def get_editable_fields() -> List[str]:
     editable = []
     
     for col_name, col_meta in DB_COLUMNS.items():
+        # Skip if col_meta is not a dict (defensive programming)
+        if not isinstance(col_meta, dict):
+            continue
         if col_meta.get('table') not in ['entity', 'both']:
             continue
             
@@ -281,6 +284,9 @@ def get_columns_by_endpoint(
     entity_tables = get_entity_table_names()
     
     for col_name, col_meta in DB_COLUMNS.items():
+        # Skip if col_meta is not a dict (defensive programming)
+        if not isinstance(col_meta, dict):
+            continue
         # Check if column belongs to the target table
         # 'table' field is a category, not actual table name:
         # - 'entity': ID/name/bio columns (ONLY in players/teams tables)
@@ -340,7 +346,7 @@ def get_opponent_columns() -> Dict[str, Dict[str, Any]]:
     return {
         col_name: col_meta
         for col_name, col_meta in DB_COLUMNS.items()
-        if 'opponent_source' in col_meta
+        if isinstance(col_meta, dict) and 'opponent_source' in col_meta
     }
 
 
@@ -353,6 +359,9 @@ def get_column_list_for_insert(entity: Literal['player', 'team'] = 'player', inc
     
     columns = []
     for col_name, col_meta in DB_COLUMNS.items():
+        # Skip if col_meta is not a dict (defensive programming)
+        if not isinstance(col_meta, dict):
+            continue
         if col_meta.get('table') != table:
             continue
         
@@ -434,6 +443,9 @@ def generate_schema_ddl() -> str:
         # Add table-specific columns from DB_COLUMNS
         stats_tables = get_stats_table_names()
         for col_name, col_meta in DB_COLUMNS.items():
+            # Skip if col_meta is not a dict (defensive programming)
+            if not isinstance(col_meta, dict):
+                continue
             if col_meta.get('table') == table_name or (
                 table_name in stats_tables and
                 col_meta.get('table') == 'both'
@@ -559,24 +571,41 @@ def with_retry(
                     # Diagnose error type
                     if 'Read timed out' in error_msg or 'timeout' in error_msg.lower():
                         diagnosis = "API timeout - server took too long to respond"
+                        should_retry = True
                     elif 'Expecting value' in error_msg or 'JSONDecodeError' in error_type:
                         diagnosis = "Invalid JSON - likely HTML error page or empty response from NBA API"
+                        # Don't retry JSON errors for per-player endpoints - usually means no data available
+                        # Per-player endpoints: playerdash*, teamplayerdash*
+                        is_per_player = endpoint_name and ('playerdash' in endpoint_name.lower() or 'teamplayerdash' in endpoint_name.lower())
+                        should_retry = not is_per_player
                     elif 'ConnectionError' in error_type or 'ConnectionPool' in error_msg:
                         diagnosis = "Connection error - network or server issue"
+                        should_retry = True
                     elif '400' in error_msg:
                         diagnosis = "Bad request - invalid parameter values or missing required parameter"
+                        should_retry = False  # Don't retry bad requests
                     elif '404' in error_msg:
                         diagnosis = "Not found - endpoint or data doesn't exist for these parameters"
+                        should_retry = False  # Don't retry 404s
                     elif '429' in error_msg or 'rate limit' in error_msg.lower():
                         diagnosis = "Rate limit exceeded - too many requests"
+                        should_retry = True
                     elif 'TypeError' in error_type and 'unexpected keyword argument' in error_msg:
                         # For TypeError with unexpected keyword, show full message (not truncated)
                         # so we can see which parameter is the problem
                         diagnosis = error_msg
+                        should_retry = False  # Don't retry parameter errors
                     else:
                         diagnosis = error_msg[:80] + ('...' if len(error_msg) > 80 else '')
+                        should_retry = True
                     
                     context_str = ", " + ", ".join(context_parts) if context_parts else ""
+                    
+                    # Skip retry if error type indicates it won't help
+                    if not should_retry:
+                        msg = f"{func.__name__}{context_str} failed (no retry): {diagnosis}"
+                        print(f"[INFO] {msg}")
+                        break  # Exit retry loop
                     
                     if attempt < _max_retries - 1:
                         wait_time = _backoff_base * (attempt + 1)
@@ -888,6 +917,77 @@ def get_season_year() -> int:
     return int('20' + season.split('-')[1])
 
 
+def get_columns_for_null_cleanup(season: str, entity: Literal['player', 'team'] = 'player') -> List[str]:
+    """
+    Get list of numeric stat columns that should have NULL→0 conversion for a given season.
+    
+    Only includes columns where:
+    1. Column is a numeric stat column
+    2. Column's source endpoint has no min_season OR season >= min_season
+    
+    This prevents converting NULLs to 0s for columns where data wasn't available
+    (e.g., tracking stats before 2013-14 should stay NULL).
+    
+    Args:
+        season: Season string (e.g., '2024-25')
+        entity: Entity type ('player' or 'team')
+        
+    Returns:
+        List of column names that should have NULL→0 conversion
+    """
+    season_year = int('20' + season.split('-')[1])
+    source_key = f'{entity}_source' if entity in ['player', 'team'] else 'source'
+    
+    eligible_columns = []
+    
+    for col_name, col_def in DB_COLUMNS.items():
+        # Skip if col_def is not a dict (defensive programming)
+        if not isinstance(col_def, dict):
+            continue
+            
+        # Must be a stats table column
+        if col_def.get('table') != 'stats':
+            continue
+            
+        # Must be numeric type
+        col_type = col_def.get('type', '')
+        if not col_type.startswith(('INTEGER', 'SMALLINT', 'BIGINT', 'FLOAT', 'REAL', 'NUMERIC')):
+            continue
+            
+        # Skip games_played (never convert)
+        if col_name == 'games_played':
+            continue
+            
+        # Check if column has a source endpoint with min_season
+        source = col_def.get(source_key, {})
+        if not source:
+            # No source = always eligible (likely a derived/calculated field)
+            eligible_columns.append(col_name)
+            continue
+            
+        endpoint_name = source.get('endpoint')
+        if not endpoint_name:
+            # No endpoint = always eligible
+            eligible_columns.append(col_name)
+            continue
+            
+        # Get endpoint config to check min_season
+        endpoint_config = get_endpoint_config(endpoint_name)
+        min_season = endpoint_config.get('min_season')
+        
+        if min_season is None:
+            # No min_season restriction = always eligible
+            eligible_columns.append(col_name)
+        else:
+            # Check if current season >= min_season
+            min_year = int('20' + min_season.split('-')[1])
+            if season_year >= min_year:
+                # Season has data for this column
+                eligible_columns.append(col_name)
+            # else: season < min_season, keep NULLs (don't add to list)
+    
+    return eligible_columns
+
 
 # ============================================================================
 # ENDPOINT UTILITIES
@@ -896,7 +996,11 @@ def get_season_year() -> int:
 def get_player_ids_for_season(season: str, season_type: int) -> List[Tuple[int, int]]:
     """
     Get list of (player_id, team_id) tuples for players who have stats in a season.
-    Returns team_id from players table (current assignment) for each player.
+    Uses current team_id from players table for per-player API calls.
+    
+    Note: For traded players, TEAM_ID from NBA API represents their LAST team that season.
+    For playoffs, this is always correct (no mid-playoff trades). For regular season,
+    per-team endpoints already aggregate across all teams a player played for.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -904,8 +1008,8 @@ def get_player_ids_for_season(season: str, season_type: int) -> List[Tuple[int, 
     player_stats_table = get_table_name('player', 'stats')
     players_table = get_table_name('player', 'entity')
     
-    # Get player IDs from stats, join with players table to get team_id
-    # Use COALESCE to handle NULL team_id (use 0 as fallback for free agents)
+    # Get player IDs from stats with current team_id from players table
+    # Use 0 as fallback for free agents
     cursor.execute(f"""
         SELECT DISTINCT pss.player_id, COALESCE(p.team_id, 0) as team_id
         FROM {player_stats_table} pss
@@ -1039,7 +1143,7 @@ def build_endpoint_params(
     # Merge custom parameters (overrides defaults if conflicts)
     if custom_params:
         params.update(custom_params)
-    
+        
     return params
 
 
@@ -1089,6 +1193,7 @@ def execute_transformation_pipeline(
     endpoint_name = pipeline_config['endpoint']
     execution_tier = pipeline_config.get('execution_tier', 'league')
     operations = pipeline_config['operations']
+    endpoint_params = pipeline_config.get('endpoint_params', {})
     
     # Step 1: Get raw API data based on execution tier
     if execution_tier == 'league':
@@ -1096,7 +1201,7 @@ def execute_transformation_pipeline(
     elif execution_tier == 'team':
         api_results = _fetch_api_data_per_team(ctx, endpoint_name, season, season_type_name, entity)
     elif execution_tier == 'player':
-        api_results = _fetch_api_data_per_player(ctx, endpoint_name, season, season_type_name, entity)
+        api_results = _fetch_api_data_per_player(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
     else:
         raise ValueError(f"Unknown execution_tier: {execution_tier}")
     
@@ -1197,7 +1302,8 @@ def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
 
 
 def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
-                               season_type_name: str, entity: str) -> List[Any]:
+                               season_type_name: str, entity: str,
+                               custom_params: Optional[Dict[str, Any]] = None) -> List[Any]:
     """Fetch data from per-player endpoint (hundreds/thousands of API calls)."""
     from config.etl import SEASON_TYPE_CONFIG
     
@@ -1216,7 +1322,7 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
     
     
     EndpointClass = get_endpoint_class(endpoint_name)
-    base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity)
+    base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity, custom_params=custom_params)
     
     # Check if this endpoint accepts team_id parameter (some per-player endpoints don't)
     endpoint_config = get_endpoint_config(endpoint_name)
@@ -1240,9 +1346,14 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
             print(f"    Progress: {idx}/{len(player_team_ids)} players ({failed_players} failed)")
         
         # Only add team_id if endpoint accepts it (some per-player endpoints don't)
+        # AND if the endpoint_params don't already specify a team_id override (e.g., team_id=0)
         params = {**base_params, 'player_id': player_id}
         if accepts_team_id:
-            params['team_id'] = team_id
+            # Check if transformation config specifies a team_id override
+            # If team_id is already in base_params (from endpoint_params), use that
+            # Otherwise, use the season_team_id from the database
+            if 'team_id' not in base_params:
+                params['team_id'] = team_id
         
         api_call = create_api_call(
             EndpointClass,
@@ -1256,6 +1367,16 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
             
             # Note: Rate limiting already applied in create_api_call()
             
+        except TypeError as e:
+            # Parameter errors - don't retry, these are configuration issues
+            failed_players += 1
+            error_msg = str(e)
+            if 'required positional argument' in error_msg or 'unexpected keyword argument' in error_msg:
+                print(f"    ⚠️  Parameter error for player {player_id}: {error_msg}")
+                # Log the actual parameters that were passed
+                print(f"       Params passed: {list(params.keys())}")
+            else:
+                print(f"    ⚠️  Failed player {player_id}: {error_msg[:80]}")
         except Exception as e:
             failed_players += 1
             # Don't print every failure - too noisy for hundreds of players
@@ -1394,6 +1515,7 @@ def _operation_extract(api_results: Any, op_config: Dict[str, Any],
                 data[entity_id] = (data[entity_id] or 0) + (value or 0)
             else:
                 data[entity_id] = value
+    
     return data
 
 

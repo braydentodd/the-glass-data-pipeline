@@ -162,8 +162,8 @@ DB_COLUMNS = {
         'nullable': False,
         'update_frequency': 'daily',
         'api': False,
-        'player_source': 'NBA_CONFIG["current_season"]',
-        'team_source': 'NBA_CONFIG["current_season"]',
+        'player_source': None,  # Computed field, not from API
+        'team_source': None,  # Computed field, not from API
         'opponent_source': None
     },
     
@@ -173,8 +173,8 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': False,
-        'player_source': 'NBA_CONFIG["season_type"]',
-        'team_source': 'NBA_CONFIG["season_type"]',
+        'player_source': None,  # Computed field, not from API
+        'team_source': None,  # Computed field, not from API
         'opponent_source': None
     },
 
@@ -2119,7 +2119,7 @@ ENDPOINTS_CONFIG = {
         'season_type_param': 'season_type_playoffs',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
-        'accepts_team_id': False  # This per-player endpoint doesn't accept team_id parameter
+        'accepts_team_id': False 
     },
     'teamdashboardbyshootingsplits': {
         'min_season': '2013-14',

@@ -1071,6 +1071,9 @@ def update_player_rosters(ctx: ETLContext) -> Tuple[int, int, List[int]]:
     detail_fields = {}  # {db_column_name: {'api_field': 'API_FIELD', 'transform': 'safe_int'}}
     
     for col_name, col_config in DB_COLUMNS.items():
+        # Skip if col_config is not a dict (defensive programming)
+        if not isinstance(col_config, dict):
+            continue
         if (col_config.get('table') == 'entity' and 
             col_config.get('update_frequency') in ['daily', 'annual'] and
             col_config.get('api') and
@@ -1226,8 +1229,20 @@ def update_player_rosters(ctx: ETLContext) -> Tuple[int, int, List[int]]:
                 
                 backfill_new_players(ctx, [player_id], start_year=rookie_year)
             except Exception as e:
-                print(f"  ⚠️  WARNING - Backfill failed: {e}")
-                print(f"  → Player is in database but historical stats incomplete")
+                error_msg = str(e)[:500]  # Limit to 500 chars
+                print(f"  ⚠️  WARNING - Backfill failed: {error_msg}")
+                print(f"  → Player is in database but marked with error=true")
+                
+                # Mark player with error flag
+                try:
+                    cursor.execute(f"""
+                        UPDATE {players_table}
+                        SET error = true, error_msg = %s
+                        WHERE player_id = %s
+                    """, (error_msg, player_id))
+                    conn.commit()
+                except Exception as update_err:
+                    print(f"  ⚠️  Could not set error flag: {update_err}")
             
             # Add delay between players to avoid overwhelming API
             if idx < len(new_player_ids):
@@ -1532,9 +1547,12 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
                         
                         zero_values = [entity_id, year_value, season_type_code]
                         for col_name in sorted(all_cols.keys()):
-                            # For zero-stat records, all stats should be 0 or NULL
-                            # Don't use default from config as it might be complex types
-                            zero_values.append(0)
+                            # For zero-stat records with games_played=0, use NULL instead of 0
+                            # (players not on active roster should have NULLs, not zeros)
+                            if col_name == 'games_played':
+                                zero_values.append(0)
+                            else:
+                                zero_values.append(None)  # NULL for all other stats
                         
                         records.append(tuple(zero_values))
             
@@ -1603,6 +1621,23 @@ def backfill_new_players(ctx: ETLContext, player_ids: List[int], start_year: Opt
     
     # Track which seasons have data (skip advanced stats for seasons with no basic stats)
     seasons_with_data = set()
+    
+    # Reset error flags for these players (in case retrying previously failed player)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    players_table = get_table_name('player', 'entity')
+    try:
+        cursor.execute(f"""
+            UPDATE {players_table}
+            SET error = false, error_msg = NULL
+            WHERE player_id = ANY(%s)
+        """, (player_ids,))
+        conn.commit()
+    except Exception as e:
+        print(f"  ⚠️  Could not reset error flags: {e}")
+    finally:
+        cursor.close()
+        conn.close()
     
     try:
         # Iterate through each historical season (year-by-year)
@@ -1677,34 +1712,106 @@ def backfill_new_players(ctx: ETLContext, player_ids: List[int], start_year: Opt
                     conn = get_db_connection()
                     conn.commit()
                     
-                    # Convert NULLs to 0s for ALL stat columns where players played games
-                    # If games_played > 0, all stat NULLs should be 0 (player played but didn't record that stat)
+                    # Convert NULLs to 0s for stat columns where players played games
+                    # If games_played > 0, stat NULLs should be 0 (player played but didn't record that stat)
+                    # IMPORTANT: Only convert for columns where season >= min_season
                     try:
-                        # Build list of all stat columns from DB_COLUMNS (exclude non-stats)
-                        stat_columns = [
-                            col_name for col_name, col_def in DB_COLUMNS.items()
-                            if col_def.get('table') == 'stats' and col_def.get('type', '').startswith(('INTEGER', 'SMALLINT', 'BIGINT', 'FLOAT', 'REAL', 'NUMERIC'))
-                        ]
-                        # Build SET clause dynamically with quoted column names (for names starting with numbers)
-                        set_clause = ', '.join([f'"{col}" = COALESCE("{col}", 0)' for col in stat_columns])
+                        from lib.etl import get_columns_for_null_cleanup
                         
-                        cursor = conn.cursor()
-                        cursor.execute(f"""
-                            UPDATE player_season_stats
-                            SET {set_clause}
-                            WHERE player_id = ANY(%s) 
-                            AND year = %s 
-                            AND games_played > 0
-                        """, (player_ids, season))
-                        conn.commit()
-                        cursor.close()
+                        # Get columns eligible for NULL→0 conversion (respects min_season)
+                        stat_columns = get_columns_for_null_cleanup(season, entity='player')
+                        
+                        if stat_columns:
+                            # Build SET clause dynamically with quoted column names
+                            set_clause = ', '.join([f'"{col}" = COALESCE("{col}", 0)' for col in stat_columns])
+                            
+                            cursor = conn.cursor()
+                            cursor.execute(f"""
+                                UPDATE player_season_stats
+                                SET {set_clause}
+                                WHERE player_id = ANY(%s) 
+                                AND year = %s 
+                                AND games_played > 0
+                            """, (player_ids, season))
+                            conn.commit()
+                            cursor.close()
                     except Exception as e:
                         print(f"  ⚠️ Failed to convert NULLs to 0s for {season}: {e}")
                     finally:
                         conn.close()
                     
+                    # Reverse: Convert 0s to NULLs for stat columns where players didn't play
+                    # If games_played = 0, stat 0s should be NULL (player didn't play, no stats recorded)
+                    # IMPORTANT: Only convert for columns where season >= min_season (using same logic)
+                    try:
+                        from lib.etl import get_columns_for_null_cleanup
+                        
+                        # Get columns eligible for 0→NULL conversion (respects min_season)
+                        stat_columns = get_columns_for_null_cleanup(season, entity='player')
+                        
+                        if stat_columns:
+                            # Build SET clause dynamically: set column to NULL only if it's 0
+                            set_clause = ', '.join([f'"{col}" = NULLIF("{col}", 0)' for col in stat_columns])
+                            
+                            conn = get_db_connection()
+                            cursor = conn.cursor()
+                            cursor.execute(f"""
+                                UPDATE player_season_stats
+                                SET {set_clause}
+                                WHERE player_id = ANY(%s) 
+                                AND year = %s 
+                                AND games_played = 0
+                            """, (player_ids, season))
+                            conn.commit()
+                            cursor.close()
+                    except Exception as e:
+                        print(f"  ⚠️ Failed to convert 0s to NULLs for {season}: {e}")
+                    finally:
+                        conn.close()
+                    
                 except Exception as e:
-                    print(f"  ⚠️ Failed advanced stats for {season}: {e}")
+                    error_msg = f"Failed advanced stats for {season}: {str(e)[:400]}"
+                    print(f"  ⚠️ {error_msg}")
+                    
+                    # Mark players with error flag and break out
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    try:
+                        cursor.execute(f"""
+                            UPDATE {players_table}
+                            SET error = true, error_msg = %s
+                            WHERE player_id = ANY(%s)
+                        """, (error_msg, player_ids))
+                        conn.commit()
+                    except Exception as update_err:
+                        print(f"  ⚠️  Could not set error flag: {update_err}")
+                    finally:
+                        cursor.close()
+                        conn.close()
+                    
+                    # Break out of season loop for these players
+                    break
+    
+    except Exception as e:
+        # Catch ANY other failures during backfill
+        error_msg = f"Backfill failed: {str(e)[:450]}"
+        print(f"  ❌ ERROR - {error_msg}")
+        
+        # Mark players with error flag
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(f"""
+                UPDATE {players_table}
+                SET error = true, error_msg = %s
+                WHERE player_id = ANY(%s)
+            """, (error_msg, player_ids))
+            conn.commit()
+        except Exception as update_err:
+            print(f"  ⚠️  Could not set error flag: {update_err}")
+        finally:
+            cursor.close()
+            conn.close()
     
     finally:
         # Always restore original config
@@ -1761,6 +1868,9 @@ def update_transformation_columns(
     ungrouped_transforms = []
     
     for col_name, col_meta in DB_COLUMNS.items():
+        # Skip if col_meta is not a dict (defensive programming)
+        if not isinstance(col_meta, dict):
+            continue
         # Check if column has a source for this entity
         # DB_COLUMNS uses player_source, team_source, opponent_source to indicate applicability
         source_key = f'{entity}_source'
@@ -1831,21 +1941,35 @@ def update_transformation_columns(
             transform = source_config['transformation']
 
             if transform.get('group'):
+                print(f"  Skipping grouped transform: {col_name} (group: {transform.get('group')})")
                 continue
 
             endpoint_name = transform.get('endpoint') or source_config.get('endpoint')
             endpoint_params_from_source = source_config.get('params', {})
             if endpoint_name and not is_endpoint_available_for_season(endpoint_name, season, endpoint_params_from_source):
+                print(f"  Skipping {col_name}: endpoint {endpoint_name} not available for {season}")
+                continue
+            
+            print(f"Fetching {endpoint_name} ({col_name})- {season_type}...")
+
+            try:
+                data = apply_transformation(ctx, col_name, transform, season, entity, table, season_type, season_type_name, source_config)
+            except Exception as transform_error:
+                print(f"    ❌ {col_name}: Transformation failed: {transform_error}")
+                import traceback
+                traceback.print_exc()
                 continue
 
-            data = apply_transformation(ctx, col_name, transform, season, entity, table, season_type, season_type_name, source_config)
-
             if not isinstance(data, dict):
+                continue
+
+            if not data:
                 continue
 
             updated = 0
             for entity_id, value in data.items():
                 if isinstance(value, dict):
+                    print(f"      Skipping entity {entity_id}: value is dict")
                     continue
 
                 if entity == 'player':
@@ -1863,11 +1987,14 @@ def update_transformation_columns(
 
                 if cursor.rowcount > 0:
                     updated += 1
-
+                
             conn.commit()
             total_updated += updated
 
         except Exception as e:
+            print(f"    ❌ Error processing {col_name}: {e}")
+            import traceback
+            traceback.print_exc()
             conn.rollback()
     
     # CLEANUP: Convert NULLs to 0 for any row with minutes > 0
@@ -1876,7 +2003,8 @@ def update_transformation_columns(
         # Get all transformation columns (columns with transformations in config)
         transform_cols = [
             col_name for col_name, col_def in DB_COLUMNS.items()
-            if col_def.get('table') == table 
+            if isinstance(col_def, dict)
+            and col_def.get('table') == table 
             and f'{entity}_source' in col_def 
             and 'transformation' in col_def[f'{entity}_source']
         ]
@@ -1890,13 +2018,13 @@ def update_transformation_columns(
                     UPDATE {table}
                     SET {set_clause}, updated_at = NOW()
                     WHERE year = %s::text AND season_type = %s AND minutes_x10 > 0
-                """, (season_year, season_type))
+                """, (year_value, season_type))
             else:  # team
                 cursor.execute(f"""
                     UPDATE {table}
                     SET {set_clause}, updated_at = NOW()
                     WHERE year = %s::text AND season_type = %s AND minutes_x10 > 0
-                """, (season_year, season_type))
+                """, (year_value, season_type))
             
             nulls_fixed = cursor.rowcount
             if nulls_fixed > 0:
@@ -1948,6 +2076,9 @@ def update_advanced_stats(ctx: ETLContext, entity: Literal['player', 'team'], se
         endpoint_calls = {}
         
         for col_name, col_config in DB_COLUMNS.items():
+            # Skip if col_config is not a dict (defensive programming)
+            if not isinstance(col_config, dict):
+                continue
             # Get entity source configuration
             entity_source = col_config.get(source_key, {})
             
@@ -2220,6 +2351,49 @@ def run_daily_etl(ctx: ETLContext, backfill_start: Optional[int] = None, backfil
         # STEP 5: Team Advanced Stats
         update_advanced_stats(ctx, 'team')
         
+        # STEP 5.5: Clean up NULL/0 values for players after ALL stats are loaded
+        # This ensures proper data quality: games_played=0 → NULLs, games_played>0 → 0s
+        # IMPORTANT: Only converts columns where current_season >= min_season
+        print("Cleaning up NULL/0 values for current season...")
+        try:
+            from lib.etl import get_columns_for_null_cleanup
+            
+            current_season = get_season()
+            season_year = get_season_year()
+            year_value = current_season
+            
+            # Get columns eligible for NULL→0 conversion (respects min_season)
+            stat_columns = get_columns_for_null_cleanup(current_season, entity='player')
+            
+            if stat_columns:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                # Convert NULLs to 0 for players who played
+                set_clause_nulls = ', '.join([f'"{col}" = COALESCE("{col}", 0)' for col in stat_columns])
+                cursor.execute(f"""
+                    UPDATE player_season_stats
+                    SET {set_clause_nulls}
+                    WHERE year = %s 
+                    AND games_played > 0
+                """, (year_value,))
+                
+                # Convert 0s to NULLs for players who didn't play
+                set_clause_zeros = ', '.join([f'"{col}" = NULLIF("{col}", 0)' for col in stat_columns])
+                cursor.execute(f"""
+                    UPDATE player_season_stats
+                    SET {set_clause_zeros}
+                    WHERE year = %s 
+                    AND games_played = 0
+                """, (year_value,))
+                
+                conn.commit()
+                cursor.close()
+                conn.close()
+                print("✅ NULL/0 cleanup complete")
+        except Exception as e:
+            print(f"⚠️ Failed to clean up NULL/0 values: {e}")
+        
         # STEP 6: Retry any failed endpoints
         # Give API time to stabilize, then retry any endpoints that failed
         if ctx.failed_endpoints:
@@ -2349,6 +2523,9 @@ def update_all_player_details(ctx: ETLContext) -> None:
     endpoints_needed = set()
     
     for col_name, col_config in DB_COLUMNS.items():
+        # Skip if col_config is not a dict (defensive programming)
+        if not isinstance(col_config, dict):
+            continue
         if (col_config.get('table') == 'entity' and 
             col_config.get('update_frequency') == 'annual' and
             col_config.get('api') and

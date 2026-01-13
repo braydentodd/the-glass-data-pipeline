@@ -20,9 +20,8 @@ on:
         default: ''
 
 jobs:
-  # Job 1: Fast daily update (stats + rosters, ~2-3 minutes)
   etl:
-    name: Daily ETL - Fast Update
+    name: Daily ETL
     runs-on: [self-hosted, Linux, X64]
     
     steps:
@@ -36,7 +35,7 @@ jobs:
         pip install --upgrade pip
         pip install -r requirements.txt
     
-    - name: Run daily ETL (fast update - stats + rosters)
+    - name: Run daily ETL
       env:
         DB_HOST: ${{ secrets.DB_HOST }}
         DB_NAME: ${{ secrets.DB_NAME }}
@@ -57,46 +56,3 @@ jobs:
         path: |
           *.log
         retention-days: 7
-
-  # Job 2: Sync database to Google Sheets (depends on ETL completion)
-  sync:
-    name: Sync - Database to Sheets
-    runs-on: [self-hosted, Linux, X64]
-    needs: etl
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up Python environment
-        run: |
-          python3 -m venv venv
-          source venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-      
-      - name: Create Google credentials file
-        run: |
-          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
-      
-      - name: Sync to Google Sheets
-        env:
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          GOOGLE_CREDENTIALS_FILE: google-credentials.json
-          GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
-          PYTHONUNBUFFERED: "1"
-        run: |
-          source venv/bin/activate
-          python3 -u -m src.sheets_sync
-      
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sync-logs-${{ github.run_number }}
-          path: |
-            *.log
-          retention-days: 7
