@@ -1979,18 +1979,14 @@ PARALLEL_EXECUTION = {
     }
 }
 
-# Detect GitHub Actions environment for adaptive rate limiting
-_is_github_actions = os.getenv('GITHUB_ACTIONS') == 'true'
-
 API_CONFIG = {
-    'rate_limit_delay': 5.0 if _is_github_actions else 2.6,  # Much longer delay in GitHub Actions to avoid IP blocking
+    'rate_limit_delay': 4.0,             # Balanced delay between API calls (prevents timeouts)
     'season_delay': 0.0,                 # No delay needed for single-player sequential backfill
     'timeout_default': 20,
     'backoff_divisor': 5,               # Divisor for exponential backoff calculation
     'timeout_bulk': 120,
     'cooldown_after_batch_seconds': 30,  # Wait time after batch failures or before retries
     'max_consecutive_failures': 5,       # Max failures before taking a break
-    'is_github_actions': _is_github_actions,  # Expose for use in other modules
     
     # Standard NBA API parameters (single source of truth)
     'league_id': '00',  # NBA league
@@ -2182,7 +2178,7 @@ API_FIELD_NAMES = {
 
 RETRY_CONFIG = {
     'max_retries': 3,
-    'backoff_base': 10,
+    'backoff_base': 20,
 }
 
 DB_OPERATIONS = {

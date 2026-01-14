@@ -12,8 +12,16 @@ def main():
     ctx = ETLContext()
     ctx.init_parallel_executor(max_workers=10, endpoint_tier='league')
     
-    player_ids = [1628401, 203078]
-    seasons = ['2024-25', '2025-26']
+    player_ids = [1627780, 1630202]
+    seasons = ['2023-24', '2024-25', '2025-26']
+    
+    # Next Batch
+    # player_ids = [1629636, 1629631, 1628386, 1628378, 1626204]
+    # seasons = ['2019-20', '2021-22', '2022-23', '2023-24']
+    
+    # Next Batch
+    # player_ids = [1627832]
+    # seasons = ['2019-20', '2020-21', '2021-22', '2022-23', '2023-24', '2024-25', '2025-26']
     
     for season in seasons:
         print(f'\n{"="*70}')
