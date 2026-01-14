@@ -1941,13 +1941,11 @@ def update_transformation_columns(
             transform = source_config['transformation']
 
             if transform.get('group'):
-                print(f"  Skipping grouped transform: {col_name} (group: {transform.get('group')})")
                 continue
 
             endpoint_name = transform.get('endpoint') or source_config.get('endpoint')
             endpoint_params_from_source = source_config.get('params', {})
             if endpoint_name and not is_endpoint_available_for_season(endpoint_name, season, endpoint_params_from_source):
-                print(f"  Skipping {col_name}: endpoint {endpoint_name} not available for {season}")
                 continue
             
             print(f"Fetching {endpoint_name} ({col_name})- {season_type}...")
@@ -2146,7 +2144,6 @@ def update_advanced_stats(ctx: ETLContext, entity: Literal['player', 'team'], se
                 min_year = int('20' + min_season.split('-')[1])
                 season_year = int('20' + season.split('-')[1])
                 if season_year < min_year:
-                    print(f"  Skipping {season_type_name} for {season} (minimum season: {min_season})")
                     continue
             
             # Execute all discovered endpoints
