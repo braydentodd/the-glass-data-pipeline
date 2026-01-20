@@ -318,8 +318,8 @@ SHEETS_COLUMNS = {
         'reverse_percentile': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'games_played',
-        'team_formula': 'games_played',
+        'player_formula': 'games',
+        'team_formula': 'games',
         'opponents_formula': None,
     },
     
@@ -1631,7 +1631,7 @@ def calculate_stat_value(entity_data, col_def, entity_type='player', stats_mode=
     if stats_mode != 'totals' and col_def.get('is_stat'):
         minutes = entity_data.get('minutes_total', 0)
         possessions = entity_data.get('possessions', 0)
-        games = entity_data.get('games_played', 1)
+        games = entity_data.get('games', 1)
         
         if stats_mode == 'per_game':
             factor = 1.0 / max(games, 1)

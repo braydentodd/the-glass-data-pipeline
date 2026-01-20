@@ -39,6 +39,10 @@ TABLES_CONFIG = {
     'team_season_stats': {
         'entity': 'team',
         'contents': 'stats'
+    },
+    'backfill_endpoint_tracker': {
+        'entity': 'system',
+        'contents': 'tracker'
     }
 }
 
@@ -238,6 +242,22 @@ DB_COLUMNS = {
         'opponent_source': None
     },
     
+    'rookie_year': {
+        'table': 'entity',
+        'type': 'VARCHAR(10)',
+        'nullable': True,
+        'update_frequency': 'annual',
+        'api': True,
+        'player_source': {
+            'endpoint': 'commonplayerinfo',
+            'field': 'FROM_YEAR',
+            'transform': 'format_season',
+            'notes': 'First season in NBA in ####-## format (e.g., 2012-13). Derived from FROM_YEAR API field.'
+        },
+        'team_source': None,
+        'opponent_source': None
+    },
+    
     'jersey_number': {
         'table': 'entity',
         'type': 'SMALLINT',
@@ -294,7 +314,7 @@ DB_COLUMNS = {
         'opponent_source': None
     },
 
-    'games_played': {
+    'games': {
         'table': 'stats',
         'type': 'SMALLINT',
         'nullable': True,
@@ -327,6 +347,50 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'leaguedashteamstats',
+            'field': 'MIN',
+            'transform': 'safe_int',
+            'scale': 10
+        },
+        'opponent_source': None
+    },
+
+    'tr_games': {
+        'table': 'stats',
+        'type': 'SMALLINT',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'player_source': {
+            'endpoint': 'leaguedashptstats',
+            'pt_measure_type': 'Possessions',
+            'field': 'GP',
+            'transform': 'safe_int'
+        },
+        'team_source': {
+            'endpoint': 'leaguedashptstats',
+            'pt_measure_type': 'Possessions',
+            'field': 'GP',
+            'transform': 'safe_int'
+        },
+        'opponent_source': None
+    },
+
+    'tr_minutes_x10': {
+        'table': 'stats',
+        'type': 'INTEGER',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'player_source': {
+            'endpoint': 'leaguedashptstats',
+            'pt_measure_type': 'Possessions',
+            'field': 'MIN',
+            'transform': 'safe_int',
+            'scale': 10
+        },
+        'team_source': {
+            'endpoint': 'leaguedashptstats',
+            'pt_measure_type': 'Possessions',
             'field': 'MIN',
             'transform': 'safe_int',
             'scale': 10
@@ -1481,6 +1545,65 @@ DB_COLUMNS = {
         'opponent_source': None
     },
     
+    'dribbles': {
+        'table': 'stats',
+        'type': 'INTEGER',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'player_source': {
+            'endpoint': 'leaguedashptstats',
+            'execution_tier': 'league',
+            'transformation': {
+                'type': 'pipeline',
+                'endpoint': 'leaguedashptstats',
+                'execution_tier': 'league',
+                'endpoint_params': {'pt_measure_type': 'Possessions'},
+                'operations': [
+                    {
+                        'type': 'extract',
+                        'result_set': 'LeagueDashPtStats',
+                        'fields': {
+                            'touches': 'TOUCHES',
+                            'avg_drib_per_touch': 'AVG_DRIB_PER_TOUCH'
+                        }
+                    },
+                    {
+                        'type': 'multiply',
+                        'fields': ['touches', 'avg_drib_per_touch'],
+                        'round': True
+                    }
+                ]
+            }
+        },
+        'team_source': {
+            'endpoint': 'leaguedashptstats',
+            'execution_tier': 'league',
+            'transformation': {
+                'type': 'pipeline',
+                'endpoint': 'leaguedashptstats',
+                'execution_tier': 'league',
+                'endpoint_params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Team'},
+                'operations': [
+                    {
+                        'type': 'extract',
+                        'result_set': 'LeagueDashPtStats',
+                        'fields': {
+                            'touches': 'TOUCHES',
+                            'avg_drib_per_touch': 'AVG_DRIB_PER_TOUCH'
+                        }
+                    },
+                    {
+                        'type': 'multiply',
+                        'fields': ['touches', 'avg_drib_per_touch'],
+                        'round': True
+                    }
+                ]
+            }
+        },
+        'opponent_source': None
+    },
+    
     'passes': {
         'table': 'stats',
         'type': 'SMALLINT',
@@ -1980,13 +2103,21 @@ PARALLEL_EXECUTION = {
 }
 
 API_CONFIG = {
-    'rate_limit_delay': 4.0,             # Balanced delay between API calls (prevents timeouts)
+    'rate_limit_delay': 0.6,             # Light delay between API calls (session exhaustion occurs regardless)
     'season_delay': 0.0,                 # No delay needed for single-player sequential backfill
     'timeout_default': 20,
     'backoff_divisor': 5,               # Divisor for exponential backoff calculation
     'timeout_bulk': 120,
     'cooldown_after_batch_seconds': 30,  # Wait time after batch failures or before retries
     'max_consecutive_failures': 5,       # Max failures before taking a break
+    
+    # Batch processing configuration for roster updates
+    'roster_batch_size': 175,            # Process 175 players at a time before cooldown
+    'roster_batch_cooldown': 120,        # Wait 120 seconds between batches
+    
+    # Automatic restart configuration (handles session exhaustion at ~175 requests)
+    'api_failure_threshold': 1,         # Auto-restart subprocess after first failure to preserve data
+    'api_restart_enabled': True,        # Enable automatic restart feature
     
     # Standard NBA API parameters (single source of truth)
     'league_id': '00',  # NBA league
@@ -2031,7 +2162,7 @@ ENDPOINTS_CONFIG = {
     'leaguedashptstats': {
         'min_season': '2013-14',
         'execution_tier': 'league',
-        'default_result_set': 'LeagueDashPTStats',
+        'default_result_set': 'LeagueDashPtStats',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['pt_measure_type'],
@@ -2177,7 +2308,7 @@ API_FIELD_NAMES = {
 # ============================================================================
 
 RETRY_CONFIG = {
-    'max_retries': 3,
+    'max_retries': 5,
     'backoff_base': 20,
 }
 

@@ -393,7 +393,7 @@ def calculate_stats():
             SELECT 
                 p.player_id,
                 p.name AS player_name,
-                s.games_played AS games,
+                s.games AS games,
                 s.minutes_x10::float / 10 AS minutes,
                 s.possessions,
                 s.2fgm,

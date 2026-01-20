@@ -77,6 +77,18 @@ def parse_birthdate(date_str: Any) -> Optional[date]:
         return None
 
 
+def format_season(from_year: Any) -> Optional[str]:
+    """Convert FROM_YEAR (e.g., 2012) to season format (e.g., 2012-13)"""
+    if from_year is None or from_year == '' or str(from_year).lower() == 'nan':
+        return None
+    try:
+        year = int(from_year)
+        next_year = year + 1
+        return f"{year}-{str(next_year)[-2:]}"
+    except (ValueError, TypeError):
+        return None
+
+
 def execute_transform(value: Any, transform_name: str, scale: int = 1) -> Any:
     """Execute a named transform function on a value."""
     transform_functions = {
@@ -84,7 +96,8 @@ def execute_transform(value: Any, transform_name: str, scale: int = 1) -> Any:
         'safe_float': lambda v, s: safe_float(v, scale=s),
         'safe_str': lambda v, s: safe_str(v),
         'parse_height': lambda v, s: parse_height(v),
-        'parse_birthdate': lambda v, s: parse_birthdate(v)
+        'parse_birthdate': lambda v, s: parse_birthdate(v),
+        'format_season': lambda v, s: format_season(v)
     }
     
     if transform_name not in transform_functions:
@@ -917,7 +930,12 @@ def get_season_year() -> int:
     return int('20' + season.split('-')[1])
 
 
-def get_columns_for_null_cleanup(season: str, entity: Literal['player', 'team'] = 'player') -> List[str]:
+
+
+def get_columns_for_null_cleanup(
+    season: str,
+    entity: Literal['player', 'team'] = 'player'
+) -> List[str]:
     """
     Get list of numeric stat columns that should have NULL→0 conversion for a given season.
     
@@ -954,8 +972,8 @@ def get_columns_for_null_cleanup(season: str, entity: Literal['player', 'team'] 
         if not col_type.startswith(('INTEGER', 'SMALLINT', 'BIGINT', 'FLOAT', 'REAL', 'NUMERIC')):
             continue
             
-        # Skip games_played (never convert)
-        if col_name == 'games_played':
+        # Skip games (never convert)
+        if col_name == 'games':
             continue
             
         # Check if column has a source endpoint with min_season
@@ -989,9 +1007,371 @@ def get_columns_for_null_cleanup(season: str, entity: Literal['player', 'team'] 
     return eligible_columns
 
 
+def _is_column_available_for_season(col_name: str, season: str) -> bool:
+    """
+    Check if a column is available for a given season (respects min_season).
+    
+    Args:
+        col_name: Column name to check
+        season: Season string (e.g., '2023-24')
+    
+    Returns:
+        True if column should have data for this season
+    """
+    if col_name not in DB_COLUMNS:
+        return False
+    
+    col_config = DB_COLUMNS[col_name]
+    player_source = col_config.get('player_source') or col_config.get('team_source')
+    
+    if not player_source:
+        return False
+    
+    # Get endpoint config to check min_season
+    endpoint_name = player_source.get('endpoint')
+    if not endpoint_name:
+        return False
+    
+    endpoint_config = get_endpoint_config(endpoint_name)
+    min_season = endpoint_config.get('min_season')
+    
+    if min_season is None:
+        return True
+    
+    # Compare season years
+    season_year = int('20' + season.split('-')[1])
+    min_year = int('20' + min_season.split('-')[1])
+    
+    return season_year >= min_year
+
+
 # ============================================================================
-# ENDPOINT UTILITIES
+# BACKFILL TRACKER UTILITIES
 # ============================================================================
+
+def get_endpoint_processing_order() -> List[str]:
+    """
+    Get ordered list of endpoints to process for backfill.
+    Order: league-wide → team-by-team → player-by-player.
+    
+    NOTE: Currently filtering to PLAYER endpoints only (no team endpoints).
+    
+    Returns:
+        List of endpoint names in processing order
+    """
+    league_endpoints = []
+    team_endpoints = []
+    player_endpoints = []
+    
+    for endpoint_name in ENDPOINTS_CONFIG.keys():
+        # Infer tier from endpoint name pattern
+        tier = infer_execution_tier_from_endpoint(endpoint_name)
+        
+        # TEMPORARY: Only process player endpoints (skip team endpoints)
+        # Filter out team-specific endpoints
+        if 'team' in endpoint_name.lower() and 'teamplayer' not in endpoint_name.lower():
+            continue
+        
+        if tier == 'league':
+            league_endpoints.append(endpoint_name)
+        elif tier == 'team':
+            team_endpoints.append(endpoint_name)
+        elif tier == 'player':
+            player_endpoints.append(endpoint_name)
+    
+    # Process league-wide first, then teams, then players
+    return league_endpoints + team_endpoints + player_endpoints
+
+
+def get_endpoint_parameter_combinations(endpoint_name: str, entity: Literal['player', 'team'] = 'player') -> List[Dict[str, Any]]:
+    """
+    Extract all unique parameter combinations needed for an endpoint from DB_COLUMNS config.
+    
+    For endpoints like leaguedashptstats that require parameters (pt_measure_type),
+    this discovers all unique parameter sets by scanning which columns use which parameters.
+    
+    Args:
+        endpoint_name: Name of the endpoint (e.g., 'leaguedashptstats')
+        entity: Entity type ('player' or 'team')
+        
+    Returns:
+        List of parameter dictionaries, e.g.:
+        [
+            {'pt_measure_type': 'Possessions'},
+            {'pt_measure_type': 'Passing'},
+            {'pt_measure_type': 'SpeedDistance'}
+        ]
+        Empty list if endpoint doesn't require parameters or has no columns configured.
+    """
+    import json
+    
+    source_key = f'{entity}_source'
+    param_combinations = []
+    
+    # Scan all columns to find which ones use this endpoint
+    for col_name, col_meta in DB_COLUMNS.items():
+        if not isinstance(col_meta, dict):
+            continue
+            
+        source_config = col_meta.get(source_key)
+        if not source_config:
+            continue
+            
+        # Check direct endpoint reference
+        col_endpoint = None
+        params = {}
+        
+        if isinstance(source_config, str):
+            # Simple string reference: column uses this endpoint with no special params
+            col_endpoint = source_config
+        elif isinstance(source_config, dict):
+            col_endpoint = source_config.get('endpoint')
+            params = source_config.get('params', {})
+            
+            # Also check transformation if present
+            transform = source_config.get('transformation')
+            if transform:
+                if not col_endpoint:
+                    col_endpoint = transform.get('endpoint')
+                # Check for endpoint_params in transformation (used for pipeline transforms)
+                transform_endpoint_params = transform.get('endpoint_params', {})
+                if transform_endpoint_params:
+                    params = {**params, **transform_endpoint_params}
+                # Also merge transformation params
+                transform_params = transform.get('params', {})
+                if transform_params:
+                    params = {**params, **transform_params}
+        
+        # Skip if not this endpoint
+        if col_endpoint != endpoint_name:
+            continue
+        
+        # Extract relevant parameters (exclude internal ones like _convert_per_game)
+        relevant_params = {k: v for k, v in params.items() if not k.startswith('_')}
+        
+        # Check if we've already seen this parameter combination
+        param_str = json.dumps(relevant_params, sort_keys=True)
+        if not any(json.dumps(p, sort_keys=True) == param_str for p in param_combinations):
+            param_combinations.append(relevant_params)
+    
+    # If no parameter combinations found, return single empty dict (default params)
+    if not param_combinations:
+        param_combinations = [{}]
+    
+    return param_combinations
+
+
+def get_columns_for_endpoint_params(endpoint_name: str, params: Dict[str, Any], entity: Literal['player', 'team'] = 'player') -> List[str]:
+    """
+    Get list of column names that will be populated by this endpoint+params combination.
+    
+    Args:
+        endpoint_name: Name of the endpoint (e.g., 'leaguedashptstats')
+        params: Parameter dictionary (e.g., {'pt_measure_type': 'Possessions'})
+        entity: Entity type ('player' or 'team')
+        
+    Returns:
+        List of column names that use this exact endpoint+params combination
+    """
+    import json
+    
+    source_key = f'{entity}_source'
+    matching_columns = []
+    
+    # Normalize params for comparison
+    params_normalized = json.dumps(params or {}, sort_keys=True)
+    
+    for col_name, col_meta in DB_COLUMNS.items():
+        if not isinstance(col_meta, dict):
+            continue
+            
+        source_config = col_meta.get(source_key)
+        if not source_config or not isinstance(source_config, dict):
+            continue
+            
+        # Check endpoint
+        col_endpoint = source_config.get('endpoint')
+        col_params = source_config.get('params', {})
+        
+        # Also check in transformation if present
+        transform = source_config.get('transformation')
+        if transform:
+            if not col_endpoint:
+                col_endpoint = transform.get('endpoint')
+            # Check for endpoint_params in transformation (used for pipeline transforms)
+            transform_endpoint_params = transform.get('endpoint_params', {})
+            if transform_endpoint_params:
+                col_params = {**col_params, **transform_endpoint_params}
+            # Also check regular params in transformation
+            transform_params = transform.get('params', {})
+            if transform_params:
+                col_params = {**col_params, **transform_params}
+        
+        if col_endpoint != endpoint_name:
+            continue
+        
+        # Remove internal params (starting with _)
+        col_params = {k: v for k, v in col_params.items() if not k.startswith('_')}
+        col_params_normalized = json.dumps(col_params, sort_keys=True)
+        
+        if col_params_normalized == params_normalized:
+            matching_columns.append(col_name)
+    
+    return matching_columns
+
+
+def get_backfill_status(endpoint: str, season: str, season_type: int, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """
+    Get backfill status for a specific endpoint/season/season_type/params combination.
+    
+    Args:
+        endpoint: Endpoint name
+        season: Season string (e.g., '2024-25')
+        season_type: Season type code (1=Regular, 2=Playoffs, 3=PlayIn)
+        params: Parameter dictionary (e.g., {'pt_measure_type': 'Possessions'})
+        
+    Returns:
+        Dict with status info, or None if no tracker record exists
+    """
+    import json
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Convert params to JSON string for comparison (normalized)
+    params_json = json.dumps(params or {}, sort_keys=True)
+    
+    cursor.execute("""
+        SELECT endpoint, year, season_type, params, player_successes, players_total,
+               team_successes, teams_total, updated_at, status
+        FROM backfill_endpoint_tracker
+        WHERE endpoint = %s AND year = %s AND season_type = %s AND params = %s
+    """, (endpoint, season, season_type, params_json))
+    
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    
+    if not row:
+        return None
+    
+    return {
+        'endpoint': row[0],
+        'year': row[1],
+        'season_type': row[2],
+        'params': json.loads(row[3]) if row[3] else {},
+        'player_successes': row[4],
+        'players_total': row[5],
+        'team_successes': row[6],
+        'teams_total': row[7],
+        'updated_at': row[8],
+        'status': row[9]
+    }
+
+
+def update_backfill_status(
+    endpoint: str,
+    season: str,
+    season_type: int,
+    status: str,
+    player_successes: int = 0,
+    players_total: int = 0,
+    team_successes: int = 0,
+    teams_total: int = 0,
+    params: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Update or insert backfill tracker record.
+    
+    Args:
+        endpoint: Endpoint name
+        season: Season string
+        season_type: Season type code
+        status: Status value (pending, in_progress, complete, failed)
+        player_successes: Number of successful player calls
+        players_total: Total players to process
+        team_successes: Number of successful team calls
+        teams_total: Total teams to process
+        params: Parameter dictionary (e.g., {'pt_measure_type': 'Possessions'})
+    """
+    import json
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Convert params to JSON string (normalized)
+    params_json = json.dumps(params or {}, sort_keys=True)
+    
+    cursor.execute("""
+        INSERT INTO backfill_endpoint_tracker 
+        (endpoint, year, season_type, params, player_successes, players_total,
+         team_successes, teams_total, status, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+        ON CONFLICT (endpoint, year, season_type, params)
+        DO UPDATE SET
+            player_successes = EXCLUDED.player_successes,
+            players_total = EXCLUDED.players_total,
+            team_successes = EXCLUDED.team_successes,
+            teams_total = EXCLUDED.teams_total,
+            status = EXCLUDED.status,
+            updated_at = CURRENT_TIMESTAMP
+    """, (endpoint, season, season_type, params_json, player_successes, players_total,
+          team_successes, teams_total, status))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def mark_players_backfilled(player_ids: List[int]) -> None:
+    """
+    Mark players as fully backfilled (all endpoints for all seasons complete).
+    
+    Args:
+        player_ids: List of player IDs to mark as backfilled
+    """
+    if not player_ids:
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE players
+        SET backfilled = TRUE
+        WHERE player_id = ANY(%s)
+    """, (player_ids,))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def calculate_current_season() -> str:
+    """
+    Calculate current NBA season dynamically based on current date.
+    
+    Season starts in October, so:
+    - Jan-Sep: Current year is the END year (2025 → '2024-25')
+    - Oct-Dec: Current year is the START year (2024 → '2024-25')
+    
+    Returns:
+        Season string (e.g., '2024-25')
+    """
+    from datetime import datetime
+    
+    now = datetime.now()
+    current_year = now.year
+    current_month = now.month
+    
+    if current_month >= 10:  # Oct-Dec: start of new season
+        start_year = current_year
+    else:  # Jan-Sep: continuation of season
+        start_year = current_year - 1
+    
+    end_year = start_year + 1
+    return f"{start_year}-{str(end_year)[-2:]}"
+
 
 def get_player_ids_for_season(season: str, season_type: int) -> List[Tuple[int, int]]:
     """
@@ -1023,6 +1403,22 @@ def get_player_ids_for_season(season: str, season_type: int) -> List[Tuple[int, 
     conn.close()
     
     return player_team_ids
+
+
+def get_active_teams() -> List[int]:
+    """
+    Get list of active NBA team IDs.
+    
+    Returns:
+        List of team IDs (30 teams)
+    """
+    from config.etl import TEAM_IDS
+    return list(TEAM_IDS.values())
+
+
+# ============================================================================
+# ENDPOINT UTILITIES
+# ============================================================================
 
 
 def get_endpoint_class(endpoint_name: str) -> type:
@@ -1197,9 +1593,9 @@ def execute_transformation_pipeline(
     
     # Step 1: Get raw API data based on execution tier
     if execution_tier == 'league':
-        api_results = _fetch_api_data_league(ctx, endpoint_name, season, season_type_name, entity)
+        api_results = _fetch_api_data_league(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
     elif execution_tier == 'team':
-        api_results = _fetch_api_data_per_team(ctx, endpoint_name, season, season_type_name, entity)
+        api_results = _fetch_api_data_per_team(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
     elif execution_tier == 'player':
         api_results = _fetch_api_data_per_player(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
     else:
@@ -1234,10 +1630,11 @@ def execute_transformation_pipeline(
 
 
 def _fetch_api_data_league(ctx: Any, endpoint_name: str, season: str, 
-                           season_type_name: str, entity: str) -> Any:
+                           season_type_name: str, entity: str,
+                           custom_params: Optional[Dict[str, Any]] = None) -> Any:
     """Fetch data from league-wide endpoint (single API call)."""
     EndpointClass = get_endpoint_class(endpoint_name)
-    params = build_endpoint_params(endpoint_name, season, season_type_name, entity)
+    params = build_endpoint_params(endpoint_name, season, season_type_name, entity, custom_params=custom_params)
     
     api_call = create_api_call(
         EndpointClass,
@@ -1250,12 +1647,13 @@ def _fetch_api_data_league(ctx: Any, endpoint_name: str, season: str,
 
 
 def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
-                             season_type_name: str, entity: str) -> List[Any]:
+                             season_type_name: str, entity: str,
+                             custom_params: Optional[Dict[str, Any]] = None) -> List[Any]:
     """Fetch data from per-team endpoint (30 API calls, one per team)."""
     from config.etl import TEAM_IDS
     
     EndpointClass = get_endpoint_class(endpoint_name)
-    base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity)
+    base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity, custom_params=custom_params)
     
     
     
@@ -1339,6 +1737,11 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
     
     results = []
     failed_players = 0
+    consecutive_failures = 0
+    
+    # Get restart configuration
+    FAILURE_THRESHOLD = API_CONFIG.get('api_failure_threshold', 3)
+    RESTART_ENABLED = API_CONFIG.get('api_restart_enabled', True)
     
     for idx, (player_id, team_id) in enumerate(player_team_ids):
         # Progress update every 50 players
@@ -1364,12 +1767,14 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
         try:
             result = api_call()
             results.append(result)
+            consecutive_failures = 0  # Reset on success
             
             # Note: Rate limiting already applied in create_api_call()
             
         except TypeError as e:
             # Parameter errors - don't retry, these are configuration issues
             failed_players += 1
+            consecutive_failures += 1
             error_msg = str(e)
             if 'required positional argument' in error_msg or 'unexpected keyword argument' in error_msg:
                 print(f"    ⚠️  Parameter error for player {player_id}: {error_msg}")
@@ -1377,11 +1782,41 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
                 print(f"       Params passed: {list(params.keys())}")
             else:
                 print(f"    ⚠️  Failed player {player_id}: {error_msg[:80]}")
+            
+            # AUTO-RESTART: If hit failure threshold, trigger subprocess restart
+            if RESTART_ENABLED and consecutive_failures >= FAILURE_THRESHOLD:
+                # Import here to avoid circular dependency
+                import sys
+                import os
+                progress_msg = f"Progress: {idx}/{len(player_team_ids)} players processed in {endpoint_name} for {season}"
+                print(f"\n🔄 AUTOMATIC RESTART TRIGGERED:")
+                print(f"   Reason: Session exhaustion in {endpoint_name}")
+                print(f"   Hit {consecutive_failures} consecutive failures (threshold: {FAILURE_THRESHOLD})")
+                print(f"   {progress_msg}")
+                print(f"   Restarting process to get fresh API session\n")
+                print("   Executing subprocess restart...")
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+                
         except Exception as e:
             failed_players += 1
+            consecutive_failures += 1
             # Don't print every failure - too noisy for hundreds of players
             if failed_players <= 5:  # Only show first 5 failures
                 print(f"    ⚠️  Failed player {player_id}: {str(e)[:80]}")
+            
+            # AUTO-RESTART: If hit failure threshold, trigger subprocess restart
+            if RESTART_ENABLED and consecutive_failures >= FAILURE_THRESHOLD:
+                # Import here to avoid circular dependency
+                import sys
+                import os
+                progress_msg = f"Progress: {idx}/{len(player_team_ids)} players processed in {endpoint_name} for {season}"
+                print(f"\n🔄 AUTOMATIC RESTART TRIGGERED:")
+                print(f"   Reason: Session exhaustion in {endpoint_name}")
+                print(f"   Hit {consecutive_failures} consecutive failures (threshold: {FAILURE_THRESHOLD})")
+                print(f"   {progress_msg}")
+                print(f"   Restarting process to get fresh API session\n")
+                print("   Executing subprocess restart...")
+                os.execv(sys.executable, [sys.executable] + sys.argv)
     
     if failed_players > 5:
         print(f"    ⚠️  ... and {failed_players - 5} more player failures")
@@ -1402,12 +1837,14 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
 def _operation_extract(api_results: Any, op_config: Dict[str, Any], 
                       entity: str) -> Dict[int, Any]:
     """
-    Extract field from API result set with optional filtering.
+    Extract field(s) from API result set with optional filtering.
     
     Config: {
         'type': 'extract',
         'result_set': 'ResultSetName',
-        'field': 'FIELD_NAME',
+        'field': 'FIELD_NAME',  # Single field extraction
+        OR
+        'fields': {'alias1': 'API_FIELD1', 'alias2': 'API_FIELD2'},  # Multiple fields
         'player_id_field': 'CUSTOM_ID_FIELD',  # Optional: override entity ID field
         'filter': {'COLUMN_NAME': 'expected_value'}  # Optional: filter rows (dict format)
         'filter_field': 'COLUMN_NAME',  # Optional: filter rows (field + values format)
@@ -1415,7 +1852,14 @@ def _operation_extract(api_results: Any, op_config: Dict[str, Any],
     }
     """
     result_set_name = op_config['result_set']
-    field_name = op_config['field']
+    
+    # Support both single field and multiple fields
+    single_field = op_config.get('field')
+    multi_fields = op_config.get('fields', {})
+    
+    if not single_field and not multi_fields:
+        raise ValueError("extract operation requires either 'field' or 'fields' parameter")
+    
     # Allow config to override entity_id_field (e.g., VS_PLAYER_ID instead of PLAYER_ID)
     entity_id_field = op_config.get('player_id_field') or get_entity_id_field(entity)
     
@@ -1450,6 +1894,14 @@ def _operation_extract(api_results: Any, op_config: Dict[str, Any],
                 break
             continue
         
+        # Handle missing result set
+        if target_set is None:
+            available_sets = [rs['name'] for rs in result_set] if result_set else []
+            raise ValueError(
+                f"Result set '{result_set_name}' not found in API response. "
+                f"Available result sets: {available_sets}"
+            )
+        
         headers = target_set['headers']
         rows = target_set['rowSet']
         
@@ -1467,7 +1919,23 @@ def _operation_extract(api_results: Any, op_config: Dict[str, Any],
                 print(f"    ⚠️  Skipping result - no {entity_id_field} in headers or parameters")
                 continue
         
-        field_idx = headers.index(field_name)
+        # Get field indices for single or multiple field extraction
+        if single_field:
+            if single_field not in headers:
+                print(f"    ⚠️  Required field '{single_field}' not found in API response")
+                print(f"    Available headers: {headers}")
+                continue
+            field_idx = headers.index(single_field)
+            field_indices = None
+        else:
+            # Check if all required fields are available
+            missing_fields = [api_field for api_field in multi_fields.values() if api_field not in headers]
+            if missing_fields:
+                print(f"    ⚠️  Required fields not found in API response: {missing_fields}")
+                print(f"    Available headers: {headers}")
+                continue
+            field_indices = {alias: headers.index(api_field) for alias, api_field in multi_fields.items()}
+            field_idx = None
         
         # Get filter column indices
         filter_indices = {}
@@ -1508,13 +1976,25 @@ def _operation_extract(api_results: Any, op_config: Dict[str, Any],
             else:
                 entity_id = entity_from_params
             
-            value = row[field_idx]
-            
-            # Aggregate if entity appears multiple times (traded players, or multiple filter matches)
-            if entity_id in data:
-                data[entity_id] = (data[entity_id] or 0) + (value or 0)
+            # Extract single field or multiple fields
+            if single_field:
+                value = row[field_idx]
+                # Aggregate if entity appears multiple times (traded players, or multiple filter matches)
+                if entity_id in data:
+                    data[entity_id] = (data[entity_id] or 0) + (value or 0)
+                else:
+                    data[entity_id] = value
             else:
-                data[entity_id] = value
+                # Multiple fields - store as dict per entity
+                if entity_id not in data:
+                    data[entity_id] = {}
+                for alias, idx in field_indices.items():
+                    value = row[idx]
+                    # Aggregate if entity appears multiple times
+                    if alias in data[entity_id]:
+                        data[entity_id][alias] = (data[entity_id][alias] or 0) + (value or 0)
+                    else:
+                        data[entity_id][alias] = value
     
     return data
 
@@ -1558,29 +2038,35 @@ def _operation_filter(data: Dict[int, Any], op_config: Dict[str, Any]) -> Dict[i
     return data
 
 def _operation_multiply(data: Dict[int, Any], op_config: Dict[str, Any]) -> Dict[int, Any]:
-    """Multiply operation - placeholder for future implementation."""
-    # TODO: Implement multiply operation
-    return data
-
-def _operation_divide(data: Dict[int, Any], op_config: Dict[str, Any]) -> Dict[int, Any]:
-    """Divide operation - placeholder for future implementation."""
-    # TODO: Implement divide operation
-    return data
-
-def _operation_weighted_avg(data: Dict[int, Any], op_config: Dict[str, Any]) -> Dict[int, Any]:
-    """Weighted average operation - placeholder for future implementation."""
-    # TODO: Implement weighted_avg operation
-    return data
-
-def _operation_filter(data: Dict[int, Any], op_config: Dict[str, Any]) -> Dict[int, Any]:
-    """Filter operation - placeholder for future implementation."""
-    # TODO: Implement filter operation
-    return data
-
-def _operation_multiply(data: Dict[int, Any], op_config: Dict[str, Any]) -> Dict[int, Any]:
-    """Multiply operation - placeholder for future implementation."""
-    # TODO: Implement multiply operation
-    return data
+    """
+    Multiply two fields together.
+    
+    Config:
+        fields: [field1, field2] - fields to multiply
+        round: bool - whether to round result (default True)
+    
+    Example: Calculate total dribbles from touches * avg_drib_per_touch
+    """
+    fields = op_config.get('fields', [])
+    should_round = op_config.get('round', True)
+    
+    if len(fields) != 2:
+        raise ValueError(f"multiply operation requires exactly 2 fields, got {len(fields)}")
+    
+    field1, field2 = fields
+    result = {}
+    
+    for entity_id, values in data.items():
+        val1 = values.get(field1, 0)
+        val2 = values.get(field2, 0)
+        
+        if val1 is None or val2 is None:
+            result[entity_id] = None
+        else:
+            product = val1 * val2
+            result[entity_id] = round(product) if should_round else product
+    
+    return result
 
 def _operation_divide(data: Dict[int, Any], op_config: Dict[str, Any]) -> Dict[int, Any]:
     """Divide operation - placeholder for future implementation."""
