@@ -96,8 +96,8 @@ def populate_player_details():
         # Check if wingspan is missing
         wingspan_missing = player_row[field_positions['wingspan_inches']] is None
         
-        # Skip if nothing to update
-        if not missing_detail_fields and not wingspan_missing:
+        # Skip if no detail fields are missing (wingspan-only missing players are skipped)
+        if not missing_detail_fields:
             continue
         
         if processed % BATCH_SIZE == 0:

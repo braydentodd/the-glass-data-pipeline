@@ -49,10 +49,10 @@ def backfill_team_stats(start_season: str = None):
         season_str = f"{year-1}-{str(year)[-2:]}"
         all_seasons.append(season_str)
     
-    # Get ordered endpoint list and filter to TEAM endpoints only
-    all_endpoints = get_endpoint_processing_order()
+    # Get ordered endpoint list and filter to endpoints that have team entity type
+    all_endpoints = get_endpoint_processing_order(include_team_endpoints=True)
     
-    # Filter endpoints to only those that have 'team' in entity_types
+    # Filter endpoints to those that support 'team' entity type
     team_endpoints = []
     for endpoint_name in all_endpoints:
         endpoint_config = ENDPOINTS_CONFIG.get(endpoint_name, {})
@@ -123,8 +123,8 @@ def backfill_team_stats(start_season: str = None):
                     if season_type_idx > 0 and prev_processed:
                         print()
                     
-                    # Check if already complete
-                    status = get_backfill_status(endpoint_name, season, season_type, params)
+                    # Check if already complete FOR TEAMS (not players!)
+                    status = get_backfill_status(endpoint_name, season, season_type, params, entity='team')
                     if status and status['status'] == 'complete':
                         columns = get_columns_for_endpoint_params(endpoint_name, params, 'team')
                         columns_str = f" ({', '.join(columns)})" if columns else ""
@@ -142,7 +142,8 @@ def backfill_team_stats(start_season: str = None):
                         season=season,
                         season_type=season_type,
                         scope=scope,
-                        params=params
+                        params=params,
+                        entity='team'  # Explicitly specify team entity
                     )
                     
                     if success:

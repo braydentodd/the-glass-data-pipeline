@@ -1049,12 +1049,14 @@ def _is_column_available_for_season(col_name: str, season: str) -> bool:
 # BACKFILL TRACKER UTILITIES
 # ============================================================================
 
-def get_endpoint_processing_order() -> List[str]:
+def get_endpoint_processing_order(include_team_endpoints: bool = False) -> List[str]:
     """
     Get ordered list of endpoints to process for backfill.
     Order: league-wide → team-by-team → player-by-player.
     
-    NOTE: Currently filtering to PLAYER endpoints only (no team endpoints).
+    Args:
+        include_team_endpoints: If True, includes team-specific endpoints.
+                                If False, filters them out (for player backfill).
     
     Returns:
         List of endpoint names in processing order
@@ -1067,10 +1069,10 @@ def get_endpoint_processing_order() -> List[str]:
         # Infer tier from endpoint name pattern
         tier = infer_execution_tier_from_endpoint(endpoint_name)
         
-        # TEMPORARY: Only process player endpoints (skip team endpoints)
-        # Filter out team-specific endpoints
-        if 'team' in endpoint_name.lower() and 'teamplayer' not in endpoint_name.lower():
-            continue
+        # Filter team-specific endpoints unless explicitly requested
+        if not include_team_endpoints:
+            if 'team' in endpoint_name.lower() and 'teamplayer' not in endpoint_name.lower():
+                continue
         
         if tier == 'league':
             league_endpoints.append(endpoint_name)
@@ -1220,15 +1222,16 @@ def get_columns_for_endpoint_params(endpoint_name: str, params: Dict[str, Any], 
     return matching_columns
 
 
-def get_backfill_status(endpoint: str, season: str, season_type: int, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+def get_backfill_status(endpoint: str, season: str, season_type: int, params: Optional[Dict[str, Any]] = None, entity: str = 'player') -> Optional[Dict[str, Any]]:
     """
-    Get backfill status for a specific endpoint/season/season_type/params combination.
+    Get backfill status for a specific endpoint/season/season_type/params/entity combination.
     
     Args:
         endpoint: Endpoint name
         season: Season string (e.g., '2024-25')
         season_type: Season type code (1=Regular, 2=Playoffs, 3=PlayIn)
         params: Parameter dictionary (e.g., {'pt_measure_type': 'Possessions'})
+        entity: 'player' or 'team' to distinguish which stats table
         
     Returns:
         Dict with status info, or None if no tracker record exists
@@ -1243,10 +1246,10 @@ def get_backfill_status(endpoint: str, season: str, season_type: int, params: Op
     
     cursor.execute("""
         SELECT endpoint, year, season_type, params, player_successes, players_total,
-               team_successes, teams_total, updated_at, status
+               team_successes, teams_total, updated_at, status, entity
         FROM backfill_endpoint_tracker
-        WHERE endpoint = %s AND year = %s AND season_type = %s AND params = %s
-    """, (endpoint, season, season_type, params_json))
+        WHERE endpoint = %s AND year = %s AND season_type = %s AND params = %s AND entity = %s
+    """, (endpoint, season, season_type, params_json, entity))
     
     row = cursor.fetchone()
     cursor.close()
@@ -1265,7 +1268,8 @@ def get_backfill_status(endpoint: str, season: str, season_type: int, params: Op
         'team_successes': row[6],
         'teams_total': row[7],
         'updated_at': row[8],
-        'status': row[9]
+        'status': row[9],
+        'entity': row[10]
     }
 
 
@@ -1278,7 +1282,8 @@ def update_backfill_status(
     players_total: int = 0,
     team_successes: int = 0,
     teams_total: int = 0,
-    params: Optional[Dict[str, Any]] = None
+    params: Optional[Dict[str, Any]] = None,
+    entity: str = 'player'
 ) -> None:
     """
     Update or insert backfill tracker record.
@@ -1304,10 +1309,10 @@ def update_backfill_status(
     
     cursor.execute("""
         INSERT INTO backfill_endpoint_tracker 
-        (endpoint, year, season_type, params, player_successes, players_total,
+        (endpoint, year, season_type, params, entity, player_successes, players_total,
          team_successes, teams_total, status, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-        ON CONFLICT (endpoint, year, season_type, params)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+        ON CONFLICT (endpoint, year, season_type, params, entity)
         DO UPDATE SET
             player_successes = EXCLUDED.player_successes,
             players_total = EXCLUDED.players_total,
@@ -1315,7 +1320,7 @@ def update_backfill_status(
             teams_total = EXCLUDED.teams_total,
             status = EXCLUDED.status,
             updated_at = CURRENT_TIMESTAMP
-    """, (endpoint, season, season_type, params_json, player_successes, players_total,
+    """, (endpoint, season, season_type, params_json, entity, player_successes, players_total,
           team_successes, teams_total, status))
     
     conn.commit()
