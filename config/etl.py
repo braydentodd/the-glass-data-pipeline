@@ -40,7 +40,7 @@ TABLES_CONFIG = {
         'entity': 'team',
         'contents': 'stats'
     },
-    'backfill_endpoint_tracker': {
+    'endpoint_tracker': {
         'entity': 'system',
         'contents': 'tracker'
     }
@@ -2104,6 +2104,7 @@ PARALLEL_EXECUTION = {
 
 API_CONFIG = {
     'rate_limit_delay': 0.6,             # Light delay between API calls (session exhaustion occurs regardless)
+    'per_player_rate_limit': 1.0,        # Increased delay for per-player endpoints to prevent throttling
     'season_delay': 0.0,                 # No delay needed for single-player sequential backfill
     'timeout_default': 20,
     'backoff_divisor': 5,               # Divisor for exponential backoff calculation
@@ -2117,7 +2118,7 @@ API_CONFIG = {
     
     # Automatic restart configuration (handles session exhaustion at ~175 requests)
     'api_failure_threshold': 1,         # Auto-restart subprocess after first failure to preserve data
-    'api_restart_enabled': True,        # Enable automatic restart feature
+    'api_restart_enabled': True,        # Enable automatic restart via exit code 42
     
     # Standard NBA API parameters (single source of truth)
     'league_id': '00',  # NBA league
@@ -2148,6 +2149,7 @@ ENDPOINTS_CONFIG = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
+        'tracking': False,
     },
     'leaguedashteamstats': {
         'min_season': '2003-04',
@@ -2156,6 +2158,7 @@ ENDPOINTS_CONFIG = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['team'],
+        'tracking': False,
     },
     
     # Player Tracking Stats (available since 2013-14)
@@ -2166,7 +2169,8 @@ ENDPOINTS_CONFIG = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['pt_measure_type'],
-        'entity_types': ['player', 'team']
+        'entity_types': ['player', 'team'],
+        'tracking': True,
     },
     
     # Hustle Stats (available since 2015-16, but limited data until 2016-17)
@@ -2176,7 +2180,8 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'HustleStatsPlayer',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_time',
-        'entity_types': ['player']
+        'entity_types': ['player'],
+        'tracking': True,
     },
     'leaguehustlestatsteam': {
         'min_season': '2015-16',
@@ -2184,7 +2189,8 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'HustleStatsTeam',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_time',
-        'entity_types': ['team']
+        'entity_types': ['team'],
+        'tracking': True,
     },
     
     # Defensive Matchup Data (available since 2013-14)
@@ -2195,7 +2201,8 @@ ENDPOINTS_CONFIG = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['defense_category'],
-        'entity_types': ['player']
+        'entity_types': ['player'],
+        'tracking': True,
     },
     'leaguedashptteamdefend': {
         'min_season': '2013-14',
@@ -2204,7 +2211,8 @@ ENDPOINTS_CONFIG = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['defense_category'],
-        'entity_types': ['team']
+        'entity_types': ['team'],
+        'tracking': True,
     },
     
     # Shot Tracking Data (available since 2013-14)
@@ -2214,7 +2222,8 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'ClosestDefenderShooting',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
-        'entity_types': ['player']
+        'entity_types': ['player'],
+        'tracking': True,
     },
     'teamdashptshots': {
         'min_season': '2013-14',
@@ -2222,7 +2231,8 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'ClosestDefenderShooting',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
-        'entity_types': ['team']
+        'entity_types': ['team'],
+        'tracking': True,
     },
     
     # Rebounding Tracking (available since 2013-14)
@@ -2232,7 +2242,8 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'OverallRebounding',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
-        'entity_types': ['player']
+        'entity_types': ['player'],
+        'tracking': True,
     },
     'teamdashptreb': {
         'min_season': '2013-14',
@@ -2240,7 +2251,8 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'OverallRebounding',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
-        'entity_types': ['team']
+        'entity_types': ['team'],
+        'tracking': True,
     },
     
     'playerdashboardbyshootingsplits': {
@@ -2250,7 +2262,8 @@ ENDPOINTS_CONFIG = {
         'season_type_param': 'season_type_playoffs',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
-        'accepts_team_id': False 
+        'accepts_team_id': False,
+        'tracking': False,
     },
     'teamdashboardbyshootingsplits': {
         'min_season': '2013-14',
@@ -2258,7 +2271,8 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'ShotTypeTeamDashboard',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
-        'entity_types': ['team']
+        'entity_types': ['team'],
+        'tracking': False,
     },
     
     # Player Info (available all time, not season-specific)
@@ -2268,7 +2282,8 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'CommonPlayerInfo',
         'season_type_param': None,
         'per_mode_param': None,
-        'entity_types': ['player']
+        'entity_types': ['player'],
+        'tracking': False,
     },
     
     # Draft Combine Data (available since 2000-01, collected at draft time)
@@ -2278,8 +2293,59 @@ ENDPOINTS_CONFIG = {
         'default_result_set': 'DraftCombinePlayerAnthro',
         'season_type_param': None,
         'per_mode_param': None,
-        'entity_types': ['player']
+        'entity_types': ['player'],
+        'tracking': False,
     },
+}
+
+# ============================================================================
+# DATA INTEGRITY RULES (Config-Driven Validation)
+# ============================================================================
+# Rules derived from subcategories.txt - defines validation logic for backfill
+# Ensures data completeness and consistency across all stats
+
+DATA_INTEGRITY_RULES = {
+    # Dependency Rules: If value_x has a value, then value_y should have a non-zero and non-null value
+    # Format: 'value_x': ['value_y1', 'value_y2', ...]
+    # Minimum thresholds prevent false positives on small sample sizes
+    'dependencies': {
+        'o_rebounds': ['o_rebound_pct_x1000', 'cont_o_rebs'],
+        'd_rebounds': ['d_rebound_pct_x1000', 'cont_d_rebs'],
+        'minutes_x10': ['o_rating_x10'],
+        'assists': ['pot_assists', 'passes', 'touches'],
+        '2fgm': ['putbacks', 'dunks'],
+    },
+    
+    # Minimum thresholds for dependency validation (skip validation if parent value below threshold)
+    'minimum_thresholds': {
+        'o_rebounds': 10,      # Need at least 10 offensive rebounds
+        'd_rebounds': 10,      # Need at least 10 defensive rebounds
+        'minutes_x10': 100,    # Need at least 100 (10 actual minutes) for ratings
+        'assists': 10,         # Need at least 10 assists
+        '2fgm': 10,           # Need at least 10 2-point FGM
+        '2fga': 10,           # Need at least 10 2-point FGA
+        '3fgm': 10,           # Need at least 10 3-point FGM
+        '3fga': 10,           # Need at least 10 3-point FGA
+    },
+    
+    # Sum Validation: If value_z has a value, then values_a should add up to a non-zero and non-null value
+    # Format: 'value_z': {'components': ['comp1', 'comp2'], 'special_case_components': ['special1', 'special2']}
+    'sum_validations': {
+        '2fgm': {
+            'components': ['open_2fgm', 'cont_2fgm'],
+            'special_case_components': ['open_close_2fgm', 'cont_close_2fgm']
+        },
+        '2fga': {
+            'components': ['open_2fga', 'cont_2fga'],
+            'special_case_components': ['open_close_2fga', 'cont_close_2fga']
+        },
+        '3fgm': {
+            'components': ['open_3fgm', 'cont_3fgm']
+        },
+        '3fga': {
+            'components': ['open_3fga', 'cont_3fga']
+        },
+    }
 }
 
 # ============================================================================
@@ -2308,7 +2374,7 @@ API_FIELD_NAMES = {
 # ============================================================================
 
 RETRY_CONFIG = {
-    'max_retries': 5,
+    'max_retries': 3,
     'backoff_base': 20,
 }
 

@@ -31,7 +31,7 @@ def backfill_team_stats(start_season: str = None):
     Same strategy as player backfill:
     - Process each endpoint completely before moving to next
     - For each endpoint: all seasons, all season types
-    - Track progress in backfill_endpoint_tracker
+    - Track progress in endpoint_tracker
     - Auto-resume on restart
     """
     if start_season is None:
