@@ -126,6 +126,33 @@ class _TeamIDsProxy:
 TEAM_IDS = _TeamIDsProxy()
 
 # ============================================================================
+# ENDPOINT PARAMETER CONFIGURATION
+# ============================================================================
+
+ENDPOINT_PARAMS = {
+    'pt_measure_type': {
+        'api_param': 'pt_measure_type',
+        'values': ['Passing', 'Possessions', 'Defense', 'SpeedDistance', 'CatchShoot', 
+                   'PullUpShot', 'Drives', 'ElbowTouch', 'PostTouch', 'PaintTouch', 'Efficiency'],
+        'description': 'Player tracking measure type for leaguedashptstats'
+    },
+    'measure_type_detailed_defense': {
+        'api_param': 'measure_type_detailed_defense',
+        'values': ['Advanced', 'Base', 'Opponent'],
+        'description': 'Detailed defense measure type for leaguedashplayerstats'
+    },
+    'defense_category': {
+        'api_param': 'defense_category',
+        'values': ['Overall', '3 Pointers', '2 Pointers', 'Less Than 6Ft', 
+                   'Less Than 10Ft', 'Greater Than 15Ft'],
+        'description': 'Defense category filter'
+    }
+}
+
+# Helper to get all param keys
+PARAM_KEYS = list(ENDPOINT_PARAMS.keys())
+
+# ============================================================================
 # DATABASE SCHEMA: COLUMNS AND METADATA
 # ============================================================================
 
@@ -357,7 +384,7 @@ DB_COLUMNS = {
     'tr_games': {
         'table': 'stats',
         'type': 'SMALLINT',
-        'nullable': True,
+        'nullable': False,
         'update_frequency': 'daily',
         'api': True,
         'player_source': {
@@ -378,7 +405,7 @@ DB_COLUMNS = {
     'tr_minutes_x10': {
         'table': 'stats',
         'type': 'INTEGER',
-        'nullable': True,
+        'nullable': False,
         'update_frequency': 'daily',
         'api': True,
         'player_source': {
@@ -395,6 +422,37 @@ DB_COLUMNS = {
             'transform': 'safe_int',
             'scale': 10
         },
+        'opponent_source': None
+    },
+
+    'h_games': {
+        'table': 'stats',
+        'type': 'SMALLINT',
+        'nullable': False,
+        'update_frequency': 'daily',
+        'api': True,
+        'player_source': {
+            'endpoint': 'leaguehustlestatsplayer',
+            'field': 'G',
+            'transform': 'safe_int'
+        },
+        'team_source': None,
+        'opponent_source': None
+    },
+
+    'h_minutes_x10': {
+        'table': 'stats',
+        'type': 'INTEGER',
+        'nullable': False,
+        'update_frequency': 'daily',
+        'api': True,
+        'player_source': {
+            'endpoint': 'leaguehustlestatsplayer',
+            'field': 'MIN',
+            'transform': 'safe_int',
+            'scale': 10
+        },
+        'team_source': None,
         'opponent_source': None
     },
 
@@ -1511,7 +1569,7 @@ DB_COLUMNS = {
         'api': True,
         'player_source': {
             'endpoint': 'leaguedashptstats',
-            'params': {'pt_measure_type': 'Possessions'},
+            'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'},
             'field': 'TOUCHES',
             'transform': 'safe_int'
         },
@@ -1532,7 +1590,7 @@ DB_COLUMNS = {
         'api': True,
         'player_source': {
             'endpoint': 'leaguedashptstats',
-            'params': {'pt_measure_type': 'Possessions'},
+            'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'},
             'field': 'TIME_OF_POSS',
             'transform': 'safe_int'
         },
@@ -1558,7 +1616,7 @@ DB_COLUMNS = {
                 'type': 'pipeline',
                 'endpoint': 'leaguedashptstats',
                 'execution_tier': 'league',
-                'endpoint_params': {'pt_measure_type': 'Possessions'},
+                'endpoint_params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'},
                 'operations': [
                     {
                         'type': 'extract',
@@ -1612,7 +1670,7 @@ DB_COLUMNS = {
         'api': True,
         'player_source': {
             'endpoint': 'leaguedashptstats',
-            'params': {'pt_measure_type': 'Passing'},
+            'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
             'field': 'PASSES_MADE',
             'transform': 'safe_int'
         },
@@ -1633,7 +1691,7 @@ DB_COLUMNS = {
         'api': True,
         'player_source': {
             'endpoint': 'leaguedashptstats',
-            'params': {'pt_measure_type': 'Passing'},
+            'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
             'field': 'SECONDARY_AST',
             'transform': 'safe_int'
         },
@@ -1654,7 +1712,7 @@ DB_COLUMNS = {
         'api': True,
         'player_source': {
             'endpoint': 'leaguedashptstats',
-            'params': {'pt_measure_type': 'SpeedDistance'},
+            'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'},
             'field': 'DIST_MILES_OFF',
             'transform': 'safe_int',
             'scale': 10
@@ -1677,7 +1735,7 @@ DB_COLUMNS = {
         'api': True,
         'player_source': {
             'endpoint': 'leaguedashptstats',
-            'params': {'pt_measure_type': 'SpeedDistance'},
+            'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'},
             'field': 'DIST_MILES_DEF',
             'transform': 'safe_int',
             'scale': 10
@@ -1723,7 +1781,7 @@ DB_COLUMNS = {
         'api': True,
         'player_source': {
             'endpoint': 'leaguedashptstats',
-            'params': {'pt_measure_type': 'Passing'},
+            'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
             'field': 'POTENTIAL_AST',
             'transform': 'safe_int'
         },
@@ -2117,7 +2175,7 @@ API_CONFIG = {
     'roster_batch_cooldown': 120,        # Wait 120 seconds between batches
     
     # Automatic restart configuration (handles session exhaustion at ~175 requests)
-    'api_failure_threshold': 1,         # Auto-restart subprocess after first failure to preserve data
+    'api_failure_threshold': 1,        # Allow 10 consecutive failures before giving up (handles individual player timeouts)
     'api_restart_enabled': True,        # Enable automatic restart via exit code 42
     
     # Standard NBA API parameters (single source of truth)

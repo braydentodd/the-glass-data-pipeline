@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 from config.etl import (
     TABLES_CONFIG, ENDPOINTS_CONFIG, DB_COLUMNS,
     RETRY_CONFIG, API_CONFIG, DB_CONFIG, DB_OPERATIONS, NBA_CONFIG,
-    DATA_INTEGRITY_RULES
+    DATA_INTEGRITY_RULES, ENDPOINT_PARAMS, PARAM_KEYS
 )
 
 
@@ -136,7 +136,7 @@ def safe_int(value: Any, scale: int = 1) -> Optional[int]:
     if value is None or (hasattr(value, '__iter__') and len(str(value).strip()) == 0):
         return None
     try:
-        return int(float(value) * scale)
+        return round(float(value) * scale)
     except (ValueError, TypeError):
         return None
 
@@ -146,7 +146,7 @@ def safe_float(value: Any, scale: int = 1) -> Optional[int]:
     if value is None or (hasattr(value, '__iter__') and len(str(value).strip()) == 0):
         return None
     try:
-        return int(float(value) * scale)
+        return round(float(value) * scale)
     except (ValueError, TypeError):
         return None
 
@@ -327,6 +327,65 @@ def is_endpoint_available_for_season(
     return season_year >= min_year
 
 
+def normalize_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Normalize params dict - convert None/{} to empty dict, validate keys.
+    
+    Returns empty dict for None or {} (= base endpoint, no filtering).
+    Returns populated dict with only valid param keys.
+    
+    Args:
+        params: Optional params dict (None, {}, or {'key': 'value'})
+        
+    Returns:
+        Normalized dict with only valid param keys
+    """
+    if not params:
+        return {}
+    
+    # Filter to only known param keys
+    return {k: v for k, v in params.items() if k in PARAM_KEYS}
+
+
+def extract_filter_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Extract params for column filtering - handles basic vs advanced stats distinction.
+    
+    Used by validate_data_integrity, execute_null_zero_cleanup, execute_endpoint
+    to match how get_columns_by_endpoint filters columns.
+    
+    Key insight: 
+    - params=None or params={} means BASIC STATS ONLY (exclude advanced)
+    - To exclude advanced stats, we pass measure_type_detailed_defense=None explicitly
+    - This triggers the "elif measure_type_detailed_defense is not None" exclusion logic
+    
+    Args:
+        params: Optional params dict
+        
+    Returns:
+        kwargs dict ready for **kwargs expansion to get_columns_by_endpoint
+        
+    Example:
+        params = None → {'measure_type_detailed_defense': None, 'pt_measure_type': None, 'defense_category': None}
+        params = {} → {'measure_type_detailed_defense': None, 'pt_measure_type': None, 'defense_category': None}
+        params = {'measure_type_detailed_defense': 'Advanced'} → {'measure_type_detailed_defense': 'Advanced'}
+    """
+    normalized = normalize_params(params)
+    
+    # If params is empty (basic stats), explicitly set all filter params to None
+    # This triggers exclusion logic in get_columns_by_endpoint to exclude advanced stats
+    if not normalized:
+        return {key: None for key in PARAM_KEYS}
+    
+    # Otherwise only include params that exist in the dict
+    kwargs = {}
+    for key in PARAM_KEYS:
+        if key in normalized:
+            kwargs[key] = normalized[key]
+    
+    return kwargs
+
+
 # ============================================================================
 # DATABASE QUERY HELPERS
 # ============================================================================
@@ -378,13 +437,16 @@ def get_editable_fields() -> List[str]:
 # COLUMN QUERY FUNCTIONS
 # ============================================================================
 
+# Sentinel value to distinguish "not passed" from "explicitly passed None"
+_NOTSET = object()
+
 def get_columns_by_endpoint(
     endpoint_name: str,
     entity: Literal['player', 'team', 'opponent'],
     table: Optional[str] = None,
-    pt_measure_type: Optional[str] = None,
-    measure_type_detailed_defense: Optional[str] = None,
-    defense_category: Optional[str] = None
+    pt_measure_type: Optional[str] = _NOTSET,
+    measure_type_detailed_defense: Optional[str] = _NOTSET,
+    defense_category: Optional[str] = _NOTSET
 ) -> Dict[str, Dict[str, Any]]:
     """
     Get all columns that source from a specific endpoint.
@@ -448,19 +510,43 @@ def get_columns_by_endpoint(
         
         # Filter by parameter type if specified
         # Check both direct parameters and nested params dict
-        if pt_measure_type:
+        if pt_measure_type and pt_measure_type is not _NOTSET:
             source_pt = source.get('pt_measure_type') or source.get('params', {}).get('pt_measure_type')
             if source_pt != pt_measure_type:
                 continue
+        elif pt_measure_type is _NOTSET:
+            # Parameter not passed - no filtering on this param
+            pass
+        else:
+            # Explicitly passed as None - exclude columns that require ANY pt_measure_type
+            source_pt = source.get('pt_measure_type') or source.get('params', {}).get('pt_measure_type')
+            if source_pt is not None:
+                continue
         
-        if measure_type_detailed_defense:
+        if measure_type_detailed_defense and measure_type_detailed_defense is not _NOTSET:
             source_measure = source.get('measure_type_detailed_defense') or source.get('params', {}).get('measure_type_detailed_defense')
             if source_measure != measure_type_detailed_defense:
                 continue
+        elif measure_type_detailed_defense is _NOTSET:
+            # Parameter not passed - no filtering on this param
+            pass
+        else:
+            # Explicitly passed as None - exclude columns that require ANY measure_type_detailed_defense
+            source_measure = source.get('measure_type_detailed_defense') or source.get('params', {}).get('measure_type_detailed_defense')
+            if source_measure is not None:
+                continue
         
-        if defense_category:
+        if defense_category and defense_category is not _NOTSET:
             source_defense = source.get('defense_category') or source.get('params', {}).get('defense_category')
             if source_defense != defense_category:
+                continue
+        elif defense_category is _NOTSET:
+            # Parameter not passed - no filtering on this param
+            pass
+        else:
+            # Explicitly passed as None - exclude columns that require ANY defense_category
+            source_defense = source.get('defense_category') or source.get('params', {}).get('defense_category')
+            if source_defense is not None:
                 continue
         
         matched_cols[col_name] = col_meta
@@ -1221,14 +1307,21 @@ def uses_tracking_games(col_name: str) -> bool:
 
 def get_games_column_for_endpoint(endpoint_name: str) -> str:
     """
-    Get the appropriate games column (games or tr_games) for an endpoint.
+    Get the appropriate games column for NULL/0 cleanup based on endpoint.
     
     Args:
         endpoint_name: Name of the endpoint
     
     Returns:
-        'tr_games' if tracking endpoint, 'games' otherwise
+        - 'h_games' for hustle stats endpoints
+        - 'tr_games' for other tracking endpoints
+        - 'games' for regular stats endpoints
     """
+    # Hustle stats endpoints use h_games
+    if endpoint_name in ('leaguehustlestatsplayer', 'leaguehustlestatsteam'):
+        return 'h_games'
+    
+    # Other tracking endpoints use tr_games
     endpoint_config = get_endpoint_config(endpoint_name)
     is_tracking = endpoint_config.get('tracking', False)
     return 'tr_games' if is_tracking else 'games'
@@ -1279,7 +1372,8 @@ def validate_data_integrity(
     endpoint_name: str,
     season: str,
     season_type: int,
-    entity: Literal['player', 'team'] = 'player'
+    entity: Literal['player', 'team'] = 'player',
+    params: Optional[Dict[str, Any]] = None
 ) -> Dict[int, List[str]]:
     """
     Validate data integrity for an endpoint/season/type using config-driven rules.
@@ -1292,6 +1386,7 @@ def validate_data_integrity(
         season: Season string (e.g., '2020-21')
         season_type: Season type code (1=Regular, 2=Playoffs, 3=PlayIn)
         entity: 'player' or 'team'
+        params: Optional params dict to filter columns (e.g., {'measure_type_detailed_defense': 'Advanced'})
     
     Returns:
         Dict mapping entity_id -> list of failed column names
@@ -1302,12 +1397,22 @@ def validate_data_integrity(
     """
     from psycopg2.extras import DictCursor
     
-    # Get columns populated by this endpoint
-    cols = get_columns_by_endpoint(endpoint_name, entity)
+    # Get columns populated by this endpoint with these specific params
+    # Use helper to extract only params that exist in the dict
+    filter_kwargs = extract_filter_params(params)
+    cols = get_columns_by_endpoint(endpoint_name, entity, **filter_kwargs)
     if not cols:
         return {}
     
     col_names = list(cols.keys())
+    
+    # DEBUG: Log what we're validating
+    param_desc = ""
+    if params:
+        param_items = [f"{k}={v}" for k, v in params.items()]
+        param_desc = f" [{', '.join(param_items)}]"
+    logger.info(f"[VALIDATION] {endpoint_name}{param_desc} - Checking {len(col_names)} columns: {', '.join(col_names[:10])}{'...' if len(col_names) > 10 else ''}")
+    
     games_col = get_games_column_for_endpoint(endpoint_name)
     entity_id_field = 'player_id' if entity == 'player' else 'team_id'
     table = get_table_name(entity, 'stats')
@@ -1355,9 +1460,9 @@ def validate_data_integrity(
                             dep_value = row.get(dep_col)
                             if dep_value is None or dep_value == 0:
                                 failed_cols.append(dep_col)
-            
-            # Check sum validation rules
-            for sum_col, rule in DATA_INTEGRITY_RULES['sum_validations'].items():
+                
+                # Check sum validation rules
+                for sum_col, rule in DATA_INTEGRITY_RULES['sum_validations'].items():
                     # Only check if sum col is from THIS endpoint
                     if sum_col not in col_names:
                         continue
@@ -1399,12 +1504,23 @@ def validate_data_integrity(
                             if component_sum == 0:
                                 # All components are null/zero but parent has value
                                 failed_cols.extend(all_components)
-            
-            if failed_cols:
+                
+                if failed_cols:
                     failures[entity_id] = list(set(failed_cols))  # Remove duplicates
         
         finally:
             cursor.close()
+        
+        # DEBUG: Log validation results
+        if failures:
+            logger.warning(f"[VALIDATION] {len(failures)} {entity}(s) failed validation:")
+            # Show first 5 failures in detail
+            for idx, (entity_id, cols) in enumerate(list(failures.items())[:5]):
+                logger.warning(f"  [{entity_id}] Missing: {', '.join(cols)}")
+            if len(failures) > 5:
+                logger.warning(f"  ... and {len(failures) - 5} more")
+        else:
+            logger.info(f"[VALIDATION] ✓ All {len(rows)} {entity}(s) passed validation")
         
         return failures
 
@@ -1413,7 +1529,8 @@ def execute_null_zero_cleanup(
     endpoint_name: str,
     season: str,
     season_type: int,
-    entity: Literal['player', 'team'] = 'player'
+    entity: Literal['player', 'team'] = 'player',
+    params: Optional[Dict[str, Any]] = None
 ) -> int:
     """
     Execute NULL/Zero cleanup for an endpoint's columns.
@@ -1427,35 +1544,61 @@ def execute_null_zero_cleanup(
         season: Season string (e.g., '2020-21')
         season_type: Season type code
         entity: 'player' or 'team'
+        params: Optional params dict to filter columns (e.g., {'measure_type_detailed_defense': 'Advanced'})
     
     Returns:
         Number of rows updated
     """
-    # Get columns populated by this endpoint
-    cols = get_columns_by_endpoint(endpoint_name, entity)
+    # Get columns populated by this endpoint with these specific params
+    # Use helper to extract only params that exist in the dict
+    filter_kwargs = extract_filter_params(params)
+    cols = get_columns_by_endpoint(endpoint_name, entity, **filter_kwargs)
     if not cols:
         return 0
     
     col_names = list(cols.keys())
+    
+    # CRITICAL DEBUG: Check if dribbles would be affected
+    if endpoint_name == 'leaguedashptstats' and 'dribbles' in col_names:
+        logger.warning(f"⚠️ DRIBBLES CLEANUP BUG: dribbles is in cleanup columns for {endpoint_name}!")
+        logger.warning(f"  Season: {season}, Type: {season_type}")
+        logger.warning(f"  This will OVERWRITE dribbles values!")
+    
     games_col = get_games_column_for_endpoint(endpoint_name)
     table = get_table_name(entity, 'stats')
+    
+    # Filter out games columns from NULL cleanup (they have NOT NULL constraints)
+    # These columns should never be set to NULL - only to 0
+    NOT_NULL_COLUMNS = {'tr_games', 'tracking_games', 'h_games'}
+    col_names_nullable = [c for c in col_names if c not in NOT_NULL_COLUMNS]
     
     with db_connection() as conn:
         cursor = conn.cursor()
         rows_updated = 0
         
         try:
-            # Rule 1: games = 0 -> Set all columns to NULL
-            set_clauses_null = [f"{quote_column(c)} = NULL" for c in col_names]
-            query_null = f"""
-                UPDATE {table}
-                SET {', '.join(set_clauses_null)}
-                WHERE year = %s AND season_type = %s AND {games_col} = 0
-            """
-            cursor.execute(query_null, (season, season_type))
-            rows_updated += cursor.rowcount
+            # Rule 1: games = 0 -> Set all columns to NULL (only where not already NULL)
+            # Exclude NOT NULL columns (tr_games, tracking_games) - they get set to 0 instead
+            if col_names_nullable:
+                where_conditions_null = ' OR '.join([f"{quote_column(c)} IS NOT NULL" for c in col_names_nullable])
+                set_clauses_null = [f"{quote_column(c)} = NULL" for c in col_names_nullable]
+            else:
+                # No nullable columns to clean up
+                where_conditions_null = None
+                set_clauses_null = []
             
-            # Rule 2: games > 0 -> Set NULL to 0
+            if where_conditions_null:
+                query_null = f"""
+                    UPDATE {table}
+                    SET {', '.join(set_clauses_null)}
+                    WHERE year = %s AND season_type = %s AND {games_col} = 0
+                    AND ({where_conditions_null})
+                """
+                cursor.execute(query_null, (season, season_type))
+                rows_updated += cursor.rowcount
+            
+            # Rule 2: games > 0 -> Set NULL to 0 (only where actually NULL)
+            where_conditions_zero = ' OR '.join([f"{quote_column(c)} IS NULL" for c in col_names])
             set_clauses_zero = [
                 f"{quote_column(c)} = COALESCE({quote_column(c)}, 0)" 
                 for c in col_names
@@ -1464,6 +1607,7 @@ def execute_null_zero_cleanup(
                 UPDATE {table}
                 SET {', '.join(set_clauses_zero)}
                 WHERE year = %s AND season_type = %s AND {games_col} > 0
+                AND ({where_conditions_zero})
             """
             cursor.execute(query_zero, (season, season_type))
             rows_updated += cursor.rowcount
@@ -1683,16 +1827,18 @@ def get_endpoint_parameter_combinations(endpoint_name: str, entity: Literal['pla
     For endpoints like leaguedashptstats that require parameters (pt_measure_type),
     this discovers all unique parameter sets by scanning which columns use which parameters.
     
+    CRITICAL: Returns combinations in dependency order - basic stats (empty params) FIRST,
+    then advanced stats. This ensures games column is populated before advanced stats are written.
+    
     Args:
         endpoint_name: Name of the endpoint (e.g., 'leaguedashptstats')
         entity: Entity type ('player' or 'team')
         
     Returns:
-        List of parameter dictionaries, e.g.:
+        List of parameter dictionaries in dependency order, e.g.:
         [
-            {'pt_measure_type': 'Possessions'},
-            {'pt_measure_type': 'Passing'},
-            {'pt_measure_type': 'SpeedDistance'}
+            {},  # Basic stats FIRST (includes games column)
+            {'measure_type_detailed_defense': 'Advanced'}  # Advanced stats SECOND
         ]
         Empty list if endpoint doesn't require parameters or has no columns configured.
     """
@@ -1751,12 +1897,25 @@ def get_endpoint_parameter_combinations(endpoint_name: str, entity: Literal['pla
     if not param_combinations:
         param_combinations = [{}]
     
+    # CRITICAL: Sort to ensure basic stats (empty params) are processed BEFORE advanced stats
+    # This prevents NULL games constraint violations when writing advanced stats
+    # Sorting key: empty dict first (0), then by number of params (ascending)
+    def sort_key(params_dict):
+        if not params_dict:  # Empty dict = basic stats = highest priority
+            return (0, "")
+        # Non-empty params = advanced stats = lower priority
+        # Secondary sort by JSON string for deterministic ordering
+        return (1, json.dumps(params_dict, sort_keys=True))
+    
+    param_combinations.sort(key=sort_key)
+    
     return param_combinations
 
 
 def get_columns_for_endpoint_params(endpoint_name: str, params: Dict[str, Any], entity: Literal['player', 'team'] = 'player') -> List[str]:
     """
     Get list of column names that will be populated by this endpoint+params combination.
+    Includes both direct extraction columns and transformation columns for display purposes.
     
     Args:
         endpoint_name: Name of the endpoint (e.g., 'leaguedashptstats')
@@ -1765,6 +1924,7 @@ def get_columns_for_endpoint_params(endpoint_name: str, params: Dict[str, Any], 
         
     Returns:
         List of column names that use this exact endpoint+params combination
+        (includes both direct extraction and transformation columns)
     """
     import json
     
@@ -1785,6 +1945,12 @@ def get_columns_for_endpoint_params(endpoint_name: str, params: Dict[str, Any], 
         # Check endpoint
         col_endpoint = source_config.get('endpoint')
         col_params = source_config.get('params', {})
+        
+        # CRITICAL: Also check for params at source level (not nested in 'params' key)
+        # Example: tr_games has 'pt_measure_type': 'Possessions' directly in player_source
+        for key in ['pt_measure_type', 'measure_type_detailed_defense', 'defense_category']:
+            if key in source_config and key not in col_params:
+                col_params[key] = source_config[key]
         
         # Also check in transformation if present
         transform = source_config.get('transformation')
@@ -1977,17 +2143,22 @@ def reset_current_season_endpoints(season: str) -> None:
             cursor.close()
 
 
-def mark_backfill_complete() -> None:
+def mark_backfill_complete(earliest_rookie_year: Optional[str] = None) -> None:
     """
     Mark full backfill cycle as complete - config-driven approach.
     
-    Checks if ALL required endpoints are complete across ALL seasons.
+    Checks if ALL required endpoints are complete from earliest_rookie_year onwards.
     If complete, marks ALL players as backfilled=TRUE and resets endpoint statuses.
     
     Per user requirements:
     - Track at PLAYER level only (not per-endpoint-per-player)
     - When ALL endpoints complete → mark ALL players as backfilled=TRUE
+    - Only check endpoints from earliest rookie year onwards (ignore historical data)
     - Reset all endpoint statuses to 'ready' for next cycle
+    
+    Args:
+        earliest_rookie_year: Only check endpoints from this season onwards (e.g., '2020-21').
+                            If None, checks ALL endpoints (old behavior)
     
     Returns:
         None (prints status to console)
@@ -1999,12 +2170,23 @@ def mark_backfill_complete() -> None:
         
         try:
             # Check if there are ANY incomplete endpoints in the tracker
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM endpoint_tracker
-                WHERE status IS NULL OR status != 'complete'
-            """)
-            incomplete_count = cursor.fetchone()[0]
+            # Only check from earliest_rookie_year onwards if provided
+            if earliest_rookie_year:
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM endpoint_tracker
+                    WHERE (status IS NULL OR status != 'complete')
+                    AND year >= %s
+                """, (earliest_rookie_year,))
+                incomplete_count = cursor.fetchone()[0]
+                logger.info(f"[BACKFILL STATUS] Checking endpoints from {earliest_rookie_year} onwards: {incomplete_count} incomplete")
+            else:
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM endpoint_tracker
+                    WHERE status IS NULL OR status != 'complete'
+                """)
+                incomplete_count = cursor.fetchone()[0]
             
             if incomplete_count > 0:
                 logger.info(f"[BACKFILL STATUS] {incomplete_count} endpoint(s) still incomplete - not marking players as complete yet")
@@ -2094,8 +2276,9 @@ def ensure_endpoint_tracker_coverage(earliest_rookie_year: str) -> None:
                         
                         # For each parameter combination
                         for params in param_combos:
-                            # Serialize params to JSON for storage
-                            params_json = json.dumps(params, sort_keys=True) if params else None
+                            # Serialize params to JSON for storage (always use JSON, never NULL)
+                            # Empty dict {} becomes "{}" in JSON, which satisfies NOT NULL constraint
+                            params_json = json.dumps(params, sort_keys=True)
                             
                             rows_to_upsert.append((
                                 endpoint,
@@ -2114,7 +2297,7 @@ def ensure_endpoint_tracker_coverage(earliest_rookie_year: str) -> None:
                     INSERT INTO endpoint_tracker 
                     (endpoint, year, season_type, status, params, entity)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (endpoint, year, season_type, COALESCE(params, ''), entity) 
+                    ON CONFLICT (endpoint, year, season_type, params, entity) 
                     DO UPDATE SET status = 'ready', updated_at = NOW()
                 """, rows_to_upsert)
                 
@@ -2371,7 +2554,8 @@ def execute_transformation_pipeline(
     season: str,
     entity: Literal['player', 'team'],
     season_type: int = 1,
-    season_type_name: str = 'Regular Season'
+    season_type_name: str = 'Regular Season',
+    player_ids: Optional[List[int]] = None
 ) -> Dict[int, Any]:
     """
     Execute a pipeline of transformation operations defined in config.
@@ -2386,6 +2570,7 @@ def execute_transformation_pipeline(
         entity: 'player' or 'team'
         season_type: Season type ID (1=Regular, 2=Playoffs, 3=PlayIn)
         season_type_name: Season type name string
+        player_ids: Optional list of player IDs to filter results to (for targeted backfill)
         
     Returns:
         Dict mapping entity_id to transformed value
@@ -2415,7 +2600,7 @@ def execute_transformation_pipeline(
     elif execution_tier == 'team':
         api_results = _fetch_api_data_per_team(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
     elif execution_tier == 'player':
-        api_results = _fetch_api_data_per_player(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
+        api_results = _fetch_api_data_per_player(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params, player_ids=player_ids)
     else:
         raise ValueError(f"Unknown execution_tier: {execution_tier}")
     
@@ -2443,6 +2628,10 @@ def execute_transformation_pipeline(
             data = _operation_weighted_avg(data, operation)
         else:
             raise ValueError(f"Unknown operation type: {op_type}")
+    
+    # Filter results to only specified player_ids if provided (for targeted backfill)
+    if player_ids is not None and entity == 'player':
+        data = {pid: value for pid, value in data.items() if pid in player_ids}
     
     return data
 
@@ -2519,7 +2708,8 @@ def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
 
 def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
                                season_type_name: str, entity: str,
-                               custom_params: Optional[Dict[str, Any]] = None) -> List[Any]:
+                               custom_params: Optional[Dict[str, Any]] = None,
+                               player_ids: Optional[List[int]] = None) -> List[Any]:
     """Fetch data from per-player endpoint (hundreds/thousands of API calls)."""
     from config.etl import SEASON_TYPE_CONFIG
     
@@ -2528,6 +2718,10 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
     
     # Get all (player_id, team_id) tuples for players who played in this season
     player_team_ids = get_player_ids_for_season(season, season_type)
+    
+    # Filter to specific player_ids if provided (for targeted backfill)
+    if player_ids is not None:
+        player_team_ids = [(pid, tid) for pid, tid in player_team_ids if pid in player_ids]
     
     if not player_team_ids:
         # Only print message if fetching for multiple players (daily ETL)
@@ -2545,9 +2739,12 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
     accepts_team_id = endpoint_config.get('accepts_team_id', True)  # Default to True for backwards compatibility
     
     # Create cache key (exclude player_id, team_id and internal params)
+    # IMPORTANT: Include player_ids in cache key so backfill mode has separate cache
     cache_params = {k: v for k, v in base_params.items() 
                    if not k.startswith('_') and k not in ('player_id', 'team_id')}
-    cache_key = (endpoint_name, season, season_type_name, frozenset(cache_params.items()))
+    # Convert player_ids list to frozenset for hashable cache key
+    player_ids_key = frozenset(player_ids) if player_ids is not None else None
+    cache_key = (endpoint_name, season, season_type_name, frozenset(cache_params.items()), player_ids_key)
     
     # Check cache first
     if hasattr(ctx, 'api_result_cache') and cache_key in ctx.api_result_cache:

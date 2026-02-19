@@ -32,6 +32,10 @@ from lib.etl import (
     get_primary_key, get_table_name,
     quote_column, get_db_connection, return_db_connection, db_connection,
     get_season, get_season_year, build_endpoint_params,
+    # Param helpers
+    extract_filter_params,
+    # Backfill helpers
+    get_non_backfilled_player_ids_for_season,
     # Custom exceptions
     APISessionExhausted, DatabaseConnectionError, ConfigurationError, DataValidationError,
     # Config context manager
@@ -63,6 +67,53 @@ if os.path.exists('.env'):
                 os.environ.setdefault(key, value)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+
+# Global verbose mode flag
+VERBOSE_MODE = False
+
+def log_endpoint_processing(season: str, season_type_name: str, endpoint: str, 
+                           params: Optional[Dict[str, Any]] = None, 
+                           columns: Optional[List[str]] = None,
+                           scope: Optional[str] = None) -> None:
+    """
+    Unified logging function for endpoint processing.
+    Format: Processing {season} {season-type} {endpoint} [{params}] (columns)
+    
+    Args:
+        season: Season string (e.g., '2024-25')
+        season_type_name: Season type name (e.g., 'Regular Season', 'Playoffs')
+        endpoint: Endpoint name
+        params: Optional parameters dict
+        columns: Optional list of column names
+        scope: Optional scope (league/team/player)
+    """
+    param_desc = ""
+    if params:
+        param_parts = []
+        for key, value in sorted(params.items()):
+            if not key.startswith('_'):  # Skip internal params
+                param_parts.append(f"{key}={value}")
+        if param_parts:
+            param_desc = f" [{', '.join(param_parts)}]"
+    
+    columns_str = f" ({', '.join(columns)})" if columns else ""
+    
+    print(f"Processing {season} {season_type_name} {endpoint}{param_desc}{columns_str}")
+
+def log_verbose_data(entity_id: Any, column: str, api_value: Any, db_value: Any, 
+                     season: str, season_type: int) -> None:
+    """
+    Log API and DB values for a single entity/column/season/season_type combo.
+    Only called when VERBOSE_MODE is enabled.
+    
+    Format: [entity_id] {column}: API={api_value} → DB={db_value} ({season} type={season_type})
+    """
+    if VERBOSE_MODE:
+        print(f"  [{entity_id}] {column}: API={api_value} → DB={db_value} ({season} type={season_type})")
 
 # ============================================================================
 # ETL CONTEXT - State Management
@@ -367,7 +418,8 @@ def execute_endpoint(
     season_type: int = 1,
     season_type_name: str = 'Regular Season',
     description: Optional[str] = None,
-    suppress_logs: bool = False
+    suppress_logs: bool = False,
+    player_ids: Optional[List[int]] = None
 ) -> None:
     """
     Universal config-driven endpoint executor - auto-dispatches based on config.
@@ -387,30 +439,20 @@ def execute_endpoint(
         description = f"{endpoint_name}"
     
     # Append measure type to description if present (e.g., "leaguedashptstats.Possessions")
-    pt_measure_type = endpoint_params.get('pt_measure_type')
-    measure_detailed = endpoint_params.get('measure_type_detailed_defense')
-    defense_category = endpoint_params.get('defense_category')
-    if pt_measure_type:
-        description = f"{endpoint_name} ({pt_measure_type})"
-    elif measure_detailed:
-        description = f"{endpoint_name} ({measure_detailed})"
-    elif defense_category:
-        description = f"{endpoint_name} ({defense_category})"
+    # Check params in priority order
+    param_value = (endpoint_params.get('pt_measure_type') or 
+                   endpoint_params.get('measure_type_detailed_defense') or 
+                   endpoint_params.get('defense_category'))
+    if param_value:
+        description = f"{endpoint_name} ({param_value})"
     
     if not suppress_logs:
         print(f"Fetching {description} - {season_type_name}...")
     
     # Get columns from config, filtered by parameter type if provided
-    pt_measure_type = endpoint_params.get('pt_measure_type')
-    measure_detailed = endpoint_params.get('measure_type_detailed_defense')
-    defense_category = endpoint_params.get('defense_category')
-    
-    cols = get_columns_by_endpoint(
-        endpoint_name, entity, table=table, 
-        pt_measure_type=pt_measure_type,
-        measure_type_detailed_defense=measure_detailed,
-        defense_category=defense_category
-    )
+    # Use helper to extract only params that exist in endpoint_params
+    filter_kwargs = extract_filter_params(endpoint_params)
+    cols = get_columns_by_endpoint(endpoint_name, entity, table=table, **filter_kwargs)
     if not cols:
         # No direct extraction columns - this endpoint uses transformations only
         # It should be processed via update_transformation_columns() instead
@@ -435,13 +477,13 @@ def execute_endpoint(
         # PER-TEAM EXECUTION: Loop through all 30 teams and aggregate results
         return _execute_per_team_endpoint(
             ctx, endpoint_name, endpoint_params, season,
-            entity, table, season_type, season_type_name, description, cols
+            entity, table, season_type, season_type_name, description, cols, player_ids
         )
     else:
         # LEAGUE-WIDE EXECUTION: Single API call returns all entities
         return _execute_league_wide_endpoint(
             ctx, endpoint_name, endpoint_params, season,
-            entity, table, season_type, season_type_name, description, cols
+            entity, table, season_type, season_type_name, description, cols, player_ids
         )
 
 
@@ -455,7 +497,8 @@ def _execute_league_wide_endpoint(
     season_type: int,
     season_type_name: str,
     description: str,
-    cols: Dict[str, Dict]
+    cols: Dict[str, Dict],
+    player_ids: Optional[List[int]] = None
 ) -> None:
     """Execute league-wide endpoint (1 API call returns all entities)."""
     
@@ -558,11 +601,18 @@ def _execute_league_wide_endpoint(
                         # This catches any edge cases where transformation didn't handle complex types
                         if isinstance(value, (dict, list)):
                             value = None
+                        
+                        # Verbose logging: API value → DB value
+                        log_verbose_data(entity_id, stat_name, raw_value, value, season, season_type)
                             
                         values.append(value)
                     
                     values.extend([entity_id, year_value, season_type])
                     all_records.append(tuple(values))
+            
+            # Filter to specific player_ids if provided (for targeted backfill)
+            if player_ids is not None and entity == 'player':
+                all_records = [rec for rec in all_records if rec[-3] in player_ids]
             
             # Bulk update (requires base stats to exist first)
             if all_records:
@@ -643,7 +693,8 @@ def _execute_per_team_endpoint(
     season_type: int,
     season_type_name: str,
     description: str,
-    cols: Dict[str, Dict]
+    cols: Dict[str, Dict],
+    player_ids: Optional[List[int]] = None
 ) -> None:
     """
     Execute per-team endpoint (30 API calls, one per team).
@@ -903,6 +954,10 @@ def _execute_per_team_endpoint(
                     entity_stats[entity_id][col_name] = max(0, all_shots - far_shots)
                 # Else: column stays as-is (total shots from main result set)
     
+    # Filter to specific player_ids if provided (for targeted backfill)
+    if player_ids is not None and entity == 'player':
+        entity_stats = {eid: stats for eid, stats in entity_stats.items() if eid in player_ids}
+    
     with db_connection() as conn:
         cursor = conn.cursor()
         
@@ -919,6 +974,10 @@ def _execute_per_team_endpoint(
                     if isinstance(val, (dict, list)):
                         logger.warning(f"Column '{col}' has dict/list value for entity {entity_id}, converting to None")
                         val = None
+                    
+                    # Verbose logging: show aggregated value being written to DB
+                    log_verbose_data(entity_id, col, val, val, season, season_type)
+                    
                     values.append(val)
                 
                 values.extend([entity_id, year_value, season_type])
@@ -957,7 +1016,8 @@ def apply_transformation(
     table: Optional[str] = None,
     season_type: int = 1,
     season_type_name: str = 'Regular Season',
-    source_config: Optional[Dict] = None
+    source_config: Optional[Dict] = None,
+    player_ids: Optional[List[int]] = None
 ) -> Dict[int, Any]:
     """
     Execute transformation using unified pipeline engine.
@@ -981,7 +1041,7 @@ def apply_transformation(
     if transform_type == 'pipeline':
         from lib.etl import execute_transformation_pipeline
         result = execute_transformation_pipeline(
-            ctx, transform, season, entity, season_type, season_type_name
+            ctx, transform, season, entity, season_type, season_type_name, player_ids=player_ids
         )
         return result
     
@@ -1381,7 +1441,7 @@ def update_player_rosters(ctx: ETLContext) -> Tuple[int, int, List[int]]:
     return players_added, players_updated, new_player_ids
 
 
-def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_zero_stats: bool = False, player_ids: Optional[List[int]] = None, season_type: Optional[int] = None) -> bool:
+def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_zero_stats: bool = False, player_ids: Optional[List[int]] = None, season_type: Optional[int] = None, params: Optional[Dict[str, Any]] = None) -> bool:
     """
     Update season statistics for all entities (players or teams).
     
@@ -1394,12 +1454,17 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
         skip_zero_stats: If True, don't add zero-stat records for roster players (player-only, backfill mode)
         player_ids: Optional list of player IDs to filter to (for backfill mode - only process these specific players)
         season_type: Optional season type code to process only that type (for backfill). If None, processes all types.
+        params: Optional parameters dict to determine which stats to fetch:
+                - None or {} → Basic stats only (default/base endpoint)
+                - {'measure_type_detailed_defense': 'Advanced'} → Advanced stats only
         
     Returns:
         True if successful
         
     Usage:
-        update_basic_stats(ctx, 'player')  # All players, all season types
+        update_basic_stats(ctx, 'player')  # Basic stats, all players, all season types
+        update_basic_stats(ctx, 'player', params=None)  # Basic stats only
+        update_basic_stats(ctx, 'player', params={'measure_type_detailed_defense': 'Advanced'})  # Advanced stats only
         update_basic_stats(ctx, 'player', season_type=1)  # All players, Regular Season only
         update_basic_stats(ctx, 'player', player_ids=[1629632])  # Specific player(s)
         update_basic_stats(ctx, 'team')
@@ -1442,16 +1507,23 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
         valid_entity_ids = set(list(TEAM_IDS.values()))
         all_entities = None  # Not needed for teams
     
-    # Get columns from config
-    # - basic_cols: Basic stats (no special parameters needed)
-    # - advanced_cols: Advanced stats (require measure_type_detailed_defense='Advanced')
-    # Both are inserted if available for the season
-    basic_cols = get_columns_by_endpoint(endpoint_name, entity, table=table)
-    advanced_cols = get_columns_by_endpoint(endpoint_name, entity, table=table, measure_type_detailed_defense='Advanced')
+    # Get columns from config based on params
+    # params is None or {} → basic stats only (default/base endpoint)
+    # params has measure_type_detailed_defense='Advanced' → advanced stats only
+    # CRITICAL: ALWAYS use extract_filter_params to ensure proper column filtering
+    # This ensures that when we request advanced stats, we EXCLUDE basic stats columns,
+    # and when we request basic stats, we EXCLUDE advanced stats columns.
+    filter_kwargs = extract_filter_params(params)
+    all_cols = get_columns_by_endpoint(endpoint_name, entity, table=table, **filter_kwargs)
     
-    # Combine both basic and advanced columns for INSERT
-    # Advanced stats are now available from 2003-04, so include them
-    all_cols = {**basic_cols, **advanced_cols}
+    if params and params.get('measure_type_detailed_defense') == 'Advanced':
+        # Advanced stats endpoint
+        fetch_basic = False
+        fetch_advanced = True
+    else:
+        # Basic stats endpoint (default)
+        fetch_basic = True
+        fetch_advanced = False
     
     # CRITICAL: Exclude primary key from all_cols (it's added explicitly to avoid duplicates)
     entity_id_field = get_primary_key(entity)
@@ -1483,56 +1555,47 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
         try:
             print(f"Fetching {endpoint_name} - {season_type_name}...")
             
-            # Fetch basic stats
-            @with_retry(endpoint_name=endpoint_name)
-            def fetch_basic_stats(timeout: int = API_CONFIG['timeout_bulk']) -> Any:
-                time.sleep(API_CONFIG['rate_limit_delay'])
-                return EndpointClass(
-                    season=current_season,
-                    season_type_all_star=season_type_name,
-                    per_mode_detailed=API_CONFIG['per_mode_detailed'],
-                    timeout=timeout
-                ).get_data_frames()[0]
+            df = None
             
-            df = fetch_basic_stats()            
-            if df.empty:
+            # Fetch stats based on params
+            df = None
+            
+            if fetch_basic:
+                # Fetch basic stats only
+                @with_retry(endpoint_name=endpoint_name)
+                def fetch_basic_stats(timeout: int = API_CONFIG['timeout_bulk']) -> Any:
+                    time.sleep(API_CONFIG['rate_limit_delay'])
+                    return EndpointClass(
+                        season=current_season,
+                        season_type_all_star=season_type_name,
+                        per_mode_detailed=API_CONFIG['per_mode_detailed'],
+                        timeout=timeout
+                    ).get_data_frames()[0]
+                
+                df = fetch_basic_stats()            
+                if df.empty:
+                    continue
+            
+            elif fetch_advanced:
+                # Fetch advanced stats only
+                @with_retry(endpoint_name=endpoint_name)
+                def fetch_advanced_stats(timeout: int = API_CONFIG['timeout_bulk']) -> Any:
+                    time.sleep(API_CONFIG['rate_limit_delay'])
+                    return EndpointClass(
+                        season=current_season,
+                        season_type_all_star=season_type_name,
+                        measure_type_detailed_defense='Advanced',
+                        per_mode_detailed=API_CONFIG['per_mode_detailed'],
+                        timeout=timeout
+                    ).get_data_frames()[0]
+                
+                df = fetch_advanced_stats()
+                if df.empty:
+                    continue
+            
+            # If no data was fetched, skip
+            if df is None or df.empty:
                 continue
-            
-            # Fetch advanced stats if configured AND available for this season
-            adv_field_names = set()
-            for col, cfg in advanced_cols.items():
-                src = cfg.get(f'{entity}_source', {})
-                params = src.get('params', {})
-                if params.get('measure_type_detailed_defense') == 'Advanced' and src.get('field'):
-                    adv_field_names.add(src['field'])
-            
-            if adv_field_names:
-                try:
-                    @with_retry(endpoint_name=endpoint_name)
-                    def fetch_advanced_stats(timeout: int = API_CONFIG['timeout_bulk']) -> Any:
-                        time.sleep(API_CONFIG['rate_limit_delay'])
-                        return EndpointClass(
-                            season=current_season,
-                            season_type_all_star=season_type_name,
-                            measure_type_detailed_defense='Advanced',
-                            per_mode_detailed=API_CONFIG['per_mode_detailed'],
-                            timeout=timeout
-                        ).get_data_frames()[0]
-                    
-                    adv_df = fetch_advanced_stats()                    
-                    if not adv_df.empty:
-                        # Build merge columns: ID + advanced fields
-                        merge_cols = [id_field] + (['TEAM_ID'] if entity == 'player' else []) + sorted(list(adv_field_names))
-                        merge_on = [id_field] + (['TEAM_ID'] if entity == 'player' else [])
-                        
-                        # Verify columns exist before merge
-                        missing_cols = [c for c in merge_cols if c not in adv_df.columns]
-                        if missing_cols:
-                            logger.warning(f"Advanced stats missing columns: {missing_cols}")
-                        else:
-                            df = df.merge(adv_df[merge_cols], on=merge_on, how='left')
-                except Exception as e:
-                    logger.warning(f"Could not fetch advanced stats: {e}")
             
             # Fetch opponent stats for teams
             if entity == 'team':
@@ -1615,12 +1678,6 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
                                 value = None
                                 record_values.append(value)
                                 continue
-                            # Advanced stats: log missing fields for debugging
-                            elif field_name in adv_field_names:
-                                # Only log once per season to avoid spam
-                                if entity_id == list(valid_entity_ids)[0]:
-                                    logger.warning(f"Advanced field {field_name} missing from DataFrame")
-                                value = 0
                             else:
                                 # Field should exist but is missing - default to 0
                                 value = 0
@@ -1638,13 +1695,19 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
                                 value = safe_float(raw_value, scale=scale)
                             else:
                                 value = safe_int(raw_value, scale=scale)
+                            
+                            # Verbose logging: API value → DB value for basic stats
+                            log_verbose_data(entity_id, col_name, raw_value, value, current_season, season_type_code)
                     
                     record_values.append(value)
                 
                 records.append(tuple(record_values))
             
             # Add zero-stat records for players without stats (Regular Season only)
-            if entity == 'player' and season_type_code == 1 and not skip_zero_stats:
+            # CRITICAL: Only create zero-stat records when processing BASIC stats (which includes games column)
+            # Do NOT create records when processing advanced stats, as this would insert games=NULL
+            has_games_column = 'games' in all_cols
+            if entity == 'player' and season_type_code == 1 and not skip_zero_stats and has_games_column:
                 entities_without_stats = valid_entity_ids - entities_with_stats
                 if entities_without_stats:
                     for entity_id in entities_without_stats:
@@ -1663,33 +1726,68 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
                         
                         records.append(tuple(zero_values))
             
-            # Bulk insert
+            # Bulk insert or update
             if records:
                 entity_id_field = get_primary_key(entity)
-                db_columns = [entity_id_field, 'year', 'season_type'] + sorted(all_cols.keys())
                 
                 # Guard against empty column list (would cause SQL syntax error)
                 if not all_cols:
                     print(f"\u26a0\ufe0f  WARNING - No columns configured for {entity} in {table}, skipping insert")
                     continue
                 
-                columns_str = ', '.join(quote_column(col) for col in db_columns)
+                # CRITICAL FIX: When processing advanced stats (has_games_column=False), 
+                # use pure UPDATE instead of INSERT...ON CONFLICT.
+                # 
+                # Why: INSERT...ON CONFLICT fails when games column is not included because:
+                # 1. games column has NOT NULL constraint
+                # 2. games column has no DEFAULT value
+                # 3. INSERT portion tries to create row without games, causing NULL constraint violation
+                #
+                # Solution: Use pure UPDATE for advanced stats since row already exists from basic stats
+                if has_games_column:
+                    # BASIC STATS: Use INSERT...ON CONFLICT (row might not exist yet)
+                    db_columns = [entity_id_field, 'year', 'season_type'] + sorted(all_cols.keys())
+                    columns_str = ', '.join(quote_column(col) for col in db_columns)
+                    
+                    update_clauses = [
+                        f"{quote_column(col)} = EXCLUDED.{quote_column(col)}" for col in sorted(all_cols.keys())
+                    ]
+                    update_str = ',\n                        '.join(update_clauses)
+                    
+                    sql = f"""
+                        INSERT INTO {table} (
+                            {columns_str}
+                        ) VALUES %s
+                        ON CONFLICT ({entity_id_field}, year, season_type) DO UPDATE SET
+                            {update_str},
+                            updated_at = NOW()
+                    """
+                    
+                    execute_values(cursor, sql, records)
+                else:
+                    # ADVANCED STATS: Use pure UPDATE (row must already exist from basic stats)
+                    # Build parameterized UPDATE for batch execution
+                    update_clauses = [
+                        f"{quote_column(col)} = data.{quote_column(col)}" for col in sorted(all_cols.keys())
+                    ]
+                    update_str = ',\n                        '.join(update_clauses)
+                    
+                    # Create temporary table with new values
+                    db_columns = [entity_id_field, 'year', 'season_type'] + sorted(all_cols.keys())
+                    columns_str = ', '.join(quote_column(col) for col in db_columns)
+                    
+                    sql = f"""
+                        UPDATE {table}
+                        SET {update_str},
+                            updated_at = NOW()
+                        FROM (VALUES %s) AS data({columns_str})
+                        WHERE {table}.{entity_id_field} = data.{entity_id_field}
+                          AND {table}.year = data.year
+                          AND {table}.season_type = data.season_type
+                    """
+                    
+                    execute_values(cursor, sql, records)
                 
-                update_clauses = [
-                    f"{quote_column(col)} = EXCLUDED.{quote_column(col)}" for col in sorted(all_cols.keys())
-                ]
-                update_str = ',\n                        '.join(update_clauses)
-                
-                sql = f"""
-                    INSERT INTO {table} (
-                        {columns_str}
-                    ) VALUES %s
-                    ON CONFLICT ({entity_id_field}, year, season_type) DO UPDATE SET
-                        {update_str},
-                        updated_at = NOW()
-                """
-                
-                execute_values(cursor, sql, records)
                 conn.commit()
                 total_updated += len(records)
         
@@ -1708,7 +1806,8 @@ def run_endpoint_backfill(
     season_type: int,
     scope: str,
     params: Optional[Dict[str, Any]] = None,
-    entity: Optional[Literal['player', 'team']] = None
+    entity: Optional[Literal['player', 'team']] = None,
+    backfill_mode: bool = True
 ) -> bool:
     """
     Process a single endpoint for one season/season_type with specific parameters.
@@ -1726,6 +1825,7 @@ def run_endpoint_backfill(
         entity: Optional entity type override ('player' or 'team'). If not provided, 
                 determined from endpoint config. Use this when calling from team backfill
                 to ensure dual-entity endpoints track correctly.
+        backfill_mode: If True, only process players with backfilled=false (default: True)
         
     Returns:
         True if successful, False if failed
@@ -1733,6 +1833,7 @@ def run_endpoint_backfill(
     from lib.etl import (
         update_backfill_status,
         get_player_ids_for_season,
+        get_non_backfilled_player_ids_for_season,
         get_active_teams,
         get_endpoint_config,
         get_columns_for_endpoint_params,
@@ -1745,6 +1846,9 @@ def run_endpoint_backfill(
     
     if params is None:
         params = {}
+    
+    # Initialize backfill_player_ids at the start so it's available in all code paths
+    backfill_player_ids = None
     
     season_type_name = next(
         (name for name, cfg in SEASON_TYPE_CONFIG.items() if cfg['season_code'] == season_type),
@@ -1798,10 +1902,9 @@ def run_endpoint_backfill(
             if scope == 'league':
                 # Get columns that will be populated
                 columns = get_columns_for_endpoint_params(endpoint, params, entity)
-                columns_str = f" ({', '.join(columns)})" if columns else ""
                 
-                # Log in requested format: Processing {season} {season-type} {endpoint} [{params}] (columns)
-                print(f"Processing {season} {season_type_name} {endpoint}{param_desc}{columns_str}")
+                # Log using unified logging function
+                log_endpoint_processing(season, season_type_name, endpoint, params, columns, scope)
                 
                 # SPECIAL CASE: leaguedashplayerstats and leaguedashteamstats are the BASE endpoints
                 # They must INSERT records first, then other endpoints UPDATE them
@@ -1811,26 +1914,43 @@ def run_endpoint_backfill(
                     # skip_zero_stats=True: Only insert players who actually played this season
                     # (don't create empty records for all players in database)
                     # season_type: Process only this specific season type (don't loop through all)
-                    update_basic_stats(ctx, entity, skip_zero_stats=True, season_type=season_type)
+                    # params: Pass through to only fetch stats matching these parameters
+                    update_basic_stats(ctx, entity, skip_zero_stats=True, season_type=season_type, params=params)
                 else:
-                    # Check if this endpoint has ANY direct extraction columns
+                    # Check if this endpoint has ANY direct extraction columns FOR THESE PARAMS
                     # If ALL columns are transformations, route to transformation pipeline
-                    direct_extraction_cols = get_columns_by_endpoint(endpoint, entity)
+                    # Use helper to extract only params that exist in the dict
+                    filter_kwargs = extract_filter_params(params)
+                    direct_extraction_cols = get_columns_by_endpoint(endpoint, entity, **filter_kwargs)
+                    
+                    # Get player_ids for targeted backfill if this is player entity
+                    print(f"  -> DEBUG: About to check backfill - entity={entity}, backfill_mode={backfill_mode}")
+                    if entity == 'player' and backfill_mode:
+                        backfill_player_ids = [pid for pid, _ in get_non_backfilled_player_ids_for_season(season, season_type)]
+                        if backfill_player_ids:
+                            print(f"  -> Backfilling {len(backfill_player_ids)} players with missing data")
+                        else:
+                            print(f"  -> DEBUG: No backfill players found for {season} type={season_type}")
+                    else:
+                        print(f"  -> DEBUG: Skipping backfill filter (entity={entity}, backfill_mode={backfill_mode})")
                     
                     if not direct_extraction_cols:
                         # ALL columns are transformations - use transformation pipeline
-                        print(f"  -> Processing via transformation pipeline (all columns are transformations)...")
+                        
                         updated_count = update_transformation_columns(
                             ctx=ctx,
                             season=season,
                             entity=entity,
                             season_type=season_type,
-                            season_type_name=season_type_name
+                            season_type_name=season_type_name,
+                            endpoint=endpoint,
+                            player_ids=backfill_player_ids
                         )
                         print(f"  -> Updated {updated_count} {entity}s via transformation pipeline")
                     else:
                         # Has direct extraction columns - use execute_endpoint()
-                        execute_endpoint(
+                        
+                        updated_count = execute_endpoint(
                             ctx=ctx,
                             endpoint_name=endpoint,
                             endpoint_params=params,
@@ -1838,22 +1958,29 @@ def run_endpoint_backfill(
                             entity=entity,
                             season_type=season_type,
                             season_type_name=season_type_name,
-                            description=f"{endpoint}{param_desc}"
+                            description=f"{endpoint}{param_desc}",
+                            player_ids=backfill_player_ids
                         )
                 
                 # Count how many entities were processed
-                # Query the database to count records inserted/updated
-                with db_connection() as conn:
-                    cursor = conn.cursor()
-                    table = get_table_name(entity, 'stats')
-                    # Both tables use VARCHAR for year column
-                    year_field_value = season if entity == 'player' else str(year)
-                    cursor.execute(
-                        f"SELECT COUNT(*) FROM {table} WHERE year = %s AND season_type = %s",
-                        (year_field_value, season_type)
-                    )
-                    count = cursor.fetchone()[0]
-                    cursor.close()
+                # For both transformation and direct extraction endpoints with player_ids filter, use the returned count
+                # For direct extraction without filtering, query the database
+                if backfill_player_ids is not None:
+                    # Using player_ids filter - use the actual update count from the operation
+                    count = updated_count
+                else:
+                    # Direct extraction endpoint - query the database to count records
+                    with db_connection() as conn:
+                        cursor = conn.cursor()
+                        table = get_table_name(entity, 'stats')
+                        # Both tables use VARCHAR for year column
+                        year_field_value = season if entity == 'player' else str(year)
+                        cursor.execute(
+                            f"SELECT COUNT(*) FROM {table} WHERE year = %s AND season_type = %s",
+                            (year_field_value, season_type)
+                        )
+                        count = cursor.fetchone()[0]
+                        cursor.close()
                 
                 if entity == 'player':
                     update_backfill_status(endpoint, season, season_type, 'complete',
@@ -1873,7 +2000,7 @@ def run_endpoint_backfill(
                 # ====================================================================
                 print(f"  -> NULL/Zero cleanup...")
                 try:
-                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity)
+                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity, params)
                     print(f"  -> Cleaned {rows_cleaned} rows")
                 except Exception as e:
                     print(f"  WARNING: NULL cleanup failed: {e}")
@@ -1883,7 +2010,7 @@ def run_endpoint_backfill(
                 # ====================================================================
                 print(f"  -> Validating data integrity...")
                 try:
-                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity)
+                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity, params)
                     
                     if validation_failures:
                         print(f"  WARNING: {len(validation_failures)} {entity}(s) with validation failures")
@@ -1942,7 +2069,7 @@ def run_endpoint_backfill(
                 # ====================================================================
                 print(f"  -> NULL/Zero cleanup...")
                 try:
-                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity)
+                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity, params)
                     print(f"  -> Cleaned {rows_cleaned} rows")
                 except Exception as e:
                     print(f"  WARNING: NULL cleanup failed: {e}")
@@ -1952,7 +2079,7 @@ def run_endpoint_backfill(
                 # ====================================================================
                 print(f"  -> Validating data integrity...")
                 try:
-                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity)
+                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity, params)
                     
                     if validation_failures:
                         print(f"  WARNING: {len(validation_failures)} {entity}(s) with validation failures")
@@ -1972,24 +2099,44 @@ def run_endpoint_backfill(
                 
             elif scope == 'player':
                 # Player-by-player processing
+                # 
+                # EXPLANATION: For per-player endpoints with transformations (like playerdashptshots):
+                # - The log shows column names BEFORE processing: "cont_close_2fgm, cont_close_2fga, ..."
+                # - Then it processes the FIRST column (cont_close_2fgm) which makes API calls to all players
+                # - Progress markers appear: "Progress: 50/119 players", "Progress: 100/119 players"
+                # - After ALL players are processed for cont_close_2fgm, it prints the next column name
+                # - Subsequent columns (cont_close_2fga, open_close_2fgm, etc.) are computed from the SAME
+                #   API data already fetched, so they complete instantly without additional API calls
+                # - That's why only the FIRST column shows progress markers, and the rest appear after
+                #
+                # Get player_ids for targeted backfill if in backfill mode
+                if entity == 'player' and backfill_mode:
+                    backfill_player_ids = [pid for pid, _ in get_non_backfilled_player_ids_for_season(season, season_type)]
+                    if backfill_player_ids:
+                        print(f"  -> Backfilling {len(backfill_player_ids)} players with missing data")
+                    else:
+                        print(f"  -> No players need backfilling for {season} {season_type_name}")
+                
                 # First check if this endpoint uses transformation pipeline
-                direct_extraction_cols = get_columns_by_endpoint(endpoint, entity)
+                # Use extract_filter_params to properly handle params for column filtering
+                filter_kwargs = extract_filter_params(params)
+                direct_extraction_cols = get_columns_by_endpoint(endpoint, entity, **filter_kwargs)
                 
                 if not direct_extraction_cols:
                     # ALL columns are transformations - use transformation pipeline
                     # Get columns that will be populated (transformation columns)
                     columns = get_columns_for_endpoint_params(endpoint, params, entity)
-                    columns_str = f" ({', '.join(columns)})" if columns else ""
                     
-                    print(f"Processing {season} {season_type_name} {endpoint}{param_desc}{columns_str}")
-                    print(f"  -> Processing via transformation pipeline (all columns are transformations)...")
+                    log_endpoint_processing(season, season_type_name, endpoint, params, columns, scope)
                     
                     updated_count = update_transformation_columns(
                         ctx=ctx,
                         season=season,
                         entity=entity,
                         season_type=season_type,
-                        season_type_name=season_type_name
+                        season_type_name=season_type_name,
+                        endpoint=endpoint,
+                        player_ids=backfill_player_ids
                     )
                     
                     update_backfill_status(endpoint, season, season_type, 'complete',
@@ -1997,16 +2144,19 @@ def run_endpoint_backfill(
                     print(f"Updated {updated_count} players")
                 else:
                     # Has direct extraction columns - process player-by-player
-                    player_team_ids = get_player_ids_for_season(season, season_type)
+                    # Use backfill_player_ids if available, otherwise get all players
+                    if backfill_player_ids is not None:
+                        player_team_ids = [(pid, 0) for pid in backfill_player_ids]
+                    else:
+                        player_team_ids = get_player_ids_for_season(season, season_type)
+                    
                     total_players = len(player_team_ids)
                     successes = 0
                     
                     # Get columns that will be populated
                     columns = get_columns_for_endpoint_params(endpoint, params, entity)
-                    columns_str = f" ({', '.join(columns)})" if columns else ""
                     
-                    # Log in requested format: Processing {season} {season-type} {endpoint} [{params}] (columns)
-                    print(f"Processing {season} {season_type_name} {endpoint}{param_desc}{columns_str}")
+                    log_endpoint_processing(season, season_type_name, endpoint, params, columns, scope)
                     
                     for player_id, team_id in player_team_ids:
                         try:
@@ -2045,7 +2195,7 @@ def run_endpoint_backfill(
                 # ====================================================================
                 print(f"  -> NULL/Zero cleanup...")
                 try:
-                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity)
+                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity, params)
                     print(f"  -> Cleaned {rows_cleaned} rows")
                 except Exception as e:
                     print(f"  WARNING: NULL cleanup failed: {e}")
@@ -2055,7 +2205,7 @@ def run_endpoint_backfill(
                 # ====================================================================
                 print(f"  -> Validating data integrity...")
                 try:
-                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity)
+                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity, params)
                     
                     if validation_failures:
                         print(f"  WARNING: {len(validation_failures)} {entity}(s) with validation failures")
@@ -2072,6 +2222,9 @@ def run_endpoint_backfill(
                     update_backfill_status(endpoint, season, season_type, None, params=params, entity=entity)
                 
                 return True
+    except APISessionExhausted:
+        # Re-raise session exhaustion to trigger automatic restart (exit code 42)
+        raise
     except Exception as e:
         logger.error(f"Failed: {e}")
         logger.error(traceback.format_exc())
@@ -2079,7 +2232,12 @@ def run_endpoint_backfill(
         return False
 
 
-def backfill_all_endpoints(ctx: ETLContext, start_season: Optional[str] = None) -> None:
+def backfill_all_endpoints(
+    ctx: ETLContext, 
+    start_season: Optional[str] = None, 
+    include_current_season: bool = False,
+    backfill_mode: bool = True
+) -> None:
     """
     NEW ENDPOINT-BY-ENDPOINT BACKFILL ORCHESTRATOR.
     
@@ -2095,53 +2253,96 @@ def backfill_all_endpoints(ctx: ETLContext, start_season: Optional[str] = None) 
     
     Args:
         ctx: ETL context
-        start_season: First season to process (default: NBA_CONFIG['backfill_start_season'])
+        start_season: First season to process (default: calculated from non-backfilled players)
+        include_current_season: If True, include current season in processing (for daily ETL)
+        backfill_mode: If True, only process players with backfilled=false (default: True)
     """
     from lib.etl import (
         get_endpoint_processing_order,
         calculate_current_season,
         get_backfill_status,
-        get_columns_for_endpoint_params
+        get_columns_for_endpoint_params,
+        db_connection
     )
     from config.etl import ENDPOINTS_CONFIG, SEASON_TYPE_CONFIG
     
-    if start_season is None:
-        start_season = NBA_CONFIG['backfill_start_season']
-    
     current_season = calculate_current_season()
     
-    # CRITICAL: Backfill stops at PREVIOUS season (current handled by daily ETL)
-    # Calculate previous season
-    current_year = int('20' + current_season.split('-')[1])
-    max_backfill_year = current_year - 1
-    max_backfill_season = f"{max_backfill_year-1}-{str(max_backfill_year)[-2:]}"
+    # ALWAYS get earliest rookie_year for mark_backfill_complete check
+    # This ensures we check ALL endpoints from the earliest rookie year, not just the current processing range
+    earliest_rookie_year = None
+    if backfill_mode:
+        with db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT MIN(rookie_year) FROM players WHERE backfilled = FALSE
+            """)
+            earliest_rookie_year = cursor.fetchone()[0]
+            cursor.close()
+    
+    # Determine start season based on mode
+    if backfill_mode and start_season is None:
+        if earliest_rookie_year:
+            start_season = earliest_rookie_year
+            print(f"\n{'='*70}")
+            print(f"[BACKFILL MODE] Processing non-backfilled players only")
+            print(f"  Earliest rookie year: {earliest_rookie_year}")
+            print(f"  Will process seasons {earliest_rookie_year} onwards (excluding {current_season})")
+            print(f"{'='*70}")
+        else:
+            print("No non-backfilled players found. Nothing to process.")
+            return
+    elif start_season is None:
+        start_season = NBA_CONFIG['backfill_start_season']
+    
+    # Determine season range based on mode
+    if include_current_season:
+        # Daily ETL mode: Only process current season
+        all_seasons = [start_season]  # start_season should be current_season
+        max_backfill_season = start_season
+        print(f"\n{'='*70}")
+        print("[DAILY ETL] Processing current season only")
+        print(f"{'='*70}")
+    else:
+        # Backfill mode: Process up to PREVIOUS season (current handled by daily ETL)
+        current_year = int('20' + current_season.split('-')[1])
+        max_backfill_year = current_year - 1
+        max_backfill_season = f"{max_backfill_year-1}-{str(max_backfill_year)[-2:]}"
+        
+        # Parse season years
+        start_year = int('20' + start_season.split('-')[1])
+        
+        # Generate all seasons UP TO previous season (not including current)
+        all_seasons = []
+        for year in range(start_year, max_backfill_year + 1):
+            season_str = f"{year-1}-{str(year)[-2:]}"
+            all_seasons.append(season_str)
+        
+        print(f"\n{'='*70}")
+        print("[START] BACKFILL: Endpoint-by-Endpoint Processing")
+        print(f"{'='*70}")
     
     # Parse season years
     start_year = int('20' + start_season.split('-')[1])
     
-    # Generate all seasons UP TO previous season (not including current)
-    all_seasons = []
-    for year in range(start_year, max_backfill_year + 1):
-        season_str = f"{year-1}-{str(year)[-2:]}"
-        all_seasons.append(season_str)
-    
     # Get ordered endpoint list
     endpoints = get_endpoint_processing_order()
     
-    print(f"\n{'='*70}")
-    print("[START] BACKFILL: Endpoint-by-Endpoint Processing")
-    print(f"{'='*70}")
-    print(f"  Endpoints: {len(endpoints)}")
-    print(f"  Season Range: {start_season} to {max_backfill_season}")
-    print(f"  Current Season: {current_season} (handled by daily ETL)")
-    print(f"  Total Work: {len(endpoints)} endpoints x {len(all_seasons)} seasons x 3 types")
-    print(f"{'='*70}")
+    if not include_current_season:
+        print(f"  Endpoints: {len(endpoints)}")
+        print(f"  Season Range: {start_season} to {max_backfill_season}")
+        print(f"  Current Season: {current_season} (handled by daily ETL)")
+        # Note: Total work will be calculated below after accounting for parameter combinations
+        print(f"{'='*70}")
     
     total_processed = 0
     total_failed = 0
     
     # OPTIMIZATION: Check if we can skip to first incomplete work
     # This makes restarts nearly instant by avoiding iteration through completed work
+    # NOTE: 'ready' status means "not yet processed", so only count 'complete' as done
+    # IMPORTANT: Database params may have spaces (JSON serialized with spaces), but our
+    # code generates compact JSON. Normalize by parsing and re-serializing.
     with db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -2150,10 +2351,21 @@ def backfill_all_endpoints(ctx: ETLContext, start_season: Optional[str] = None) 
             WHERE status = 'complete' AND entity = 'player' AND (missing_data IS NULL OR missing_data = 'null'::jsonb)
             ORDER BY endpoint, year, season_type, params
         """)
-        completed_combinations = {
-            (row[0], row[1], row[2], row[3]) 
-            for row in cursor.fetchall()
-        }
+        completed_combinations = set()
+        import json
+        for row in cursor.fetchall():
+            endpoint_name, year, season_type, params_str = row
+            # Normalize params by parsing and re-serializing without spaces
+            try:
+                if params_str and params_str != '{}':
+                    params_obj = json.loads(params_str)
+                    params_normalized = json.dumps(params_obj, sort_keys=True)
+                else:
+                    params_normalized = '{}'
+            except:
+                # If parsing fails, use as-is
+                params_normalized = params_str if params_str else '{}'
+            completed_combinations.add((endpoint_name, year, season_type, params_normalized))
         cursor.close()
     
     # Count how many we can skip
@@ -2187,8 +2399,65 @@ def backfill_all_endpoints(ctx: ETLContext, start_season: Optional[str] = None) 
                         total_processed += 1
                     total_combinations += 1
     
+    if not include_current_season:
+        print(f"  Total Work: {total_combinations} endpoint/season/type/param combinations")
+        print(f"{'='*70}")
+    
     if total_processed > 0:
         print(f"Skipping {total_processed}/{total_combinations} already-complete combinations")
+        print()
+    
+    # CRITICAL FIX: Also check endpoint_tracker for any incomplete work not discovered by config
+    # This handles cases where previous runs created endpoint_tracker entries with parameters
+    # that aren't being discovered by get_endpoint_parameter_combinations()
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT endpoint, params
+            FROM endpoint_tracker
+            WHERE entity = 'player'
+            AND year >= %s
+            AND (status IS NULL OR status != 'complete')
+            ORDER BY endpoint, params
+        """, (start_season,))
+        
+        additional_work = []
+        for row in cursor.fetchall():
+            endpoint_name, params_str = row
+            # Parse params
+            try:
+                if params_str and params_str != '{}':
+                    params_obj = json.loads(params_str)
+                else:
+                    params_obj = {}
+            except:
+                params_obj = {}
+            
+            # Add to endpoints list if not already there
+            if endpoint_name not in endpoints:
+                additional_work.append((endpoint_name, params_obj))
+            else:
+                # Check if this param combination is in our discovered list
+                from lib.etl import get_endpoint_parameter_combinations
+                entity_types = ENDPOINTS_CONFIG.get(endpoint_name, {}).get('entity_types', ['player'])
+                discovered_params = get_endpoint_parameter_combinations(endpoint_name, entity_types[0])
+                
+                # Normalize both for comparison
+                params_normalized = json.dumps(params_obj, sort_keys=True)
+                is_discovered = False
+                for discovered in discovered_params:
+                    if json.dumps(discovered, sort_keys=True) == params_normalized:
+                        is_discovered = True
+                        break
+                
+                if not is_discovered:
+                    additional_work.append((endpoint_name, params_obj))
+        
+        cursor.close()
+    
+    if additional_work:
+        print(f"⚠️  Found {len(additional_work)} additional incomplete endpoint/param combinations in tracker")
+        print(f"    These will be processed after config-discovered endpoints")
         print()
     
     # Process each endpoint completely before moving to next
@@ -2301,7 +2570,13 @@ def backfill_all_endpoints(ctx: ETLContext, start_season: Optional[str] = None) 
                         print()
                     
                     # Process this endpoint/season/season_type/params combination
-                    success = run_endpoint_backfill(ctx, endpoint_name, season, season_type, scope, params)
+                    try:
+                        success = run_endpoint_backfill(ctx, endpoint_name, season, season_type, scope, params, backfill_mode=backfill_mode)
+                    except APISessionExhausted:
+                        # Re-raise session exhaustion to trigger automatic restart (exit code 42)
+                        # Don't wrap it in RuntimeError or it will be exit code 1
+                        raise
+                    
                     printed_for_season = True
                     
                     if success:
@@ -2324,17 +2599,103 @@ def backfill_all_endpoints(ctx: ETLContext, start_season: Optional[str] = None) 
                                 "Run ETL again to resume from this point."
                             )
     
+    # Process additional incomplete work found in endpoint_tracker
+    if additional_work:
+        print(f"\n{'='*70}")
+        print(f"PROCESSING ADDITIONAL INCOMPLETE WORK FROM TRACKER")
+        print(f"{'='*70}")
+        
+        from lib.etl import infer_execution_tier_from_endpoint
+        
+        for endpoint_name, params in additional_work:
+            # Get endpoint config
+            endpoint_config = ENDPOINTS_CONFIG.get(endpoint_name, {})
+            min_season = endpoint_config.get('min_season')
+            scope = infer_execution_tier_from_endpoint(endpoint_name)
+            
+            # Build parameter display string
+            param_desc = ""
+            if params:
+                for key in ['pt_measure_type', 'measure_type_detailed_defense', 'defense_category']:
+                    if key in params:
+                        param_desc = f" [{params[key]}]"
+                        break
+            
+            print(f"\nEndpoint: {endpoint_name}{param_desc}")
+            
+            # Process all seasons for this endpoint+params combination
+            for season in all_seasons:
+                season_year = int('20' + season.split('-')[1])
+                
+                # Skip if before min_season
+                if min_season:
+                    min_year = int('20' + min_season.split('-')[1])
+                    if season_year < min_year:
+                        continue
+                
+                # Process all season types
+                for season_type_name, config in SEASON_TYPE_CONFIG.items():
+                    season_type = config['season_code']
+                    minimum_season = config.get('minimum_season')
+                    
+                    if minimum_season:
+                        min_type_year = int('20' + minimum_season.split('-')[1])
+                        if season_year < min_type_year:
+                            continue
+                    
+                    # Check if already complete
+                    params_str = json.dumps(params, sort_keys=True) if params else '{}'
+                    if (endpoint_name, season, season_type, params_str) in completed_combinations:
+                        continue
+                    
+                    # Process this combination
+                    print()
+                    try:
+                        success = run_endpoint_backfill(ctx, endpoint_name, season, season_type, scope, params, backfill_mode=backfill_mode)
+                    except APISessionExhausted:
+                        raise
+                    
+                    if success:
+                        total_processed += 1
+                        completed_combinations.add((endpoint_name, season, season_type, params_str))
+                    else:
+                        total_failed += 1
+                        if API_CONFIG['api_failure_threshold'] == 1:
+                            print(f"\n{'='*70}")
+                            print("BACKFILL STOPPED - Failure threshold reached (1)")
+                            print(f"{'='*70}")
+                            print(f"Processed: {total_processed}")
+                            print(f"Failed: {total_failed}")
+                            print(f"Resume by running again - will pick up where it left off")
+                            param_str = f" {params}" if params else ""
+                            raise RuntimeError(
+                                f"Backfill failed at {endpoint_name}{param_str} {season} {season_type_name}. "
+                                "Run ETL again to resume from this point."
+                            )
+    
     print(f"\n{'='*70}")
     print("BACKFILL COMPLETE")
     print(f"{'='*70}")
     print(f"Processed: {total_processed}")
     print(f"Failed: {total_failed}")
     
+    # Fetch wingspan data for non-backfilled players (6 seasons before earliest rookie_year)
+    if backfill_mode:
+        print("\nFetching wingspan data for non-backfilled players...")
+        try:
+            wingspan_updated, wingspan_total = update_wingspan_from_combine(ctx, only_unbackfilled=True, start_season=start_season)
+            if wingspan_total > 0:
+                print(f"  Updated wingspan for {wingspan_updated}/{wingspan_total} players")
+        except Exception as e:
+            print(f"  WARNING: Failed to fetch wingspan: {e}")
+    
     # Mark players as backfilled=true when ALL endpoints complete for them
+    # CRITICAL: Always check from earliest_rookie_year, not start_season
+    # start_season may be current_season in daily ETL mode, but we need to check ALL historical endpoints
     print("\nMarking players as backfilled...")
     try:
         from lib.etl import mark_backfill_complete
-        mark_backfill_complete()
+        mark_backfill_complete(earliest_rookie_year=earliest_rookie_year)
     except Exception as e:
         print(f"  WARNING: Failed to mark players as backfilled: {e}")
 
@@ -2345,7 +2706,9 @@ def update_transformation_columns(
     entity: Literal['player', 'team'] = 'player',
     table: Optional[str] = None,
     season_type: int = 1,
-    season_type_name: str = 'Regular Season'
+    season_type_name: str = 'Regular Season',
+    endpoint: Optional[str] = None,
+    player_ids: Optional[List[int]] = None
 ) -> int:
     """
     Universal transformation executor with GROUPED EXECUTION for efficiency.
@@ -2362,6 +2725,7 @@ def update_transformation_columns(
         table: Target database table
         season_type: Season type code (1=Regular, 2=Playoffs, 3=PlayIn)
         season_type_name: Season type name for API calls
+        endpoint: Optional endpoint name to filter which columns to process (for endpoint-by-endpoint backfill)
     """
     # Derive year from season string
     season_year = int('20' + season.split('-')[1])
@@ -2400,6 +2764,12 @@ def update_transformation_columns(
         transform = source_config.get('transformation')
         if not transform:
             continue
+        
+        # Filter by endpoint if specified (for endpoint-by-endpoint backfill)
+        if endpoint:
+            transform_endpoint = transform.get('endpoint') or source_config.get('endpoint')
+            if transform_endpoint != endpoint:
+                continue
         
         # Get execution_tier from source_config or transformation
         execution_tier = source_config.get('execution_tier') or transform.get('execution_tier', 'league')
@@ -2465,7 +2835,7 @@ def update_transformation_columns(
             print(f"    {col_name}")
 
             try:
-                data = apply_transformation(ctx, col_name, transform, season, entity, table, season_type, season_type_name, source_config)
+                data = apply_transformation(ctx, col_name, transform, season, entity, table, season_type, season_type_name, source_config, player_ids=player_ids)
                     
             except Exception as transform_error:
                 print(f"    {col_name}: Transformation failed: {transform_error}")
@@ -2492,6 +2862,9 @@ def update_transformation_columns(
                 if isinstance(value, dict):
                     print(f"      Skipping entity {entity_id}: value is dict")
                     continue
+
+                # Verbose logging: transformation result → DB value
+                log_verbose_data(entity_id, col_name, value, value, season, season_type)
 
                 if entity == 'player':
                     cursor.execute(f"""
@@ -2522,46 +2895,81 @@ def update_transformation_columns(
             # Transformation endpoint failed for this column
             print("    Transformation endpoint failed")
     
-    # CLEANUP: Convert NULLs to 0 for any row with minutes > 0
-    # This ensures data quality - if a player/team played, missing stats should be 0, not NULL
-    # IMPORTANT: Only convert NULL to 0 for columns that are actually available in this season
+    # CLEANUP: Proper NULL/0 handling based on tracking games column
+    # Rules:
+    # 1. If tracking_games = 0: Set to NULL (no tracking data exists)
+    # 2. If tracking_games > 0 AND NULL: Set to 0 (legit zero)
+    # IMPORTANT: Only process columns that are actually available in this season
     try:
-        from lib.etl import _is_column_available_for_season
+        from lib.etl import _is_column_available_for_season, get_games_column_for_endpoint
         
-        # Get all transformation columns (columns with transformations in config)
-        transform_cols = [
-            col_name for col_name, col_def in DB_COLUMNS.items()
-            if isinstance(col_def, dict)
-            and col_def.get('table') == table 
-            and f'{entity}_source' in col_def 
-            and 'transformation' in col_def[f'{entity}_source']
-            and _is_column_available_for_season(col_name, season)  # Only include if available for this season
-        ]
+        # Get all transformation columns processed in this call
+        transform_cols = []
+        endpoint_set = set()  # Track which endpoints we're processing
+        
+        for col_name, col_def in DB_COLUMNS.items():
+            if not isinstance(col_def, dict):
+                continue
+            if col_def.get('table') != table:
+                continue
+            source = col_def.get(f'{entity}_source')
+            if not source or 'transformation' not in source:
+                continue
+            if not _is_column_available_for_season(col_name, season):
+                continue
+            
+            # Check if this column matches the endpoint filter (if specified)
+            if endpoint:
+                transform_config = source.get('transformation', {})
+                col_endpoint = transform_config.get('endpoint')
+                if col_endpoint != endpoint:
+                    continue
+            
+            transform_cols.append(col_name)
+            # Track endpoint for games column lookup
+            transform_config = source.get('transformation', {})
+            col_endpoint = transform_config.get('endpoint')
+            if col_endpoint:
+                endpoint_set.add(col_endpoint)
         
         if transform_cols:
-            # Build SET clause to update all NULL transformation columns to 0
-            set_clause = ", ".join([f"{quote_column(col)} = COALESCE({quote_column(col)}, 0)" for col in transform_cols])
+            # Determine which games column to use
+            # If all columns come from the same endpoint, use that endpoint's games column
+            # Otherwise, default to tr_games
+            games_col = 'tr_games'
+            if len(endpoint_set) == 1:
+                endpoint_name = list(endpoint_set)[0]
+                games_col = get_games_column_for_endpoint(endpoint_name)
             
-            if entity == 'player':
-                cursor.execute(f"""
-                    UPDATE {table}
-                    SET {set_clause}, updated_at = NOW()
-                    WHERE year = %s::text AND season_type = %s AND minutes_x10 > 0
-                """, (year_value, season_type))
-            else:  # team
-                cursor.execute(f"""
-                    UPDATE {table}
-                    SET {set_clause}, updated_at = NOW()
-                    WHERE year = %s::text AND season_type = %s AND minutes_x10 > 0
-                """, (year_value, season_type))
+            rows_updated = 0
             
-            nulls_fixed = cursor.rowcount
-            if nulls_fixed > 0:
-                print(f"  Fixed {nulls_fixed} NULL values to 0")
+            # Rule 1: tracking_games = 0 -> Set all columns to NULL
+            set_clauses_null = [f"{quote_column(col)} = NULL" for col in transform_cols]
+            cursor.execute(f"""
+                UPDATE {table}
+                SET {', '.join(set_clauses_null)}, updated_at = NOW()
+                WHERE year = %s::text AND season_type = %s AND {games_col} = 0
+            """, (year_value, season_type))
+            rows_updated += cursor.rowcount
+            
+            # Rule 2: tracking_games > 0 -> Set NULL to 0
+            set_clauses_zero = [
+                f"{quote_column(col)} = COALESCE({quote_column(col)}, 0)" 
+                for col in transform_cols
+            ]
+            cursor.execute(f"""
+                UPDATE {table}
+                SET {', '.join(set_clauses_zero)}, updated_at = NOW()
+                WHERE year = %s::text AND season_type = %s AND {games_col} > 0
+            """, (year_value, season_type))
+            rows_updated += cursor.rowcount
+            
+            if rows_updated > 0:
+                print(f"  -> Cleaned {rows_updated} rows (using {games_col})")
             conn.commit()
             
     except Exception as e:
-        print(f"  Failed NULL cleanup: {e}")
+        print(f"  -> Failed NULL cleanup: {e}")
         conn.rollback()
     
     cursor.close()
@@ -2884,7 +3292,22 @@ def run_daily_etl(ctx: ETLContext, backfill_start: Optional[int] = None, backfil
         # This calls backfill_all_endpoints() which uses endpoint_tracker
         players_added, players_updated, new_player_ids = update_player_rosters(ctx)
         
-        # STEP 2: Process current season using backfill orchestrator
+        # Check if there are any non-backfilled players
+        with db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM players WHERE backfilled = FALSE")
+            non_backfilled_count = cursor.fetchone()[0]
+            cursor.close()
+        
+        if non_backfilled_count > 0:
+            print(f"\n{'='*70}")
+            print(f"[DAILY ETL] Found {non_backfilled_count} non-backfilled players")
+            print(f"[DAILY ETL] Running full backfill process...")
+            print(f"{'='*70}")
+            # Run full backfill (historical seasons only, current handled below)
+            backfill_all_endpoints(ctx)
+        
+        # STEP 2: Process current season using endpoint_tracker
         # This uses endpoint_tracker for all operations and can resume on restart
         current_season = get_season()
         
@@ -2896,13 +3319,16 @@ def run_daily_etl(ctx: ETLContext, backfill_start: Optional[int] = None, backfil
         # Run backfill for current season only
         # This will process all endpoints (basic stats, advanced stats, transformations)
         # and track progress in endpoint_tracker
-        from lib.etl import ensure_endpoint_tracker_coverage
+        from lib.etl import ensure_endpoint_tracker_coverage, reset_current_season_endpoints
         
         # Ensure endpoint_tracker has entries for current season
         ensure_endpoint_tracker_coverage(current_season)
         
         # Run the backfill orchestrator for current season only
-        backfill_all_endpoints(ctx, start_season=current_season)
+        backfill_all_endpoints(ctx, start_season=current_season, include_current_season=True)
+        
+        # Reset current season endpoints back to 'ready' for next daily run
+        reset_current_season_endpoints(current_season)
         
         print(f"\n[DAILY ETL] Current season processing complete")
         
@@ -2954,9 +3380,6 @@ def run_daily_etl(ctx: ETLContext, backfill_start: Optional[int] = None, backfil
             reset_current_season_endpoints(current_season)
         except Exception as e:
             print(f"WARNING: Failed to reset current season endpoints: {e}")
-        
-        # Close progress bars
-        ctx.close()
         
         elapsed = time.time() - start_time
         print("=" * 70)
@@ -3254,15 +3677,16 @@ def update_all_player_details(ctx: ETLContext) -> None:
     return updated_count, failed_count
 
 
-def update_wingspan_from_combine(ctx: ETLContext, only_unbackfilled: bool = False) -> Tuple[int, int]:
+def update_wingspan_from_combine(ctx: ETLContext, only_unbackfilled: bool = False, start_season: Optional[str] = None) -> Tuple[int, int]:
     """
     Fetch wingspan data from NBA Draft Combine (DraftCombinePlayerAnthro endpoint).
-    Searches all available seasons back to 2003 (combine_start_year).
+    Searches all available seasons back to 2003 (combine_start_year) or specified start_season.
     If a player has wingspan data from multiple years, keeps the most recent.
     
     Args:
         ctx: ETLContext instance
         only_unbackfilled: If True, only fetch for players with backfilled=FALSE
+        start_season: If provided, fetch combine data starting from 6 seasons before this season (e.g., '2021-22')
     
     Returns: (updated_count, total_checked)
     """
@@ -3286,7 +3710,16 @@ def update_wingspan_from_combine(ctx: ETLContext, only_unbackfilled: bool = Fals
     
     # Fetch combine data from all seasons (most recent first to get latest data)
     current_year = NBA_CONFIG['current_season_year']
-    start_year = NBA_CONFIG['combine_start_year']
+    
+    # Calculate start year: 6 seasons before start_season if provided, else combine_start_year
+    if start_season:
+        # Parse season like '2021-22' to get year 2021
+        start_year_from_season = int(start_season.split('-')[0])
+        # Go back 6 years
+        start_year = start_year_from_season - 6
+        print(f"  Fetching combine data starting 6 seasons before {start_season} (from {start_year})")
+    else:
+        start_year = NBA_CONFIG['combine_start_year']
     
     # Store wingspan data: {player_id: (wingspan, season_year)}
     wingspan_data = {}
@@ -3319,43 +3752,49 @@ def update_wingspan_from_combine(ctx: ETLContext, only_unbackfilled: bool = Fals
     
     # Update database with found wingspan data
     updated_count = 0
+    players_table = get_table_name('player', 'entity')
     print(f"  Updating wingspan data in {players_table} table...")
-    for player_id, (wingspan, year) in wingspan_data.items():
-        try:
-            # Round to nearest inch
-            wingspan_inches = round(wingspan)
-            
-            players_table = get_table_name('player', 'entity')
-            cursor.execute(f"""
-                UPDATE {players_table} 
-                SET wingspan_inches = %s, updated_at = NOW()
-                WHERE player_id = %s
-            """, (wingspan_inches, player_id))
-            
-            if cursor.rowcount > 0:
-                updated_count += 1
-                if updated_count <= 3:  # Show first 3 updates
-                    print(f"    Updated player {player_id}: wingspan_inches = {wingspan_inches} (from {year})")
-        except Exception as e:
-            print(f"  Failed to update player {player_id}: {e}")
-            continue
     
-    conn.commit()
-    
-    # VERIFY: Check that updates were written to players table
-    if updated_count > 0:
-        print(f"\n  Verifying updates in {players_table}...")
-        sample_ids = list(wingspan_data.keys())[:3]
-        if sample_ids:
-            cursor.execute(f"""
-                SELECT player_id, wingspan_inches
-                FROM {players_table}
-                WHERE player_id = ANY(%s)
-            """, (sample_ids,))
-            verified = cursor.fetchall()
-            for pid, ws in verified:
-                print(f"    Player {pid}: wingspan_inches = {ws}")
-    cursor.close()
+    # Reopen connection for updates (previous cursor was closed after initial query)
+    with db_connection() as update_conn:
+        update_cursor = update_conn.cursor()
+        
+        for player_id, (wingspan, year) in wingspan_data.items():
+            try:
+                # Round to nearest inch
+                wingspan_inches = round(wingspan)
+                
+                update_cursor.execute(f"""
+                    UPDATE {players_table} 
+                    SET wingspan_inches = %s, updated_at = NOW()
+                    WHERE player_id = %s
+                """, (wingspan_inches, player_id))
+                
+                if update_cursor.rowcount > 0:
+                    updated_count += 1
+                    if updated_count <= 3:  # Show first 3 updates
+                        print(f"    Updated player {player_id}: wingspan_inches = {wingspan_inches} (from {year})")
+            except Exception as e:
+                print(f"  Failed to update player {player_id}: {e}")
+                continue
+        
+        update_conn.commit()
+        
+        # VERIFY: Check that updates were written to players table
+        if updated_count > 0:
+            print(f"\n  Verifying updates in {players_table}...")
+            sample_ids = list(wingspan_data.keys())[:3]
+            if sample_ids:
+                update_cursor.execute(f"""
+                    SELECT player_id, wingspan_inches
+                    FROM {players_table}
+                    WHERE player_id = ANY(%s)
+                """, (sample_ids,))
+                verified = update_cursor.fetchall()
+                for pid, ws in verified:
+                    print(f"    Player {pid}: wingspan_inches = {ws}")
+        
+        update_cursor.close()
     
     return updated_count, len(players_needing_wingspan)
 
@@ -3429,8 +3868,17 @@ Examples:
     
     # General options
     parser.add_argument('--no-check', action='store_true', help='Skip missing data check')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging (API calls, DB operations)')
     
     args = parser.parse_args()
+    
+    # Set verbose mode globally (must declare before assignment)
+    if args.verbose:
+        globals()['VERBOSE_MODE'] = True
+        print("="*70)
+        print("[VERBOSE MODE ENABLED]")
+        print("  Will log API values and DB inserts")
+        print("="*70)
     
     # Route to appropriate ETL mode
     # Initialize ETLContext

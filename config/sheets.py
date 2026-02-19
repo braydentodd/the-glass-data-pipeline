@@ -340,7 +340,7 @@ SHEETS_COLUMNS = {
     },
     
     'pace': {
-        'display_name': 'Pac',
+        'display_name': 'Pace',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
         'stat_mode': 'advanced',
@@ -667,8 +667,8 @@ SHEETS_COLUMNS = {
         'opponents_formula': 'opp_fta / (opp_2fga + opp_3fga)',
     },
     
-    'points_per_fta': {
-        'display_name': 'PFT',
+    'points_per_ft_trip': {
+        'display_name': 'PFTT',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'both',
@@ -678,9 +678,9 @@ SHEETS_COLUMNS = {
         'reverse_percentile': False,
         'format': 'number',
         'decimal_places': 2,
-        'player_formula': 'ftm / fta',
-        'team_formula': 'ftm / fta',
-        'opponents_formula': 'opp_ftm / opp_fta',
+        'player_formula': 'ftm / (.44 * fta)',
+        'team_formula': 'ftm / (.44 * fta)',
+        'opponents_formula': 'opp_ftm / (.44 * opp_fta)',
     },
     
     'assists': {
@@ -732,7 +732,7 @@ SHEETS_COLUMNS = {
     },
     
     'passes': {
-        'display_name': 'Pas',
+        'display_name': 'Pass',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'advanced',
@@ -779,8 +779,24 @@ SHEETS_COLUMNS = {
         'opponents_formula': None,
     },
     
-    'turnovers': {
-        'display_name': 'TOV',
+    'dribbles_per_touch': {
+        'display_name': 'DPT',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'distribution',
+        'stat_mode': 'advanced',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'dribbles / touches',
+        'team_formula': 'dribbles / touches',
+        'opponents_formula': None,
+    },
+    
+    'turnover_pct': {
+        'display_name': 'TOV%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'both',
@@ -788,11 +804,19 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
-        'format': 'number',
+        'format': 'percentage',
         'decimal_places': 1,
-        'player_formula': 'turnovers',
-        'team_formula': 'turnovers',
-        'opponents_formula': 'opp_turnovers',
+        'totals_config': {
+            'display_name': 'TOV',
+            'format': 'number',
+            'decimal_places': 1,
+            'player_formula': 'turnovers',
+            'team_formula': 'turnovers',
+            'opponents_formula': 'opp_turnovers',
+        },
+        'player_formula': '(turnovers / possessions) * 100',
+        'team_formula': '(turnovers / possessions) * 100',
+        'opponents_formula': '(opp_turnovers / possessions) * 100',
     },
     
     'oreb_pct': {
@@ -814,9 +838,9 @@ SHEETS_COLUMNS = {
             'team_formula': 'o_rebounds',
             'opponents_formula': 'opp_o_rebounds',
         },
-        'player_formula': 'o_rebound_pct_x1000 / 1000',
-        'team_formula': 'o_rebound_pct_x1000 / 1000',
-        'opponents_formula': 'opp_o_rebound_pct_x1000 / 1000',
+        'player_formula': 'o_rebound_pct_x1000 / 10',
+        'team_formula': 'o_rebound_pct_x1000 / 10',
+        'opponents_formula': 'opp_o_rebound_pct_x1000 / 10',
     },
     
     'dreb_pct': {
@@ -829,6 +853,7 @@ SHEETS_COLUMNS = {
         'editable': False,
         'reverse_percentile': False,
         'format': 'percentage',
+        'decimal_places': 1,
         'totals_config': {
             'display_name': 'DRS',
             'format': 'number',
@@ -837,9 +862,9 @@ SHEETS_COLUMNS = {
             'team_formula': 'd_rebounds',
             'opponents_formula': 'opp_d_rebounds',
         },
-        'player_formula': 'd_rebound_pct_x1000 / 1000',
-        'team_formula': 'd_rebound_pct_x1000 / 1000',
-        'opponents_formula': 'opp_d_rebound_pct_x1000 / 1000',
+        'player_formula': 'd_rebound_pct_x1000 / 10',
+        'team_formula': 'd_rebound_pct_x1000 / 10',
+        'opponents_formula': 'opp_d_rebound_pct_x1000 / 10',
     },
     
     'cont_oreb_pct': {
@@ -861,13 +886,13 @@ SHEETS_COLUMNS = {
             'team_formula': 'cont_o_rebs',
             'opponents_formula': None,
         },
-        'player_formula': 'cont_o_rebs / o_rebounds',
-        'team_formula': 'cont_o_rebs / o_rebounds',
+        'player_formula': '(cont_o_rebs / o_rebounds) * 100',
+        'team_formula': '(cont_o_rebs / o_rebounds) * 100',
         'opponents_formula': None,
     },
     
     'cont_dreb_pct': {
-        'display_name': 'Cont DREB%',
+        'display_name': 'CDR%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
         'stat_mode': 'advanced',
@@ -885,13 +910,13 @@ SHEETS_COLUMNS = {
             'team_formula': 'cont_d_rebs',
             'opponents_formula': None,
         },
-        'player_formula': 'cont_d_rebs / d_rebounds',
-        'team_formula': 'cont_d_rebs / d_rebounds',
+        'player_formula': '(cont_d_rebs / d_rebounds) * 100',
+        'team_formula': '(cont_d_rebs / d_rebounds) * 100',
         'opponents_formula': None,
     },
     
-    'putbacks': {
-        'display_name': 'Putbacks',
+    'putback_pct': {
+        'display_name': 'PB%',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
         'stat_mode': 'advanced',
@@ -899,10 +924,10 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'format': 'number',
+        'format': 'percentage',
         'decimal_places': 1,
-        'player_formula': 'putbacks / o_rebounds',
-        'team_formula': 'putbacks / o_rebounds',
+        'player_formula': '(putbacks / o_rebounds) * 100',
+        'team_formula': '(putbacks / o_rebounds) * 100',
         'opponents_formula': None,
     },
     

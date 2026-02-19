@@ -1,0 +1,148 @@
+column	year	season_type	total_records	null_count	pct_null	zero_count	pct_zero	non_zero_count	pct_non_zero	Verdict
+d_close_2fgm	2021-22	1	255	1	0.39	1	0.39	253	99.22	need to rectify these nulls; should either be 0s or legit values
+d_close_2fgm	2022-23	1	311	2	0.64	1	0.32	308	99.04	need to rectify these nulls; should either be 0s or legit values
+d_close_2fgm	2022-23	2	151	1	0.66	9	5.96	141	93.38	need to rectify these nulls; should either be 0s or legit values
+d_close_2fgm	2024-25	1	443	1	0.23	4	0.9	438	98.87	need to rectify these nulls; should either be 0s or legit values
+d_close_2fga	2021-22	1	255	1	0.39	1	0.39	253	99.22	need to rectify these nulls; should either be 0s or legit values
+d_close_2fga	2022-23	1	311	2	0.64	1	0.32	308	99.04	need to rectify these nulls; should either be 0s or legit values
+d_close_2fga	2022-23	2	151	1	0.66	6	3.97	144	95.36	need to rectify these nulls; should either be 0s or legit values
+d_close_2fga	2024-25	1	443	1	0.23	3	0.68	439	99.1	need to rectify these nulls; should either be 0s or legit values
+d_2fgm	2021-22	1	255	1	0.39	0	0	254	99.61	need to rectify these nulls; should either be 0s or legit values
+d_2fgm	2022-23	1	311	2	0.64	1	0.32	308	99.04	need to rectify these nulls; should either be 0s or legit values
+d_2fgm	2022-23	2	151	1	0.66	8	5.3	142	94.04	need to rectify these nulls; should either be 0s or legit values
+d_2fgm	2024-25	1	443	1	0.23	3	0.68	439	99.1	need to rectify these nulls; should either be 0s or legit values
+d_2fga	2021-22	1	255	1	0.39	0	0	254	99.61	need to rectify these nulls; should either be 0s or legit values
+d_2fga	2022-23	1	311	2	0.64	1	0.32	308	99.04	need to rectify these nulls; should either be 0s or legit values
+d_2fga	2022-23	2	151	1	0.66	5	3.31	145	96.03	need to rectify these nulls; should either be 0s or legit values
+d_2fga	2024-25	1	443	1	0.23	2	0.45	440	99.32	need to rectify these nulls; should either be 0s or legit values
+d_3fgm	2021-22	1	255	1	0.39	0	0	254	99.61	need to rectify these nulls; should either be 0s or legit values
+d_3fgm	2022-23	1	311	2	0.64	1	0.32	308	99.04	need to rectify these nulls; should either be 0s or legit values
+d_3fgm	2022-23	2	151	1	0.66	15	9.93	135	89.4	need to rectify these nulls; should either be 0s or legit values
+d_3fgm	2024-25	1	443	1	0.23	5	1.13	437	98.65	need to rectify these nulls; should either be 0s or legit values
+d_3fga	2021-22	1	255	1	0.39	0	0	254	99.61	need to rectify these nulls; should either be 0s or legit values
+d_3fga	2022-23	1	311	2	0.64	0	0	309	99.36	need to rectify these nulls; should either be 0s or legit values
+d_3fga	2022-23	2	151	1	0.66	5	3.31	145	96.03	need to rectify these nulls; should either be 0s or legit values
+d_3fga	2024-25	1	443	1	0.23	2	0.45	440	99.32	need to rectify these nulls; should either be 0s or legit values
+real_d_fg_pct_x1000	2021-22	1	255	1	0.39	4	1.57	250	98.04	need to rectify these nulls; should either be 0s or legit values
+real_d_fg_pct_x1000	2022-23	1	311	2	0.64	2	0.64	307	98.71	need to rectify these nulls; should either be 0s or legit values
+real_d_fg_pct_x1000	2022-23	2	151	1	0.66	2	1.32	148	98.01	need to rectify these nulls; should either be 0s or legit values
+real_d_fg_pct_x1000	2024-25	1	443	1	0.23	6	1.35	436	98.42	need to rectify these nulls; should either be 0s or legit values
+touches	2013-14	1	44	0	0	44	100	0	0	all 0s; rectify the api pull
+touches	2013-14	2	26	0	0	26	100	0	0	all 0s; rectify the api pull
+touches	2014-15	1	59	0	0	59	100	0	0	all 0s; rectify the api pull
+touches	2014-15	2	36	0	0	36	100	0	0	all 0s; rectify the api pull
+touches	2015-16	1	74	0	0	74	100	0	0	all 0s; rectify the api pull
+touches	2015-16	2	39	0	0	39	100	0	0	all 0s; rectify the api pull
+touches	2016-17	1	94	0	0	94	100	0	0	all 0s; rectify the api pull
+touches	2016-17	2	51	0	0	51	100	0	0	all 0s; rectify the api pull
+touches	2017-18	1	119	0	0	119	100	0	0	all 0s; rectify the api pull
+touches	2017-18	2	62	0	0	62	100	0	0	all 0s; rectify the api pull
+touches	2018-19	1	149	0	0	149	100	0	0	all 0s; rectify the api pull
+touches	2018-19	2	74	0	0	74	100	0	0	all 0s; rectify the api pull
+touches	2019-20	1	182	0	0	182	100	0	0	all 0s; rectify the api pull
+touches	2019-20	2	80	0	0	80	100	0	0	all 0s; rectify the api pull
+touches	2020-21	1	211	0	0	211	100	0	0	all 0s; rectify the api pull
+touches	2020-21	2	113	0	0	113	100	0	0	all 0s; rectify the api pull
+touches	2020-21	3	53	0	0	53	100	0	0	all 0s; rectify the api pull
+touches	2021-22	1	255	0	0	255	100	0	0	all 0s; rectify the api pull
+touches	2021-22	2	137	0	0	137	100	0	0	all 0s; rectify the api pull
+touches	2021-22	3	55	0	0	55	100	0	0	all 0s; rectify the api pull
+touches	2022-23	1	311	0	0	311	100	0	0	all 0s; rectify the api pull
+touches	2022-23	2	151	0	0	151	100	0	0	all 0s; rectify the api pull
+touches	2022-23	3	69	0	0	69	100	0	0	all 0s; rectify the api pull
+touches	2023-24	1	361	0	0	361	100	0	0	all 0s; rectify the api pull
+touches	2023-24	2	175	0	0	175	100	0	0	all 0s; rectify the api pull
+touches	2023-24	3	69	0	0	69	100	0	0	all 0s; rectify the api pull
+touches	2024-25	1	443	0	0	443	100	0	0	all 0s; rectify the api pull
+touches	2024-25	2	198	0	0	198	100	0	0	all 0s; rectify the api pull
+touches	2024-25	3	85	0	0	85	100	0	0	all 0s; rectify the api pull
+cont_d_rebs	2013-14	2	26	1	3.85	3	11.54	22	84.62	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2014-15	1	59	1	1.69	1	1.69	57	96.61	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2017-18	2	62	1	1.61	7	11.29	54	87.1	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2018-19	2	74	3	4.05	9	12.16	62	83.78	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2019-20	2	80	2	2.5	4	5	74	92.5	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2020-21	1	211	211	100	0	0	0	0	all nulls; rectify the api pull
+cont_d_rebs	2020-21	2	113	113	100	0	0	0	0	all nulls; rectify the api pull
+cont_d_rebs	2020-21	3	53	53	100	0	0	0	0	all nulls; rectify the api pull
+cont_d_rebs	2021-22	1	255	255	100	0	0	0	0	all nulls; rectify the api pull
+cont_d_rebs	2021-22	2	137	137	100	0	0	0	0	all nulls; rectify the api pull
+cont_d_rebs	2021-22	3	55	55	100	0	0	0	0	all nulls; rectify the api pull
+cont_d_rebs	2022-23	1	311	1	0.32	5	1.61	305	98.07	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2022-23	2	151	7	4.64	19	12.58	125	82.78	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2022-23	3	69	3	4.35	22	31.88	44	63.77	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2023-24	1	361	1	0.28	7	1.94	353	97.78	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2023-24	2	175	2	1.14	29	16.57	144	82.29	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2023-24	3	69	3	4.35	27	39.13	39	56.52	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2024-25	2	198	8	4.04	33	16.67	157	79.29	need to rectify these nulls; should either be 0s or legit values
+cont_d_rebs	2024-25	3	85	11	12.94	37	43.53	37	43.53	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2013-14	2	26	1	3.85	4	15.38	21	80.77	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2014-15	1	59	1	1.69	1	1.69	57	96.61	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2017-18	2	62	1	1.61	8	12.9	53	85.48	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2018-19	2	74	3	4.05	12	16.22	59	79.73	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2019-20	2	80	2	2.5	19	23.75	59	73.75	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2020-21	1	211	211	100	0	0	0	0	all nulls; rectify the api pull
+cont_o_rebs	2020-21	2	113	113	100	0	0	0	0	all nulls; rectify the api pull
+cont_o_rebs	2020-21	3	53	53	100	0	0	0	0	all nulls; rectify the api pull
+cont_o_rebs	2021-22	1	255	255	100	0	0	0	0	all nulls; rectify the api pull
+cont_o_rebs	2021-22	2	137	137	100	0	0	0	0	all nulls; rectify the api pull
+cont_o_rebs	2021-22	3	55	55	100	0	0	0	0	all nulls; rectify the api pull
+cont_o_rebs	2022-23	1	311	1	0.32	8	2.57	302	97.11	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2022-23	2	151	7	4.64	32	21.19	112	74.17	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2022-23	3	69	3	4.35	31	44.93	35	50.72	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2023-24	1	361	1	0.28	17	4.71	343	95.01	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2023-24	2	175	2	1.14	50	28.57	123	70.29	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2023-24	3	69	3	4.35	28	40.58	38	55.07	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2024-25	1	443	0	0	14	3.16	429	96.84	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2024-25	2	198	8	4.04	46	23.23	144	72.73	need to rectify these nulls; should either be 0s or legit values
+cont_o_rebs	2024-25	3	85	11	12.94	37	43.53	37	43.53	need to rectify these nulls; should either be 0s or legit values
+dunks	2012-13	1	34	0	0	1	2.94	33	97.06	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2012-13	2	17	0	0	4	23.53	13	76.47	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2013-14	1	44	0	0	6	13.64	38	86.36	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2013-14	2	26	0	0	9	34.62	17	65.38	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2014-15	1	59	0	0	5	8.47	54	91.53	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2014-15	2	36	0	0	14	38.89	22	61.11	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2015-16	1	74	0	0	6	8.11	68	91.89	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2015-16	2	39	0	0	9	23.08	30	76.92	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2016-17	1	94	0	0	7	7.45	87	92.55	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2016-17	2	51	1	1.96	15	29.41	35	68.63	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2017-18	1	119	1	0.84	9	7.56	109	91.6	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2017-18	2	62	0	0	11	17.74	51	82.26	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2018-19	1	149	0	0	10	6.71	139	93.29	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2018-19	2	74	0	0	24	32.43	50	67.57	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2019-20	1	182	0	0	15	8.24	167	91.76	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2019-20	2	80	0	0	26	32.5	54	67.5	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2020-21	1	211	0	0	21	9.95	190	90.05	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2020-21	2	113	0	0	38	33.63	75	66.37	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2020-21	3	53	2	3.77	33	62.26	18	33.96	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2021-22	1	255	1	0.39	25	9.8	229	89.8	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2021-22	2	137	3	2.19	42	30.66	92	67.15	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2021-22	3	55	0	0	35	63.64	20	36.36	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2022-23	1	311	2	0.64	309	99.36	0	0	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2022-23	2	151	1	0.66	51	33.77	99	65.56	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2022-23	3	69	0	0	44	63.77	25	36.23	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2023-24	1	361	0	0	361	100	0	0	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2023-24	2	175	0	0	175	100	0	0	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2023-24	3	69	0	0	69	100	0	0	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2024-25	1	443	1	0.23	442	99.77	0	0	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2024-25	2	198	0	0	198	100	0	0	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dunks	2024-25	3	85	0	0	56	65.88	29	34.12	need to rectify these nulls; should either be 0s or legit values; also a lot of 0s, too many
+dribbles	2017-18	1	119	0	0	119	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2017-18	2	62	0	0	62	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2018-19	1	149	0	0	149	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2018-19	2	74	0	0	74	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2019-20	2	80	0	0	80	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2020-21	1	211	0	0	211	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2020-21	2	113	0	0	113	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2020-21	3	53	0	0	53	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2021-22	1	255	1	0.39	254	99.61	0	0	all 0s or nulls; rectify the api pull
+dribbles	2021-22	2	137	0	0	137	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2021-22	3	55	0	0	55	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2022-23	1	311	2	0.64	309	99.36	0	0	all 0s or nulls; rectify the api pull
+dribbles	2022-23	2	151	1	0.66	150	99.34	0	0	all 0s or nulls; rectify the api pull
+dribbles	2022-23	3	69	0	0	69	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2023-24	1	361	0	0	361	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2023-24	2	175	0	0	175	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2023-24	3	69	0	0	69	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2024-25	1	443	1	0.23	0	0	442	99.77	all 0s or nulls; rectify the api pull
+dribbles	2024-25	2	198	0	0	198	100	0	0	all 0s or nulls; rectify the api pull
+dribbles	2024-25	3	85	0	0	85	100	0	0	all 0s or nulls; rectify the api pull

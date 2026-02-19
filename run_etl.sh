@@ -34,13 +34,23 @@ echo "Max restarts: ${MAX_RESTARTS}"
 echo "Started: $(date)"
 echo ""
 
+# Activate virtual environment
+if [ -d "venv" ]; then
+    echo "Activating virtual environment..."
+    source venv/bin/activate
+else
+    echo -e "${RED}ERROR: Virtual environment not found${NC}"
+    echo "Please create it with: python3 -m venv venv"
+    exit 1
+fi
+
 # Main restart loop
 while [ $RESTART_COUNT -lt $MAX_RESTARTS ]; do
     echo -e "${YELLOW}[$(date +%H:%M:%S)]${NC} Starting ETL (Attempt $(($RESTART_COUNT + 1)))..."
     echo ""
     
-    # Run the ETL
-    python3 -m src.etl
+    # Run the ETL (venv already activated above)
+    python3 -m src.etl -v
     EXIT_CODE=$?
     
     # Check exit code
