@@ -3,8 +3,8 @@ THE GLASS - Display Configuration
 Single source of truth for all display logic, calculations, formatting, and percentiles.
 
 This config drives:
-- Sheet column generation (sheets_sync.py)
-- Stat calculations (stat_engine.py)
+- Sheet column generation (src/sheets.py)
+- Stat calculations (lib/sheets.py)
 - Percentile generation (auto-generated columns)
 - Section organization (player_info, analysis, rates, scoring, distribution, rebounding, defense, onoff, identity)
 """
@@ -52,6 +52,7 @@ STAT_CONSTANTS = {
     'game_length_minutes': 48.0,        # NBA game length
     'default_per_minutes': 36.0,        # Default minutes for per-minute stats
     'default_per_possessions': 100.0,   # Default possessions for per-possession stats
+    'cache_ttl_seconds': 300,           # API response cache TTL
 }
 
 # ============================================================================
@@ -71,12 +72,15 @@ SECTION_CONFIG = {
     },
     'current_stats': {
         'display_name': 'Current Stats',
+        'is_stats_section': True,
     },
     'historical_stats': {
         'display_name': 'Historical Stats',
+        'is_stats_section': True,
     },
     'postseason_stats': {
         'display_name': 'Postseason Stats',
+        'is_stats_section': True,
     },
     'identity': {
         'display_name': 'Identity',
@@ -93,6 +97,18 @@ SUBSECTIONS = [
     'defense',        # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
     'onoff',          # Offensive/Defensive Rating, Off-court ratings
 ]
+
+# Section order - determines left-to-right column layout in sheets
+SECTIONS = [
+    'entities',
+    'player_info',
+    'analysis',
+    'current_stats',
+    'historical_stats',
+    'postseason_stats',
+    'identity',
+]
+
 
 # ============================================================================
 # COLORS & PERCENTILES
@@ -130,6 +146,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 0,
         'player_formula': 'name',
@@ -147,6 +164,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 0,
         'player_formula': 'team_abbr',
@@ -164,6 +182,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 0,
         'player_formula': 'jersey_number',
@@ -181,6 +200,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'years_experience',
@@ -198,6 +218,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': False,
         'reverse_percentile': True,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'age',
@@ -215,6 +236,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'height',
         'decimal_places': 1,
         'player_formula': 'height_inches',
@@ -232,6 +254,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'weight_lbs',
@@ -249,6 +272,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'height',
         'decimal_places': 1,
         'player_formula': 'wingspan_inches',
@@ -266,6 +290,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 0,
         'player_formula': 'hand',
@@ -283,6 +308,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 0,
         'player_formula': 'notes',
@@ -300,6 +326,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 0,
         'player_formula': 'year',
@@ -316,6 +343,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'games',
@@ -332,6 +360,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': 'per_game_only',
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'minutes_x10 / 10',
@@ -348,6 +377,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'possessions / minutes',
@@ -364,6 +394,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
@@ -380,6 +411,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': 'points / (2fga + 3fga + 0.44 * fta)',
@@ -396,6 +428,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': '2fga',
@@ -412,6 +445,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '2 * (2fgm / 2fga)',
@@ -428,6 +462,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': '3fga',
@@ -444,6 +479,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '3 * (3fgm / 3fga)',
@@ -460,6 +496,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'cont_close_2fga',
@@ -476,6 +513,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '2 * (cont_close_2fgm / cont_close_2fga)',
@@ -492,6 +530,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'open_close_2fga',
@@ -508,6 +547,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '2 * (open_close_2fgm / open_close_2fga)',
@@ -524,6 +564,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'cont_2fga - cont_close_2fga',
@@ -540,6 +581,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
@@ -556,6 +598,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'open_2fga - open_close_2fga',
@@ -572,6 +615,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
@@ -588,6 +632,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'cont_3fga',
@@ -604,6 +649,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '3 * (cont_3fgm / cont_3fga)',
@@ -620,6 +666,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'open_3fga',
@@ -636,6 +683,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '3 * (open_3fgm / open_3fga)',
@@ -652,15 +700,18 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
-        'totals_config': {
-            'display_name': 'FTA',
-            'format': 'number',
-            'decimal_places': 1,
-            'player_formula': 'fta',
-            'team_formula': 'fta',
-            'opponents_formula': 'opp_fta',
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'FTA',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'fta',
+                'team_formula': 'fta',
+                'opponents_formula': 'opp_fta',
+            },
         },
         'player_formula': 'fta / (2fga + 3fga)',
         'team_formula': 'fta / (2fga + 3fga)',
@@ -676,6 +727,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': 'ftm / (.44 * fta)',
@@ -692,6 +744,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'assists',
@@ -708,6 +761,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'pot_assists',
@@ -724,6 +778,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'sec_assists',
@@ -740,6 +795,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'passes',
@@ -756,6 +812,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'touches',
@@ -772,6 +829,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'time_on_ball / touches',
@@ -788,6 +846,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'dribbles / touches',
@@ -804,15 +863,18 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
-        'totals_config': {
-            'display_name': 'TOV',
-            'format': 'number',
-            'decimal_places': 1,
-            'player_formula': 'turnovers',
-            'team_formula': 'turnovers',
-            'opponents_formula': 'opp_turnovers',
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'TOV',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'turnovers',
+                'team_formula': 'turnovers',
+                'opponents_formula': 'opp_turnovers',
+            },
         },
         'player_formula': '(turnovers / possessions) * 100',
         'team_formula': '(turnovers / possessions) * 100',
@@ -828,15 +890,18 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
-        'totals_config': {
-            'display_name': 'OREB',
-            'format': 'number',
-            'decimal_places': 1,
-            'player_formula': 'o_rebounds',
-            'team_formula': 'o_rebounds',
-            'opponents_formula': 'opp_o_rebounds',
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'OREB',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'o_rebounds',
+                'team_formula': 'o_rebounds',
+                'opponents_formula': 'opp_o_rebounds',
+            },
         },
         'player_formula': 'o_rebound_pct_x1000 / 10',
         'team_formula': 'o_rebound_pct_x1000 / 10',
@@ -852,15 +917,18 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
-        'totals_config': {
-            'display_name': 'DRS',
-            'format': 'number',
-            'decimal_places': 1,
-            'player_formula': 'd_rebounds',
-            'team_formula': 'd_rebounds',
-            'opponents_formula': 'opp_d_rebounds',
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'DRS',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'd_rebounds',
+                'team_formula': 'd_rebounds',
+                'opponents_formula': 'opp_d_rebounds',
+            },
         },
         'player_formula': 'd_rebound_pct_x1000 / 10',
         'team_formula': 'd_rebound_pct_x1000 / 10',
@@ -876,15 +944,18 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
-        'totals_config': {
-            'display_name': 'COR',
-            'format': 'number',
-            'decimal_places': 1,
-            'player_formula': 'cont_o_rebs',
-            'team_formula': 'cont_o_rebs',
-            'opponents_formula': None,
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'COR',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'cont_o_rebs',
+                'team_formula': 'cont_o_rebs',
+                'opponents_formula': None,
+            },
         },
         'player_formula': '(cont_o_rebs / o_rebounds) * 100',
         'team_formula': '(cont_o_rebs / o_rebounds) * 100',
@@ -900,15 +971,18 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
-        'totals_config': {
-            'display_name': 'CDR',
-            'format': 'number',
-            'decimal_places': 1,
-            'player_formula': 'cont_d_rebs',
-            'team_formula': 'cont_d_rebs',
-            'opponents_formula': None,
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'CDR',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'cont_d_rebs',
+                'team_formula': 'cont_d_rebs',
+                'opponents_formula': None,
+            },
         },
         'player_formula': '(cont_d_rebs / d_rebounds) * 100',
         'team_formula': '(cont_d_rebs / d_rebounds) * 100',
@@ -924,6 +998,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
         'player_formula': '(putbacks / o_rebounds) * 100',
@@ -940,6 +1015,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'o_dist_x10 / 10',
@@ -956,6 +1032,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'd_dist_x10 / 10',
@@ -972,6 +1049,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'd_close_2fga',
@@ -988,6 +1066,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '2 * (d_close_2fgm / d_close_2fga)',
@@ -1004,6 +1083,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'd_2fga - d_close_2fga',
@@ -1020,6 +1100,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
@@ -1036,6 +1117,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'd_3fga',
@@ -1052,6 +1134,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
         'player_formula': '3 * (d_3fgm / d_3fga)',
@@ -1068,6 +1151,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
         'player_formula': 'real_d_fg_pct_x1000 / 1000',
@@ -1084,15 +1168,18 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
-        'totals_config': {
-            'display_name': 'BLK',
-            'format': 'number',
-            'decimal_places': 1,
-            'player_formula': 'blocks',
-            'team_formula': 'blocks',
-            'opponents_formula': 'opp_blocks',
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'BLK',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'blocks',
+                'team_formula': 'blocks',
+                'opponents_formula': 'opp_blocks',
+            },
         },
         'player_formula': 'blocks / contests',
         'team_formula': 'blocks / (opp_2fga + opp_3fga)',
@@ -1108,6 +1195,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'contests',
@@ -1124,6 +1212,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'steals + charges',
@@ -1140,6 +1229,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'deflections',
@@ -1156,6 +1246,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'fouls',
@@ -1172,6 +1263,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'off_rating_x10 / 10',
@@ -1188,6 +1280,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'def_rating_x10 / 10',
@@ -1204,6 +1297,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'off_onoff_x10 / 10',
@@ -1220,6 +1314,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'def_onoff_x10 / 10',
@@ -1240,6 +1335,7 @@ SHEETS_COLUMNS = {
         'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 0,
         'player_formula': 'player_id',
@@ -1247,594 +1343,3 @@ SHEETS_COLUMNS = {
         'opponents_formula': None,
     },
 }
-
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
-def get_sheets_columns_by_section(section):
-    """Get all display columns for a specific section."""
-    return {k: v for k, v in SHEETS_COLUMNS.items() if v['section'] == section}
-
-
-def get_sheets_columns_by_view(stat_mode):
-    """
-    Get display columns for a specific view mode.
-    Args:
-        stat_mode: 'basic', 'advanced', or 'both'
-    """
-    if stat_mode == 'both':
-        return SHEETS_COLUMNS
-    return {k: v for k, v in SHEETS_COLUMNS.items() 
-            if v['stat_mode'] in [stat_mode, 'both']}
-
-
-def get_sheets_columns_by_entity(entity_type):
-    """Get display columns applicable to an entity type."""
-    result = {}
-    for k, v in SHEETS_COLUMNS.items():
-        # Check if the entity has a formula (not None)
-        if entity_type == 'player' and v.get('player_formula') is not None:
-            result[k] = v
-        elif entity_type == 'team' and v.get('team_formula') is not None:
-            result[k] = v
-        elif entity_type == 'opponents' and v.get('opponents_formula') is not None:
-            result[k] = v
-    return result
-
-
-def get_sheets_columns_by_period(period):
-    """Get display columns applicable to a period."""
-    return {k: v for k, v in SHEETS_COLUMNS.items() 
-            if period in v['applies_to_periods']}
-
-
-def get_editable_columns():
-    """Get all editable columns (notes, wingspan)."""
-    return {k: v for k, v in SHEETS_COLUMNS.items() if v['editable']}
-
-
-def generate_percentile_columns():
-    """
-    Auto-generate percentile column definitions for all columns with has_percentile=True.
-    Percentiles are ALWAYS calculated for the current stats mode and separated by entity type.
-    
-    Returns a dictionary of percentile columns in the format:
-    - {col_key}_pct: Percentile column (visible when show_percentiles toggle is on)
-    
-    Percentile columns inherit all properties from their base column except:
-    - display_name gets "%" suffix
-    - has_percentile = False (percentiles don't have percentiles)
-    - is_generated_percentile = True (marks as auto-generated)
-    """
-    percentile_columns = {}
-    
-    for col_key, col_def in SHEETS_COLUMNS.items():
-        if not col_def.get('has_percentile'):
-            continue
-        
-        # Generate one percentile column per base column
-        # Entity type is handled during rendering (players vs teams vs opponents use different scales)
-        pct_key = f"{col_key}_pct"
-        
-        percentile_columns[pct_key] = {
-            'key': pct_key,
-            'display_name': f"{col_def['display_name']}%",
-            'section': col_def['section'],  # Same sections as base column
-            'subsection': col_def.get('subsection'),
-            'stat_mode': col_def['stat_mode'],  # Same visibility rules
-            'has_percentile': False,  # Percentiles don't have percentiles
-            'is_stat': col_def.get('is_stat', False),
-            'editable': False,  # Percentiles are never editable
-            'reverse_percentile': col_def.get('reverse_percentile', False),
-            'format': 'number',  # Percentile itself is already 0-100
-            'decimal_places': 0,  # Percentiles shown as whole numbers
-            'calculation_formula': f"percentile({col_key})",
-            'is_generated_percentile': True,
-            'base_stat': col_key,
-            'player_formula': col_def.get('player_formula'),
-            'team_formula': col_def.get('team_formula'),
-            'opponents_formula': col_def.get('opponents_formula'),
-        }
-    
-    return percentile_columns
-
-
-def get_all_columns_with_percentiles():
-    """Get SHEETS_COLUMNS plus all auto-generated percentile columns."""
-    all_cols = dict(SHEETS_COLUMNS)
-    all_cols.update(generate_percentile_columns())
-    return all_cols
-
-
-# ============================================================================
-# COLUMN FILTERING AND SELECTION HELPERS
-# ============================================================================
-
-def get_columns_by_filters(section=None, subsection=None, entity=None, stat_mode=None, 
-                           include_percentiles=False):
-    """
-    Get columns matching specified filters.
-    
-    Args:
-        section: Filter by section (e.g., 'current_stats', 'player_info')
-        subsection: Filter by subsection (e.g., 'scoring', 'defense')
-        entity: Filter by entity type ('player', 'team', 'opponents')
-        stat_mode: Filter by view mode ('basic', 'advanced', 'both')
-        include_percentiles: Whether to include auto-generated percentile columns
-    
-    Returns:
-        Dictionary of matching columns
-    """
-    if include_percentiles:
-        columns = get_all_columns_with_percentiles()
-    else:
-        columns = SHEETS_COLUMNS
-    
-    filtered = {}
-    for col_key, col_def in columns.items():
-        # Check section filter (section is a list in column def)
-        if section and section not in col_def.get('section', []):
-            continue
-        
-        # Check subsection filter
-        if subsection and col_def.get('subsection') != subsection:
-            continue
-        
-        # Check entity filter - check if entity has a formula (not None)
-        if entity:
-            formula_key = f'{entity}_formula'
-            if col_def.get(formula_key) is None:
-                continue
-        
-        # Check view mode filter
-        if stat_mode:
-            col_view = col_def.get('stat_mode', 'both')
-            if col_view != 'both' and col_view != stat_mode:
-                continue
-        
-        filtered[col_key] = col_def
-    
-    return filtered
-
-
-def get_columns_for_section_and_entity(section, entity, stat_mode='both', include_percentiles=False):
-    """
-    Get all columns for a specific section and entity combination.
-    This is the primary function used when building sheet columns.
-    
-    Args:
-        section: Section name ('current_stats', 'historical_stats', etc.)
-        entity: Entity type ('player', 'team', 'opponents')
-        stat_mode: View mode filter ('basic', 'advanced', 'both')
-        include_percentiles: Whether to include percentile columns
-    
-    Returns:
-        List of column definitions in display order
-    """
-    columns = get_columns_by_filters(
-        section=section,
-        entity=entity,
-        stat_mode=stat_mode,
-        include_percentiles=include_percentiles
-    )
-    
-    # Sort by subsection order if in stats section
-    section_config = SECTION_CONFIG.get(section, {})
-    if section_config.get('is_stats_section'):
-        # Group by subsection
-        subsection_groups = {}
-        for col_key, col_def in columns.items():
-            subsec = col_def.get('subsection')
-            if subsec not in subsection_groups:
-                subsection_groups[subsec] = []
-            subsection_groups[subsec].append((col_key, col_def))
-        
-        # Build ordered list following SUBSECTIONS order
-        ordered = []
-        for subsec in SUBSECTIONS:
-            if subsec in subsection_groups:
-                ordered.extend(subsection_groups[subsec])
-        
-        return ordered
-    else:
-        # Non-stats sections: return in definition order
-        return [(k, v) for k, v in columns.items()]
-
-
-def build_sheet_columns(entity='player', stat_mode='both', show_percentiles=False):
-    """
-    Build complete column structure for a sheet.
-    
-    Args:
-        entity: Entity type ('player', 'team', 'opponents')
-        stat_mode: View mode ('basic', 'advanced', 'both')
-        show_percentiles: Whether percentile columns should be visible (vs value columns)
-    
-    Returns:
-        List of tuples: (column_key, column_def, is_percentile)
-    """
-    all_columns = []
-    
-    for section in SECTIONS:
-        section_cols = get_columns_for_section_and_entity(
-            section=section,
-            entity=entity,
-            stat_mode=stat_mode,
-            include_percentiles=True
-        )
-        
-        for col_key, col_def in section_cols:
-            is_percentile = col_def.get('is_generated_percentile', False)
-            
-            # If show_percentiles toggle is on, show percentile columns and hide value columns
-            # If show_percentiles toggle is off, show value columns and hide percentile columns
-            if is_percentile:
-                visible = show_percentiles and col_def.get('has_percentile', False)
-            else:
-                visible = not show_percentiles or not col_def.get('has_percentile', False)
-            
-            all_columns.append((col_key, col_def, visible))
-    
-    return all_columns
-
-
-def get_column_index(column_key, columns_list):
-    """
-    Get the 0-based index of a column in the columns list.
-    
-    Args:
-        column_key: The key to search for
-        columns_list: List of tuples from build_sheet_columns()
-    
-    Returns:
-        Index of column, or None if not found
-    """
-    for idx, (col_key, col_def, visible) in enumerate(columns_list):
-        if col_key == column_key:
-            return idx
-    return None
-
-
-def build_headers(columns_list):
-    """
-    Build the 4-row header structure for Google Sheets.
-    
-    Row 1: Section headers (merged across section columns)
-    Row 2: Subsection headers (merged across subsection columns) 
-    Row 3: Column names
-    Row 4: Empty (for filters)
-    
-    Args:
-        columns_list: List of tuples from build_sheet_columns()
-    
-    Returns:
-        Dict with:
-            - row1: List of section header values
-            - row2: List of subsection header values
-            - row3: List of column names
-            - row4: Empty list (for filters)
-            - merges: List of merge ranges for rows 1 and 2
-    """
-    row1 = []
-    row2 = []
-    row3 = []
-    merges = []
-    
-    current_section = None
-    current_subsection = None
-    section_start_col = 0
-    subsection_start_col = 0
-    
-    for idx, (col_key, col_def, visible) in enumerate(columns_list):
-        # Get section info
-        sections = col_def.get('section', [])
-        section = sections[0] if sections else 'unknown'
-        subsection = col_def.get('subsection')
-        
-        # Row 1: Section headers
-        if section != current_section:
-            if current_section is not None and section_start_col < idx:
-                # Create merge for previous section
-                section_config = SECTION_CONFIG.get(current_section, {})
-                display_name = section_config.get('display_name', current_section)
-                merges.append({
-                    'row': 0,
-                    'start_col': section_start_col,
-                    'end_col': idx,
-                    'value': display_name
-                })
-            
-            current_section = section
-            section_start_col = idx
-            row1.append(SECTION_CONFIG.get(section, {}).get('display_name', section))
-        else:
-            row1.append('')  # Will be merged
-        
-        # Row 2: Subsection headers (only for stats sections)
-        section_config = SECTION_CONFIG.get(section, {})
-        if section_config.get('is_stats_section') and subsection:
-            if subsection != current_subsection:
-                if current_subsection is not None and subsection_start_col < idx:
-                    # Create merge for previous subsection
-                    merges.append({
-                        'row': 1,
-                        'start_col': subsection_start_col,
-                        'end_col': idx,
-                        'value': current_subsection.title()
-                    })
-                
-                current_subsection = subsection
-                subsection_start_col = idx
-                row2.append(subsection.title())
-            else:
-                row2.append('')  # Will be merged
-        else:
-            current_subsection = None
-            row2.append('')
-        
-        # Row 3: Column names
-        row3.append(col_def.get('display_name', col_key))
-    
-    # Close final section merge
-    if current_section is not None:
-        section_config = SECTION_CONFIG.get(current_section, {})
-        display_name = section_config.get('display_name', current_section)
-        merges.append({
-            'row': 0,
-            'start_col': section_start_col,
-            'end_col': len(columns_list),
-            'value': display_name
-        })
-    
-    # Close final subsection merge
-    if current_subsection is not None:
-        merges.append({
-            'row': 1,
-            'start_col': subsection_start_col,
-            'end_col': len(columns_list),
-            'value': current_subsection.title()
-        })
-    
-    return {
-        'row1': row1,
-        'row2': row2,
-        'row3': row3,
-        'row4': [''] * len(columns_list),  # Empty row for filters
-        'merges': merges
-    }
-
-
-# ============================================================================
-# STAT CALCULATION HELPERS
-# ============================================================================
-
-def calculate_stat_value(entity_data, col_def, entity_type='player', stats_mode='per_100_poss'):
-    """
-    Calculate a single stat value based on column definition and stats mode.
-    
-    Args:
-        entity_data: Dict with raw data from database
-        col_def: Column definition from SHEETS_COLUMNS
-        entity_type: 'player', 'team', or 'opponents'
-        stats_mode: 'totals', 'per_game', 'per_36', 'per_100_poss', etc.
-    
-    Returns:
-        Calculated stat value
-    """
-    # Get the formula for this entity type
-    formula_key = f'{entity_type}_formula'
-    formula = col_def.get(formula_key)
-    
-    if formula is None:
-        return 0
-    
-    # Handle totals mode override (e.g., OREB% becomes OREB count)
-    if stats_mode == 'totals' and col_def.get('db_field_totals'):
-        db_field = col_def['db_field_totals']
-        return entity_data.get(db_field, 0)
-    
-    # If formula is a simple field name (no operators), just get the value
-    if formula and not any(op in formula for op in ['+', '-', '*', '/', '(', ')']):
-        raw_value = entity_data.get(formula, 0)
-        if raw_value is None:
-            raw_value = 0
-    else:
-        # Parse and evaluate formula
-        try:
-            # Build local namespace with entity data
-            local_vars = dict(entity_data)
-            local_vars['STAT_CONSTANTS'] = STAT_CONSTANTS
-            
-            # Evaluate formula
-            raw_value = eval(formula, {"__builtins__": {}}, local_vars)
-        except Exception as e:
-            return 0
-    
-    # Apply stats mode scaling
-    if stats_mode != 'totals' and col_def.get('is_stat'):
-        minutes = entity_data.get('minutes_total', 0)
-        possessions = entity_data.get('possessions', 0)
-        games = entity_data.get('games', 1)
-        
-        if stats_mode == 'per_game':
-            factor = 1.0 / max(games, 1)
-        elif stats_mode == 'per_36':
-            factor = STAT_CONSTANTS['default_per_minutes'] / max(minutes, 1)
-        elif stats_mode == 'per_100_poss':
-            factor = STAT_CONSTANTS['default_per_possessions'] / max(possessions, 1)
-        else:
-            factor = 1.0
-        
-        # Don't scale percentage fields
-        if col_def.get('format') != 'percentage':
-            raw_value = raw_value * factor
-    
-    return raw_value
-
-
-def format_stat_value(value, col_def, stats_mode='per_100_poss'):
-    """
-    Format a stat value for display according to column definition.
-    
-    Args:
-        value: Raw calculated value
-        col_def: Column definition
-        stats_mode: Current stats mode
-    
-    Returns:
-        Formatted string or number
-    """
-    if value is None or (isinstance(value, (int, float)) and value == 0):
-        return 0
-    
-    # Handle percentages
-    if col_def.get('format') == 'percentage':
-        value = value * 100  # Convert 0.456 to 45.6
-    
-    # Round to specified decimal places
-    decimals = col_def.get('decimal_places', 1)
-    rounded = round(value, decimals)
-    
-    # Return int if whole number
-    if rounded == int(rounded):
-        return int(rounded)
-    
-    return rounded
-
-
-# ============================================================================
-# PERCENTILE CALCULATION HELPERS
-# ============================================================================
-
-def get_percentile_rank(value, all_values, reverse=False):
-    """
-    Calculate percentile rank of a value within a list of values.
-    
-    Args:
-        value: The value to rank
-        all_values: List of all values to compare against
-        reverse: True if lower is better (e.g., turnovers, fouls)
-    
-    Returns:
-        Percentile rank from 0-100
-    """
-    if not all_values or value is None:
-        return 50  # Default to median
-    
-    # Filter out None values
-    valid_values = [v for v in all_values if v is not None]
-    if not valid_values:
-        return 50
-    
-    # Sort values
-    sorted_values = sorted(valid_values, reverse=reverse)
-    
-    # Find percentile
-    try:
-        rank = sorted_values.index(value)
-        percentile = (1 - (rank / len(sorted_values))) * 100
-        return percentile
-    except ValueError:
-        # Value not in list, find nearest
-        sorted_values.append(value)
-        sorted_values.sort(reverse=reverse)
-        rank = sorted_values.index(value)
-        percentile = (1 - (rank / len(sorted_values))) * 100
-        return percentile
-
-
-def get_color_for_percentile(percentile, reverse=False):
-    """
-    Get RGB color dict for a percentile value using gradient.
-    
-    Args:
-        percentile: Value from 0-100
-        reverse: True if lower is better (reverses color gradient)
-    
-    Returns:
-        Dict with 'red', 'green', 'blue' keys (values 0-1)
-    """
-    if reverse:
-        percentile = 100 - percentile
-    
-    # Clamp percentile to 0-100
-    percentile = max(0, min(100, percentile))
-    
-    # Get threshold colors
-    red = COLORS['red']
-    yellow = COLORS['yellow']
-    green = COLORS['green']
-    
-    # Calculate gradient
-    if percentile < COLOR_THRESHOLDS['mid']:
-        # Interpolate between red and yellow
-        ratio = percentile / COLOR_THRESHOLDS['mid']
-        return {
-            'red': red['red'] + (yellow['red'] - red['red']) * ratio,
-            'green': red['green'] + (yellow['green'] - red['green']) * ratio,
-            'blue': red['blue'] + (yellow['blue'] - red['blue']) * ratio,
-        }
-    else:
-        # Interpolate between yellow and green
-        ratio = (percentile - COLOR_THRESHOLDS['mid']) / (COLOR_THRESHOLDS['high'] - COLOR_THRESHOLDS['mid'])
-        return {
-            'red': yellow['red'] + (green['red'] - yellow['red']) * ratio,
-            'green': yellow['green'] + (green['green'] - yellow['green']) * ratio,
-            'blue': yellow['blue'] + (green['blue'] - yellow['blue']) * ratio,
-        }
-
-
-# ============================================================================
-# FORMATTING HELPERS (from formatting_utils.py)
-# ============================================================================
-
-def get_color_dict(color_name):
-    """Get color dict from COLORS constant."""
-    return COLORS.get(color_name, COLORS['white'])
-
-
-def create_text_format(font_family=None, font_size=None, bold=False, foreground_color='white'):
-    """Create a text format dict for Google Sheets API."""
-    format_dict = {
-        'foregroundColor': get_color_dict(foreground_color),
-        'bold': bold
-    }
-    if font_family:
-        format_dict['fontFamily'] = font_family
-    if font_size:
-        format_dict['fontSize'] = font_size
-    return format_dict
-
-
-def create_cell_format(background_color='white', text_format=None, h_align='CENTER', 
-                       v_align='MIDDLE', wrap='CLIP'):
-    """Create a complete cell format dict."""
-    cell_format = {
-        'backgroundColor': get_color_dict(background_color),
-        'horizontalAlignment': h_align,
-        'verticalAlignment': v_align,
-        'wrapStrategy': wrap
-    }
-    if text_format:
-        cell_format['textFormat'] = text_format
-    return cell_format
-
-
-def format_height(inches):
-    """
-    Format height in inches to feet-inches string.
-    
-    Args:
-        inches: Height in inches (e.g., 80)
-    
-    Returns:
-        String like "6'8\""
-    """
-    if not inches:
-        return ''
-    feet = int(inches // 12)
-    remaining_inches = int(inches % 12)
-    return f"{feet}'{remaining_inches}\""
-

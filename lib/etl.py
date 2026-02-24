@@ -1534,92 +1534,208 @@ def execute_null_zero_cleanup(
 ) -> int:
     """
     Execute NULL/Zero cleanup for an endpoint's columns.
-    
-    Rules:
-    - If games = 0: Set ALL endpoint columns to NULL
-    - If games > 0: Set NULL values to 0 for endpoint columns
-    
+
+    Groups columns by their ``pt_indicator`` value from DB_COLUMNS config, then
+    for each group applies two rules:
+
+    - Rule 1: indicator_col = 0  → set all nullable dependent columns to NULL
+    - Rule 2: indicator_col > 0  → set any remaining NULL values to 0
+
+    Indicator columns themselves (``pt_indicator='yes'``) are excluded from
+    the nullable-cleanup pass (they carry NOT NULL constraints in the DB).
+
     Args:
         endpoint_name: Name of endpoint that just ran
         season: Season string (e.g., '2020-21')
         season_type: Season type code
         entity: 'player' or 'team'
-        params: Optional params dict to filter columns (e.g., {'measure_type_detailed_defense': 'Advanced'})
-    
+        params: Optional params dict to filter columns (e.g.,
+            ``{'measure_type_detailed_defense': 'Advanced'}``)
+
     Returns:
         Number of rows updated
     """
-    # Get columns populated by this endpoint with these specific params
-    # Use helper to extract only params that exist in the dict
     filter_kwargs = extract_filter_params(params)
     cols = get_columns_by_endpoint(endpoint_name, entity, **filter_kwargs)
     if not cols:
         return 0
-    
-    col_names = list(cols.keys())
-    
-    # CRITICAL DEBUG: Check if dribbles would be affected
-    if endpoint_name == 'leaguedashptstats' and 'dribbles' in col_names:
-        logger.warning(f"⚠️ DRIBBLES CLEANUP BUG: dribbles is in cleanup columns for {endpoint_name}!")
-        logger.warning(f"  Season: {season}, Type: {season_type}")
-        logger.warning(f"  This will OVERWRITE dribbles values!")
-    
-    games_col = get_games_column_for_endpoint(endpoint_name)
+
+    # Group columns by their pt_indicator value (skip untagged + indicator cols)
+    groups: Dict[str, List[str]] = {}
+    for col_name in cols:
+        indicator = DB_COLUMNS.get(col_name, {}).get('pt_indicator')
+        if not indicator or indicator == 'yes':
+            continue
+        groups.setdefault(indicator, []).append(col_name)
+
+    if not groups:
+        return 0
+
     table = get_table_name(entity, 'stats')
-    
-    # Filter out games columns from NULL cleanup (they have NOT NULL constraints)
-    # These columns should never be set to NULL - only to 0
-    NOT_NULL_COLUMNS = {'tr_games', 'tracking_games', 'h_games'}
-    col_names_nullable = [c for c in col_names if c not in NOT_NULL_COLUMNS]
-    
+    rows_updated = 0
+
     with db_connection() as conn:
         cursor = conn.cursor()
-        rows_updated = 0
-        
         try:
-            # Rule 1: games = 0 -> Set all columns to NULL (only where not already NULL)
-            # Exclude NOT NULL columns (tr_games, tracking_games) - they get set to 0 instead
-            if col_names_nullable:
-                where_conditions_null = ' OR '.join([f"{quote_column(c)} IS NOT NULL" for c in col_names_nullable])
-                set_clauses_null = [f"{quote_column(c)} = NULL" for c in col_names_nullable]
-            else:
-                # No nullable columns to clean up
-                where_conditions_null = None
-                set_clauses_null = []
-            
-            if where_conditions_null:
-                query_null = f"""
+            for games_col, col_names in groups.items():
+                # Columns that are nullable (may be NULLed when games=0)
+                nullable = [
+                    c for c in col_names
+                    if DB_COLUMNS.get(c, {}).get('nullable', True)
+                ]
+
+                # Rule 1: indicator = 0 → NULL all nullable dependent columns
+                if nullable:
+                    where_not_null = ' OR '.join(
+                        f"{quote_column(c)} IS NOT NULL" for c in nullable
+                    )
+                    set_null = ', '.join(
+                        f"{quote_column(c)} = NULL" for c in nullable
+                    )
+                    cursor.execute(
+                        f"""
+                        UPDATE {table}
+                        SET {set_null}
+                        WHERE year = %s AND season_type = %s
+                          AND {games_col} = 0
+                          AND ({where_not_null})
+                        """,
+                        (season, season_type),
+                    )
+                    rows_updated += cursor.rowcount
+
+                # Rule 2: indicator > 0 → fill any NULL with 0
+                where_is_null = ' OR '.join(
+                    f"{quote_column(c)} IS NULL" for c in col_names
+                )
+                set_zero = ', '.join(
+                    f"{quote_column(c)} = COALESCE({quote_column(c)}, 0)"
+                    for c in col_names
+                )
+                cursor.execute(
+                    f"""
                     UPDATE {table}
-                    SET {', '.join(set_clauses_null)}
-                    WHERE year = %s AND season_type = %s AND {games_col} = 0
-                    AND ({where_conditions_null})
-                """
-                cursor.execute(query_null, (season, season_type))
+                    SET {set_zero}
+                    WHERE year = %s AND season_type = %s
+                      AND {games_col} > 0
+                      AND ({where_is_null})
+                    """,
+                    (season, season_type),
+                )
                 rows_updated += cursor.rowcount
-            
-            # Rule 2: games > 0 -> Set NULL to 0 (only where actually NULL)
-            where_conditions_zero = ' OR '.join([f"{quote_column(c)} IS NULL" for c in col_names])
-            set_clauses_zero = [
-                f"{quote_column(c)} = COALESCE({quote_column(c)}, 0)" 
-                for c in col_names
-            ]
-            query_zero = f"""
-                UPDATE {table}
-                SET {', '.join(set_clauses_zero)}
-                WHERE year = %s AND season_type = %s AND {games_col} > 0
-                AND ({where_conditions_zero})
-            """
-            cursor.execute(query_zero, (season, season_type))
-            rows_updated += cursor.rowcount
-            
+
             conn.commit()
-            
-        except Exception as e:
+        except Exception:
             conn.rollback()
             raise
         finally:
             cursor.close()
-    
+
+    return rows_updated
+
+
+def run_pt_indicator_cascade(
+    indicator_col: str,
+    season: str,
+    season_type: int,
+    entity: Literal['player', 'team'] = 'player',
+) -> int:
+    """
+    Cascade NULL/zero cleanup for all columns governed by ``indicator_col``.
+
+    Called immediately after an indicator column (``games``, ``tr_games``, or
+    ``h_games``) is written to the DB, so that columns from *earlier* endpoints
+    in the same run are corrected relative to the freshly-written indicator
+    value.
+
+    Applies the same two rules as :func:`execute_null_zero_cleanup`:
+
+    - Rule 1: indicator_col = 0  → NULL all nullable dependents
+    - Rule 2: indicator_col > 0  → fill NULL dependents with 0
+
+    Args:
+        indicator_col: The games indicator column (``'games'``, ``'tr_games'``,
+            or ``'h_games'``) that was just written.
+        season: Season string (e.g., ``'2020-21'``).
+        season_type: Season type code.
+        entity: ``'player'`` or ``'team'``.
+
+    Returns:
+        Number of rows updated.
+    """
+    source_key = f'{entity}_source'
+    dependent_cols = [
+        col for col, meta in DB_COLUMNS.items()
+        if isinstance(meta, dict)
+        and meta.get('pt_indicator') == indicator_col
+        and meta.get(source_key) is not None
+        and meta.get('table') in ('stats', 'both')
+    ]
+    if not dependent_cols:
+        return 0
+
+    nullable = [
+        c for c in dependent_cols
+        if DB_COLUMNS[c].get('nullable', True)
+    ]
+    table = get_table_name(entity, 'stats')
+    rows_updated = 0
+
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            # Rule 1: indicator = 0 → NULL all nullable dependents
+            if nullable:
+                where_not_null = ' OR '.join(
+                    f"{quote_column(c)} IS NOT NULL" for c in nullable
+                )
+                set_null = ', '.join(
+                    f"{quote_column(c)} = NULL" for c in nullable
+                )
+                cursor.execute(
+                    f"""
+                    UPDATE {table}
+                    SET {set_null}
+                    WHERE year = %s AND season_type = %s
+                      AND {indicator_col} = 0
+                      AND ({where_not_null})
+                    """,
+                    (season, season_type),
+                )
+                rows_updated += cursor.rowcount
+
+            # Rule 2: indicator > 0 → fill NULL dependents with 0
+            where_is_null = ' OR '.join(
+                f"{quote_column(c)} IS NULL" for c in dependent_cols
+            )
+            set_zero = ', '.join(
+                f"{quote_column(c)} = COALESCE({quote_column(c)}, 0)"
+                for c in dependent_cols
+            )
+            cursor.execute(
+                f"""
+                UPDATE {table}
+                SET {set_zero}
+                WHERE year = %s AND season_type = %s
+                  AND {indicator_col} > 0
+                  AND ({where_is_null})
+                """,
+                (season, season_type),
+            )
+            rows_updated += cursor.rowcount
+
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+
+    if rows_updated:
+        logger.info(
+            f"[CASCADE] {indicator_col} cascade fixed {rows_updated} row(s) "
+            f"for {entity} / {season} / type={season_type}"
+        )
     return rows_updated
 
 
@@ -1789,16 +1905,13 @@ def get_endpoint_processing_order(include_team_endpoints: bool = False) -> List[
     Returns:
         List of endpoint names in processing order
     """
-    # Endpoints that update entity tables (players/teams) not stats tables
-    ENTITY_ONLY_ENDPOINTS = {'draftcombineplayeranthro', 'commonplayerinfo'}
-    
     league_endpoints = []
     team_endpoints = []
     player_endpoints = []
     
-    for endpoint_name in ENDPOINTS_CONFIG.keys():
-        # Skip entity-only endpoints (handled separately)
-        if endpoint_name in ENTITY_ONLY_ENDPOINTS:
+    for endpoint_name, endpoint_config in ENDPOINTS_CONFIG.items():
+        # Skip endpoints that don't use the tracker (manually triggered)
+        if not endpoint_config.get('endpoint_tracker', True):
             continue
         
         # Infer tier from endpoint name pattern
@@ -1823,92 +1936,81 @@ def get_endpoint_processing_order(include_team_endpoints: bool = False) -> List[
 def get_endpoint_parameter_combinations(endpoint_name: str, entity: Literal['player', 'team'] = 'player') -> List[Dict[str, Any]]:
     """
     Extract all unique parameter combinations needed for an endpoint from DB_COLUMNS config.
-    
-    For endpoints like leaguedashptstats that require parameters (pt_measure_type),
-    this discovers all unique parameter sets by scanning which columns use which parameters.
-    
-    CRITICAL: Returns combinations in dependency order - basic stats (empty params) FIRST,
-    then advanced stats. This ensures games column is populated before advanced stats are written.
-    
-    Args:
-        endpoint_name: Name of the endpoint (e.g., 'leaguedashptstats')
-        entity: Entity type ('player' or 'team')
-        
+
+    Scans columns to discover different pt_measure_type, measure_type_detailed_defense,
+    defense_category values etc., returning them in dependency order (basic stats first).
+
     Returns:
-        List of parameter dictionaries in dependency order, e.g.:
-        [
-            {},  # Basic stats FIRST (includes games column)
-            {'measure_type_detailed_defense': 'Advanced'}  # Advanced stats SECOND
-        ]
-        Empty list if endpoint doesn't require parameters or has no columns configured.
+        List of parameter dicts in dependency order, e.g.:
+        [{}, {'measure_type_detailed_defense': 'Advanced'}]
     """
     import json
-    
+
     source_key = f'{entity}_source'
     param_combinations = []
-    
-    # Scan all columns to find which ones use this endpoint
+
     for col_name, col_meta in DB_COLUMNS.items():
         if not isinstance(col_meta, dict):
             continue
-            
+
         source_config = col_meta.get(source_key)
         if not source_config:
             continue
-            
-        # Check direct endpoint reference
+
         col_endpoint = None
         params = {}
-        
+
         if isinstance(source_config, str):
-            # Simple string reference: column uses this endpoint with no special params
             col_endpoint = source_config
         elif isinstance(source_config, dict):
             col_endpoint = source_config.get('endpoint')
-            params = source_config.get('params', {})
-            
-            # Also check transformation if present
+            params = source_config.get('params', {}).copy()
+
+            # FIX: also check source-level params (stored directly on player_source,
+            # not nested under 'params'). This catches columns like tr_games that have
+            # 'pt_measure_type': 'Possessions' directly on player_source.
+            for key in PARAM_KEYS:
+                if key in source_config and key not in params:
+                    params[key] = source_config[key]
+
+            # Also check transformation endpoint_params
             transform = source_config.get('transformation')
             if transform:
                 if not col_endpoint:
                     col_endpoint = transform.get('endpoint')
-                # Check for endpoint_params in transformation (used for pipeline transforms)
-                transform_endpoint_params = transform.get('endpoint_params', {})
-                if transform_endpoint_params:
-                    params = {**params, **transform_endpoint_params}
-                # Also merge transformation params
+                transform_ep = transform.get('endpoint_params', {})
+                if transform_ep:
+                    # Only include recognized param keys (skip internal like team_id)
+                    for key in PARAM_KEYS:
+                        if key in transform_ep and key not in params:
+                            params[key] = transform_ep[key]
                 transform_params = transform.get('params', {})
                 if transform_params:
-                    params = {**params, **transform_params}
-        
-        # Skip if not this endpoint
+                    for key in PARAM_KEYS:
+                        if key in transform_params and key not in params:
+                            params[key] = transform_params[key]
+
         if col_endpoint != endpoint_name:
             continue
-        
-        # Extract relevant parameters (exclude internal ones like _convert_per_game)
-        relevant_params = {k: v for k, v in params.items() if not k.startswith('_')}
-        
-        # Check if we've already seen this parameter combination
+
+        # Keep only recognized param keys (drop internal flags like player_or_team)
+        relevant_params = {k: v for k, v in params.items()
+                           if k in PARAM_KEYS and not k.startswith('_')}
+
         param_str = json.dumps(relevant_params, sort_keys=True)
         if not any(json.dumps(p, sort_keys=True) == param_str for p in param_combinations):
             param_combinations.append(relevant_params)
-    
-    # If no parameter combinations found, return single empty dict (default params)
+
     if not param_combinations:
         param_combinations = [{}]
-    
-    # CRITICAL: Sort to ensure basic stats (empty params) are processed BEFORE advanced stats
-    # This prevents NULL games constraint violations when writing advanced stats
-    # Sorting key: empty dict first (0), then by number of params (ascending)
+
+    # Sort: empty dict first (basic stats), then by JSON string
     def sort_key(params_dict):
-        if not params_dict:  # Empty dict = basic stats = highest priority
-            return (0, "")
-        # Non-empty params = advanced stats = lower priority
-        # Secondary sort by JSON string for deterministic ordering
+        if not params_dict:
+            return (0, '')
         return (1, json.dumps(params_dict, sort_keys=True))
-    
+
     param_combinations.sort(key=sort_key)
-    
     return param_combinations
 
 
@@ -2143,7 +2245,144 @@ def reset_current_season_endpoints(season: str) -> None:
             cursor.close()
 
 
-def mark_backfill_complete(earliest_rookie_year: Optional[str] = None) -> None:
+def ensure_endpoint_tracker_coverage(start_season: str, end_season: Optional[str] = None) -> int:
+    """
+    Ensure endpoint_tracker has rows for every endpoint/season/season_type/params/entity
+    combination in the given season range. Inserts missing rows with status='ready'.
+    Uses ON CONFLICT DO NOTHING so existing rows (complete, in_progress, etc.) are preserved.
+
+    Args:
+        start_season: First season to ensure coverage for (e.g., '2020-21')
+        end_season: Last season to ensure coverage for (defaults to start_season)
+
+    Returns:
+        Number of new rows inserted
+    """
+    from config.etl import ENDPOINTS_CONFIG, SEASON_TYPE_CONFIG
+    from psycopg2.extras import execute_values
+    import json
+
+    if end_season is None:
+        end_season = start_season
+
+    # Build season range
+    start_year = int('20' + start_season.split('-')[1])
+    end_year = int('20' + end_season.split('-')[1])
+
+    all_seasons = []
+    for year in range(start_year, end_year + 1):
+        all_seasons.append(f"{year-1}-{str(year)[-2:]}")
+
+    rows_to_insert = []
+
+    for endpoint_name, endpoint_config in ENDPOINTS_CONFIG.items():
+        # Skip endpoints that don't participate in the tracker
+        if not endpoint_config.get('endpoint_tracker', True):
+            continue
+
+        min_season = endpoint_config.get('min_season')
+        entity_types = endpoint_config.get('entity_types', ['player'])
+
+        for entity in entity_types:
+            param_combinations = get_endpoint_parameter_combinations(endpoint_name, entity)
+
+            for params in param_combinations:
+                params_json = json.dumps(params, sort_keys=True) if params else '{}'
+
+                for season in all_seasons:
+                    season_year = int('20' + season.split('-')[1])
+
+                    # Skip if before endpoint's minimum season
+                    if min_season:
+                        min_year = int('20' + min_season.split('-')[1])
+                        if season_year < min_year:
+                            continue
+
+                    for season_type_name, config in SEASON_TYPE_CONFIG.items():
+                        season_type = config['season_code']
+                        minimum_season = config.get('minimum_season')
+
+                        # Skip if before season type's minimum season
+                        if minimum_season:
+                            min_type_year = int('20' + minimum_season.split('-')[1])
+                            if season_year < min_type_year:
+                                continue
+
+                        rows_to_insert.append((
+                            endpoint_name,
+                            season,
+                            season_type,
+                            params_json,
+                            entity,
+                            0, 0, 0, 0,  # successes/totals
+                            'ready'
+                        ))
+
+    if not rows_to_insert:
+        return 0
+
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            sql_plain = """
+                INSERT INTO endpoint_tracker
+                    (endpoint, year, season_type, params, entity,
+                     player_successes, players_total, team_successes, teams_total,
+                     status)
+                VALUES %s
+                ON CONFLICT (endpoint, year, season_type, params, entity) DO NOTHING
+            """
+            execute_values(cursor, sql_plain, rows_to_insert)
+            inserted = cursor.rowcount
+            conn.commit()
+            logger.info(f"ensure_endpoint_tracker_coverage: inserted {inserted} new rows "
+                        f"for {start_season}→{end_season}")
+            return inserted
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to ensure endpoint tracker coverage: {e}")
+            raise
+        finally:
+            cursor.close()
+
+
+def reset_historical_endpoints(current_season: str) -> int:
+    """
+    Reset all non-current-season endpoint tracker rows to 'ready'.
+    Called after historical backfill completes and players are marked backfilled=true,
+    so the tracker is clean for the next backfill cycle (new rookies next season).
+
+    Historical rows reset to 'ready' but NOT deleted — status 'complete' was the
+    gate for mark_backfill_complete; after that gate is passed we can safely reset.
+
+    Args:
+        current_season: Current season string (e.g., '2025-26') — rows for this
+                        season are NOT reset (handled by reset_current_season_endpoints).
+
+    Returns:
+        Number of rows reset
+    """
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE endpoint_tracker
+                SET status = 'ready', missing_data = NULL, updated_at = NOW()
+                WHERE year != %s
+            """, (current_season,))
+            rows_reset = cursor.rowcount
+            conn.commit()
+            logger.info(f"reset_historical_endpoints: reset {rows_reset} rows (all seasons except {current_season})")
+            return rows_reset
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to reset historical endpoints: {e}")
+            raise
+        finally:
+            cursor.close()
+
+
+def mark_backfill_complete(earliest_rookie_year: Optional[str] = None, current_season: Optional[str] = None) -> None:
     """
     Mark full backfill cycle as complete - config-driven approach.
     
@@ -2171,21 +2410,30 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None) -> None:
         try:
             # Check if there are ANY incomplete endpoints in the tracker
             # Only check from earliest_rookie_year onwards if provided
+            # Resolve current_season if not passed in
+            if current_season is None:
+                from config.etl import NBA_CONFIG as _NBA_CONFIG
+                current_season = _NBA_CONFIG['current_season']
+
             if earliest_rookie_year:
                 cursor.execute("""
                     SELECT COUNT(*) 
                     FROM endpoint_tracker
                     WHERE (status IS NULL OR status != 'complete')
-                    AND year >= %s
-                """, (earliest_rookie_year,))
+                      AND year >= %s
+                      AND year < %s
+                      AND entity = 'player'
+                """, (earliest_rookie_year, current_season))
                 incomplete_count = cursor.fetchone()[0]
-                logger.info(f"[BACKFILL STATUS] Checking endpoints from {earliest_rookie_year} onwards: {incomplete_count} incomplete")
+                logger.info(f"[BACKFILL STATUS] Checking historical endpoints from {earliest_rookie_year} to {current_season} (excl.): {incomplete_count} incomplete")
             else:
                 cursor.execute("""
                     SELECT COUNT(*) 
                     FROM endpoint_tracker
-                    WHERE status IS NULL OR status != 'complete'
-                """)
+                    WHERE (status IS NULL OR status != 'complete')
+                      AND year < %s
+                      AND entity = 'player'
+                """, (current_season,))
                 incomplete_count = cursor.fetchone()[0]
             
             if incomplete_count > 0:
@@ -2200,11 +2448,15 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None) -> None:
             """)
             players_marked = cursor.rowcount
             
-            # Reset ALL endpoint statuses to 'ready' for next backfill cycle
+            # Reset ONLY historical player endpoint statuses to 'ready'.
+            # Team historical rows stay 'complete' permanently — team data doesn't
+            # change for past seasons, so there's no reason to re-run them each cycle.
+            # Current-season endpoints are managed separately by reset_current_season_endpoints.
             cursor.execute("""
                 UPDATE endpoint_tracker
                 SET status = 'ready', missing_data = NULL, updated_at = NOW()
-            """)
+                WHERE year != %s AND entity = 'player'
+            """, (NBA_CONFIG['current_season'],))
             endpoints_reset = cursor.rowcount
             
             conn.commit()
@@ -2220,93 +2472,6 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None) -> None:
             conn.rollback()
             logger.error(f"ERROR marking backfill complete: {e}")
             logger.error(traceback.format_exc())
-            raise
-        finally:
-            cursor.close()
-
-
-def ensure_endpoint_tracker_coverage(earliest_rookie_year: str) -> None:
-    """
-    Ensure endpoint_tracker has rows for all endpoints from earliest_rookie_year onwards.
-    
-    Creates or updates tracker rows for ALL endpoint/params/season/season_type combinations
-    that need to be processed. This is called ONCE after adding new players, not per-player.
-    
-    Args:
-        earliest_rookie_year: Earliest rookie year from newly added players (e.g., '2024-25')
-        
-    Returns:
-        None (ensures tracker rows exist in database)
-    """
-    from config.etl import NBA_CONFIG, SEASON_TYPE_CONFIG
-    
-    with db_connection() as conn:
-        cursor = conn.cursor()
-        
-        try:
-            # Get endpoint processing order (config-driven)
-            endpoints = get_endpoint_processing_order(include_team_endpoints=False)
-            
-            # Get season range to process
-            current_season = NBA_CONFIG['current_season']
-            
-            # Generate all seasons from earliest_rookie_year to current
-            start_year = int(earliest_rookie_year.split('-')[0])
-            current_year = int(current_season.split('-')[0])
-            seasons = [f"{year}-{str(year+1)[-2:]}" for year in range(start_year, current_year + 1)]
-            
-            # For each endpoint, season, and season_type, ensure a tracker row exists
-            rows_to_upsert = []
-            for endpoint in endpoints:
-                # Get parameter combinations for this endpoint (config-driven)
-                param_combos = get_endpoint_parameter_combinations(endpoint, entity='player')
-                
-                for season in seasons:
-                    for season_type_name, season_type_config in SEASON_TYPE_CONFIG.items():
-                        season_type = season_type_config['season_code']
-                        min_season = season_type_config.get('minimum_season')
-                        
-                        # Skip if season type didn't exist yet
-                        if min_season and season < min_season:
-                            continue
-                        
-                        # Check if endpoint is available for this season
-                        if not is_endpoint_available_for_season(endpoint, season):
-                            continue
-                        
-                        # For each parameter combination
-                        for params in param_combos:
-                            # Serialize params to JSON for storage (always use JSON, never NULL)
-                            # Empty dict {} becomes "{}" in JSON, which satisfies NOT NULL constraint
-                            params_json = json.dumps(params, sort_keys=True)
-                            
-                            rows_to_upsert.append((
-                                endpoint,
-                                season,
-                                season_type,
-                                'ready',  # Status: ready for processing
-                                params_json,
-                                'player'  # Entity type
-                            ))
-            
-            # Bulk upsert all rows
-            # If row exists: UPDATE status to 'ready'
-            # If row doesn't exist: INSERT new row
-            if rows_to_upsert:
-                cursor.executemany("""
-                    INSERT INTO endpoint_tracker 
-                    (endpoint, year, season_type, status, params, entity)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (endpoint, year, season_type, params, entity) 
-                    DO UPDATE SET status = 'ready', updated_at = NOW()
-                """, rows_to_upsert)
-                
-                conn.commit()
-                logger.info(f"Ensured {len(rows_to_upsert)} endpoint tracker rows exist (from {earliest_rookie_year})")
-            
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"ERROR ensuring endpoint tracker coverage: {e}")
             raise
         finally:
             cursor.close()
@@ -2386,7 +2551,13 @@ def get_non_backfilled_player_ids_for_season(season: str, season_type: int) -> L
         
         player_stats_table = get_table_name('player', 'stats')
         players_table = get_table_name('player', 'entity')
-        current_season = NBA_CONFIG['current_season']
+        # CRITICAL: Use calculate_current_season() here, NOT NBA_CONFIG['current_season'].
+        # The backfill loop runs inside override_nba_config(current_season=historical_season),
+        # which temporarily mutates NBA_CONFIG. If we read from NBA_CONFIG here, the filter
+        # becomes `rookie_year < '2022-23'` when processing 2022-23, excluding that class of
+        # rookies from their own debut season. calculate_current_season() is date-based and
+        # is unaffected by any config override.
+        current_season = calculate_current_season()
         
         # Get player IDs who need backfilling
         cursor.execute(f"""

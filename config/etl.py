@@ -292,8 +292,10 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'player_source': {
-            'endpoint': 'commonplayerinfo',
-            'field': 'JERSEY',
+            # Sourced from commonteamroster (NUM field), populated daily via
+            # update_player_rosters — NOT via the standard endpoint pipeline.
+            'endpoint': 'commonteamroster',
+            'field': 'NUM',
             'transform': 'safe_str'
         },
         'team_source': None,
@@ -347,6 +349,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'yes',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'GP',
@@ -366,6 +369,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'MIN',
@@ -384,9 +388,10 @@ DB_COLUMNS = {
     'tr_games': {
         'table': 'stats',
         'type': 'SMALLINT',
-        'nullable': False,
+        'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'yes',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'pt_measure_type': 'Possessions',
@@ -405,9 +410,10 @@ DB_COLUMNS = {
     'tr_minutes_x10': {
         'table': 'stats',
         'type': 'INTEGER',
-        'nullable': False,
+        'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'pt_measure_type': 'Possessions',
@@ -428,31 +434,40 @@ DB_COLUMNS = {
     'h_games': {
         'table': 'stats',
         'type': 'SMALLINT',
-        'nullable': False,
+        'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'yes',
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'G',
             'transform': 'safe_int'
         },
-        'team_source': None,
+        'team_source': {
+            'endpoint': 'leaguehustlestatsteam',
+            'field': 'G',
+            'transform': 'safe_int'
+        },
         'opponent_source': None
     },
 
     'h_minutes_x10': {
         'table': 'stats',
         'type': 'INTEGER',
-        'nullable': False,
+        'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'h_games',
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'MIN',
-            'transform': 'safe_int',
-            'scale': 10
+            'transform': 'safe_int'
         },
-        'team_source': None,
+        'team_source': {
+            'endpoint': 'leaguehustlestatsteam',
+            'field': 'MIN',
+            'transform': 'safe_int'
+        },
         'opponent_source': None
     },
 
@@ -462,6 +477,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'FGM - FG3M',
@@ -485,6 +501,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'FGA - FG3A',
@@ -508,6 +525,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'FG3M',
@@ -531,6 +549,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'FG3A',
@@ -554,6 +573,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'FTM',
@@ -577,6 +597,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'FTA',
@@ -600,6 +621,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -653,6 +675,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -706,6 +729,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -759,6 +783,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -812,6 +837,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -867,6 +893,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -922,6 +949,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -977,6 +1005,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -1032,6 +1061,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -1087,6 +1117,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -1142,6 +1173,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -1197,6 +1229,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptshots',
             'execution_tier': 'player',
@@ -1252,6 +1285,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'OREB',
@@ -1275,6 +1309,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'DREB',
@@ -1298,6 +1333,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'params': {'measure_type_detailed_defense': 'Advanced'},
@@ -1321,6 +1357,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'params': {'measure_type_detailed_defense': 'Advanced'},
@@ -1344,6 +1381,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptreb',
             'execution_tier': 'player',
@@ -1377,6 +1415,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'playerdashptreb',
             'execution_tier': 'player',
@@ -1410,6 +1449,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'transformation': {
                 'type': 'pipeline',
@@ -1467,6 +1507,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'transformation': {
                 'type': 'pipeline',
@@ -1546,6 +1587,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'params': {'measure_type_detailed_defense': 'Advanced'},
@@ -1567,6 +1609,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'},
@@ -1588,6 +1631,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'},
@@ -1609,6 +1653,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'execution_tier': 'league',
@@ -1668,6 +1713,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
@@ -1689,6 +1735,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
@@ -1710,6 +1757,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'},
@@ -1733,6 +1781,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'},
@@ -1756,6 +1805,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'AST',
@@ -1779,6 +1829,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptstats',
             'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
@@ -1800,6 +1851,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'TOV',
@@ -1823,6 +1875,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'STL',
@@ -1846,6 +1899,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'BLK',
@@ -1869,6 +1923,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'field': 'PF',
@@ -1892,6 +1947,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'h_games',
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'DEFLECTIONS',
@@ -1911,6 +1967,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'h_games',
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'CHARGES_DRAWN',
@@ -1930,6 +1987,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'h_games',
         'player_source': {
             'endpoint': 'leaguehustlestatsplayer',
             'field': 'CONTESTED_SHOTS',
@@ -1949,6 +2007,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptdefend',
             'params': {'defense_category': 'Less Than 10Ft'},
@@ -1970,6 +2029,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptdefend',
             'params': {'defense_category': 'Less Than 10Ft'},
@@ -1991,6 +2051,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptdefend',
             'params': {'defense_category': '2 Pointers'},
@@ -2012,6 +2073,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptdefend',
             'params': {'defense_category': '2 Pointers'},
@@ -2033,6 +2095,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptdefend',
             'params': {'defense_category': '3 Pointers'},
@@ -2054,6 +2117,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptdefend',
             'params': {'defense_category': '3 Pointers'},
@@ -2075,6 +2139,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'tr_games',
         'player_source': {
             'endpoint': 'leaguedashptdefend',
             'params': {'defense_category': 'Overall'},
@@ -2098,6 +2163,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'params': {'measure_type_detailed_defense': 'Advanced'},
@@ -2121,6 +2187,7 @@ DB_COLUMNS = {
         'nullable': True,
         'update_frequency': 'daily',
         'api': True,
+        'pt_indicator': 'games',
         'player_source': {
             'endpoint': 'leaguedashplayerstats',
             'params': {'measure_type_detailed_defense': 'Advanced'},
@@ -2312,7 +2379,6 @@ ENDPOINTS_CONFIG = {
         'entity_types': ['team'],
         'tracking': True,
     },
-    
     'playerdashboardbyshootingsplits': {
         'min_season': '2012-13',
         'execution_tier': 'player',
@@ -2334,6 +2400,7 @@ ENDPOINTS_CONFIG = {
     },
     
     # Player Info (available all time, not season-specific)
+    # endpoint_tracker=False: manually triggered by run_annual_etl, not backfill loop
     'commonplayerinfo': {
         'min_season': None,  # Available for all players regardless of season
         'execution_tier': 'player',
@@ -2342,9 +2409,11 @@ ENDPOINTS_CONFIG = {
         'per_mode_param': None,
         'entity_types': ['player'],
         'tracking': False,
+        'endpoint_tracker': False,
     },
     
     # Draft Combine Data (available since 2000-01, collected at draft time)
+    # endpoint_tracker=False: manually triggered by run_annual_etl, not backfill loop
     'draftcombineplayeranthro': {
         'min_season': '2000-01',
         'execution_tier': 'league',
@@ -2353,6 +2422,7 @@ ENDPOINTS_CONFIG = {
         'per_mode_param': None,
         'entity_types': ['player'],
         'tracking': False,
+        'endpoint_tracker': False,
     },
 }
 
