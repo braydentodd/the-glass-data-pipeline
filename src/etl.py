@@ -779,11 +779,11 @@ def _execute_per_team_endpoint(
     # Get team IDs
     team_ids = list(TEAM_IDS.values())
     
-    # Get per-call delay from endpoint config (for rate limiting)
+    # Get per-call delay: endpoint-specific override > global rate_limit_delay
     endpoint_config = get_endpoint_config(endpoint_name)
-    per_call_delay = 0.0
+    per_call_delay = API_CONFIG.get('rate_limit_delay', 1.0)
     if endpoint_config and 'retry_config' in endpoint_config:
-        per_call_delay = endpoint_config['retry_config'].get('per_call_delay', 0.0)
+        per_call_delay = endpoint_config['retry_config'].get('per_call_delay', per_call_delay)
     
     # Track consecutive failures for automatic restart
     FAILURE_THRESHOLD = API_CONFIG.get('api_failure_threshold', 3)
@@ -1950,6 +1950,122 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
     return True
 
 
+def _run_post_endpoint_processing(
+    ctx: ETLContext,
+    endpoint: str,
+    season: str,
+    season_type: int,
+    entity: str,
+    params: Dict[str, Any],
+    season_type_name: str = 'Regular Season'
+) -> None:
+    """
+    Shared post-processing after an endpoint writes data.
+
+    Handles:
+    1. Remaining transformation columns (mixed endpoints with both direct + transform cols)
+    2. NULL/zero cleanup
+    3. pt_indicator cascade
+    4. Data integrity validation
+
+    Extracted from run_endpoint_backfill to eliminate duplication across scope branches.
+
+    Args:
+        ctx: ETL context
+        endpoint: Endpoint name
+        season: Season string (e.g., '2024-25')
+        season_type: Season type code (1=Regular, 2=Playoffs, 3=PlayIn)
+        entity: Entity type ('player' or 'team')
+        params: Parameter dictionary for this endpoint call
+        season_type_name: Season type name for API calls
+    """
+    # ====================================================================
+    # STEP 0: Process remaining transformation columns (if any)
+    # Some endpoints have BOTH direct extraction AND transformation columns
+    # (e.g. leaguedashptstats has direct touches + transformation dribbles).
+    # Direct cols were already written by execute_endpoint; now handle transforms.
+    # ====================================================================
+    try:
+        # Check if this endpoint has transformation columns for this entity
+        source_key = f'{entity}_source'
+        has_transforms = False
+        for col_name, col_meta in DB_COLUMNS.items():
+            if not isinstance(col_meta, dict):
+                continue
+            source = col_meta.get(source_key)
+            if not source or not isinstance(source, dict):
+                continue
+            transform = source.get('transformation')
+            if not transform:
+                continue
+            col_ep = transform.get('endpoint') or source.get('endpoint')
+            if col_ep == endpoint:
+                has_transforms = True
+                break
+
+        if has_transforms:
+            transform_count = update_transformation_columns(
+                ctx=ctx,
+                season=season,
+                entity=entity,
+                season_type=season_type,
+                season_type_name=season_type_name,
+                endpoint=endpoint
+            )
+            if transform_count:
+                print(f"  -> Updated {transform_count} {entity}s via transformation pipeline")
+    except APISessionExhausted:
+        raise
+    except Exception as e:
+        print(f"  WARNING: Transformation processing failed: {e}")
+
+    # ====================================================================
+    # STEP 1: NULL/Zero Cleanup (Config-Driven)
+    # ====================================================================
+    print(f"  -> NULL/Zero cleanup...")
+    try:
+        rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity, params)
+        print(f"  -> Cleaned {rows_cleaned} rows")
+    except Exception as e:
+        print(f"  WARNING: NULL cleanup failed: {e}")
+
+    # ====================================================================
+    # STEP 2: pt_indicator Cascade
+    # ====================================================================
+    try:
+        filter_kwargs_cascade = extract_filter_params(params)
+        endpoint_cols_cascade = get_columns_by_endpoint(endpoint, entity, **filter_kwargs_cascade)
+        indicator_written = next(
+            (c for c in endpoint_cols_cascade
+             if DB_COLUMNS.get(c, {}).get('pt_indicator') == 'yes'),
+            None
+        )
+        if indicator_written:
+            cascade_rows = run_pt_indicator_cascade(indicator_written, season, season_type, entity)
+            if cascade_rows:
+                print(f"  -> Cascade ({indicator_written}): fixed {cascade_rows} rows")
+    except Exception as e:
+        print(f"  WARNING: pt_indicator cascade failed: {e}")
+
+    # ====================================================================
+    # STEP 3: Data Integrity Validation
+    # ====================================================================
+    print(f"  -> Validating data integrity...")
+    try:
+        validation_failures = validate_data_integrity(endpoint, season, season_type, entity, params)
+
+        if validation_failures:
+            print(f"  WARNING: {len(validation_failures)} {entity}(s) with validation failures")
+            log_missing_data_to_tracker(endpoint, season, season_type, validation_failures, params, entity)
+        else:
+            print(f"  -> Validation passed")
+            log_missing_data_to_tracker(endpoint, season, season_type, {}, params, entity)
+
+    except Exception as e:
+        print(f"  WARNING: Validation failed: {e}")
+        update_backfill_status(endpoint, season, season_type, None, params=params, entity=entity)
+
+
 def run_endpoint_backfill(
     ctx: ETLContext,
     endpoint: str,
@@ -2138,141 +2254,76 @@ def run_endpoint_backfill(
                                          team_successes=count, teams_total=count, params=params, entity='team')
                     print(f"Updated {count} teams")
                 
-                # SKIP transformation processing during backfill
-                # Transformation endpoints will be processed as separate endpoints in order
-                # This prevents duplicate API calls and ensures proper ordering
-                
-                # ====================================================================
-                # STEP 4: NULL/Zero Cleanup (Config-Driven)
-                # ====================================================================
-                print(f"  -> NULL/Zero cleanup...")
-                try:
-                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity, params)
-                    print(f"  -> Cleaned {rows_cleaned} rows")
-                except Exception as e:
-                    print(f"  WARNING: NULL cleanup failed: {e}")
-                
-                # If this endpoint wrote a pt_indicator column, cascade to dependents
-                try:
-                    filter_kwargs_cascade = extract_filter_params(params)
-                    endpoint_cols_cascade = get_columns_by_endpoint(endpoint, entity, **filter_kwargs_cascade)
-                    indicator_written = next(
-                        (c for c in endpoint_cols_cascade
-                         if DB_COLUMNS.get(c, {}).get('pt_indicator') == 'yes'),
-                        None
-                    )
-                    if indicator_written:
-                        cascade_rows = run_pt_indicator_cascade(indicator_written, season, season_type, entity)
-                        if cascade_rows:
-                            print(f"  -> Cascade ({indicator_written}): fixed {cascade_rows} rows")
-                except Exception as e:
-                    print(f"  WARNING: pt_indicator cascade failed: {e}")
-                # ====================================================================
-                print(f"  -> Validating data integrity...")
-                try:
-                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity, params)
-                    
-                    if validation_failures:
-                        print(f"  WARNING: {len(validation_failures)} {entity}(s) with validation failures")
-                        # Log failures to tracker (removes 'complete' status)
-                        log_missing_data_to_tracker(endpoint, season, season_type, validation_failures, params, entity)
-                    else:
-                        print(f"  -> Validation passed")
-                        # Clear missing_data and mark complete
-                        log_missing_data_to_tracker(endpoint, season, season_type, {}, params, entity)
-                        
-                except Exception as e:
-                    print(f"  WARNING: Validation failed: {e}")
-                    # On validation error, don't mark complete
-                    update_backfill_status(endpoint, season, season_type, None, params=params, entity=entity)
+                _run_post_endpoint_processing(ctx, endpoint, season, season_type, entity, params, season_type_name)
                 
                 return True
                 
             elif scope == 'team':
                 # Team-by-team processing
-                teams = get_active_teams()
-                total_teams = len(teams)
-                successes = 0
+                # First check if this endpoint has ANY direct extraction columns FOR THESE PARAMS
+                # If ALL columns are transformations, route to transformation pipeline
+                filter_kwargs = extract_filter_params(params)
+                direct_extraction_cols = get_columns_by_endpoint(endpoint, entity, **filter_kwargs)
                 
-                print(f"  Processing {total_teams} teams...")
-                for team_id in teams:
-                    try:
-                        # Call endpoint with team_id parameter (merge with params)
-                        combined_params = {**params, 'team_id': team_id}
-                        execute_endpoint(
-                            ctx=ctx,
-                            endpoint_name=endpoint,
-                            endpoint_params=combined_params,
-                            season=season,
-                            entity=entity,
-                            season_type=season_type,
-                            season_type_name=season_type_name,
-                            description=f"{endpoint}{param_desc} (Team {team_id})"
-                        )
-                        successes += 1
-                        update_backfill_status(endpoint, season, season_type, 'in_progress',
-                                             team_successes=successes, teams_total=total_teams, params=params, entity='team')
-                    except APISessionExhausted:
-                        # Must propagate — don't swallow the restart signal
-                        raise
-                    except Exception as e:
-                        print(f"    Team {team_id} failed: {e}")
-                        if API_CONFIG['api_failure_threshold'] == 1:
-                            # Immediate restart on any failure
-                            update_backfill_status(endpoint, season, season_type, 'failed',
-                                                 team_successes=successes, teams_total=total_teams, params=params, entity='team')
-                            return False
+                # Get columns that will be populated (for logging)
+                columns = get_columns_for_endpoint_params(endpoint, params, entity)
+                log_endpoint_processing(season, season_type_name, endpoint, params, columns, scope)
                 
-                update_backfill_status(endpoint, season, season_type, 'complete',
-                                     team_successes=successes, teams_total=total_teams, params=params, entity='team')
-                print(f"Updated {successes} teams")
-                
-                # ====================================================================
-                # NULL/Zero Cleanup (Config-Driven)
-                # ====================================================================
-                print(f"  -> NULL/Zero cleanup...")
-                try:
-                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity, params)
-                    print(f"  -> Cleaned {rows_cleaned} rows")
-                except Exception as e:
-                    print(f"  WARNING: NULL cleanup failed: {e}")
-                
-                # If this endpoint wrote a pt_indicator column, cascade to dependents
-                try:
-                    filter_kwargs_cascade = extract_filter_params(params)
-                    endpoint_cols_cascade = get_columns_by_endpoint(endpoint, entity, **filter_kwargs_cascade)
-                    indicator_written = next(
-                        (c for c in endpoint_cols_cascade
-                         if DB_COLUMNS.get(c, {}).get('pt_indicator') == 'yes'),
-                        None
+                if not direct_extraction_cols:
+                    # ALL columns are transformations - use transformation pipeline
+                    # (e.g. teamdashptshots: all 12 columns are filter_aggregate transforms)
+                    updated_count = update_transformation_columns(
+                        ctx=ctx,
+                        season=season,
+                        entity=entity,
+                        season_type=season_type,
+                        season_type_name=season_type_name,
+                        endpoint=endpoint
                     )
-                    if indicator_written:
-                        cascade_rows = run_pt_indicator_cascade(indicator_written, season, season_type, entity)
-                        if cascade_rows:
-                            print(f"  -> Cascade ({indicator_written}): fixed {cascade_rows} rows")
-                except Exception as e:
-                    print(f"  WARNING: pt_indicator cascade failed: {e}")
-                
-                # ====================================================================
-                # Data Integrity Validation
-                # ====================================================================
-                print(f"  -> Validating data integrity...")
-                try:
-                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity, params)
                     
-                    if validation_failures:
-                        print(f"  WARNING: {len(validation_failures)} {entity}(s) with validation failures")
-                        # Log failures to tracker (removes 'complete' status)
-                        log_missing_data_to_tracker(endpoint, season, season_type, validation_failures, params, entity)
-                    else:
-                        print(f"  -> Validation passed")
-                        # Clear missing_data and mark complete
-                        log_missing_data_to_tracker(endpoint, season, season_type, {}, params, entity)
-                        
-                except Exception as e:
-                    print(f"  WARNING: Validation failed: {e}")
-                    # On validation error, don't mark complete
-                    update_backfill_status(endpoint, season, season_type, None, params=params, entity=entity)
+                    update_backfill_status(endpoint, season, season_type, 'complete',
+                                         team_successes=updated_count, teams_total=updated_count, params=params, entity='team')
+                    print(f"Updated {updated_count} teams via transformation pipeline")
+                else:
+                    # Has direct extraction columns - process team-by-team via execute_endpoint
+                    teams = get_active_teams()
+                    total_teams = len(teams)
+                    successes = 0
+                    
+                    print(f"  Processing {total_teams} teams...")
+                    for team_id in teams:
+                        try:
+                            # Call endpoint with team_id parameter (merge with params)
+                            combined_params = {**params, 'team_id': team_id}
+                            execute_endpoint(
+                                ctx=ctx,
+                                endpoint_name=endpoint,
+                                endpoint_params=combined_params,
+                                season=season,
+                                entity=entity,
+                                season_type=season_type,
+                                season_type_name=season_type_name,
+                                description=f"{endpoint}{param_desc} (Team {team_id})"
+                            )
+                            successes += 1
+                            update_backfill_status(endpoint, season, season_type, 'in_progress',
+                                                 team_successes=successes, teams_total=total_teams, params=params, entity='team')
+                        except APISessionExhausted:
+                            # Must propagate — don't swallow the restart signal
+                            raise
+                        except Exception as e:
+                            print(f"    Team {team_id} failed: {e}")
+                            if API_CONFIG['api_failure_threshold'] == 1:
+                                # Immediate restart on any failure
+                                update_backfill_status(endpoint, season, season_type, 'failed',
+                                                     team_successes=successes, teams_total=total_teams, params=params, entity='team')
+                                return False
+                    
+                    update_backfill_status(endpoint, season, season_type, 'complete',
+                                         team_successes=successes, teams_total=total_teams, params=params, entity='team')
+                    print(f"Updated {successes} teams")
+                
+                _run_post_endpoint_processing(ctx, endpoint, season, season_type, entity, params, season_type_name)
                 
                 return True
                 
@@ -2369,52 +2420,7 @@ def run_endpoint_backfill(
                                          player_successes=successes, players_total=total_players, params=params, entity='player')
                     print(f"Updated {successes} players")
                 
-                # ====================================================================
-                # NULL/Zero Cleanup (Config-Driven)
-                # ====================================================================
-                print(f"  -> NULL/Zero cleanup...")
-                try:
-                    rows_cleaned = execute_null_zero_cleanup(endpoint, season, season_type, entity, params)
-                    print(f"  -> Cleaned {rows_cleaned} rows")
-                except Exception as e:
-                    print(f"  WARNING: NULL cleanup failed: {e}")
-                
-                # If this endpoint wrote a pt_indicator column, cascade to dependents
-                try:
-                    filter_kwargs_cascade = extract_filter_params(params)
-                    endpoint_cols_cascade = get_columns_by_endpoint(endpoint, entity, **filter_kwargs_cascade)
-                    indicator_written = next(
-                        (c for c in endpoint_cols_cascade
-                         if DB_COLUMNS.get(c, {}).get('pt_indicator') == 'yes'),
-                        None
-                    )
-                    if indicator_written:
-                        cascade_rows = run_pt_indicator_cascade(indicator_written, season, season_type, entity)
-                        if cascade_rows:
-                            print(f"  -> Cascade ({indicator_written}): fixed {cascade_rows} rows")
-                except Exception as e:
-                    print(f"  WARNING: pt_indicator cascade failed: {e}")
-                
-                # ====================================================================
-                # Data Integrity Validation
-                # ====================================================================
-                print(f"  -> Validating data integrity...")
-                try:
-                    validation_failures = validate_data_integrity(endpoint, season, season_type, entity, params)
-                    
-                    if validation_failures:
-                        print(f"  WARNING: {len(validation_failures)} {entity}(s) with validation failures")
-                        # Log failures to tracker (removes 'complete' status)
-                        log_missing_data_to_tracker(endpoint, season, season_type, validation_failures, params, entity)
-                    else:
-                        print(f"  -> Validation passed")
-                        # Clear missing_data and mark complete
-                        log_missing_data_to_tracker(endpoint, season, season_type, {}, params, entity)
-                        
-                except Exception as e:
-                    print(f"  WARNING: Validation failed: {e}")
-                    # On validation error, don't mark complete
-                    update_backfill_status(endpoint, season, season_type, None, params=params, entity=entity)
+                _run_post_endpoint_processing(ctx, endpoint, season, season_type, entity, params, season_type_name)
                 
                 return True
     except APISessionExhausted:

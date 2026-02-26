@@ -2807,15 +2807,20 @@ def execute_transformation_pipeline(
     operations = pipeline_config['operations']
     endpoint_params = pipeline_config.get('endpoint_params', {})
     
-    # Step 1: Get raw API data based on execution tier
-    if execution_tier == 'league':
-        api_results = _fetch_api_data_league(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
-    elif execution_tier == 'team':
-        api_results = _fetch_api_data_per_team(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
-    elif execution_tier == 'player':
-        api_results = _fetch_api_data_per_player(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params, player_ids=player_ids)
-    else:
-        raise ValueError(f"Unknown execution_tier: {execution_tier}")
+    # Check if any operations require API data (skip fetch for db-only operations)
+    needs_api = any(op.get('type') != 'db_copy' for op in operations)
+    
+    # Step 1: Get raw API data based on execution tier (skip if not needed)
+    api_results = None
+    if needs_api:
+        if execution_tier == 'league':
+            api_results = _fetch_api_data_league(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
+        elif execution_tier == 'team':
+            api_results = _fetch_api_data_per_team(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params)
+        elif execution_tier == 'player':
+            api_results = _fetch_api_data_per_player(ctx, endpoint_name, season, season_type_name, entity, custom_params=endpoint_params, player_ids=player_ids)
+        else:
+            raise ValueError(f"Unknown execution_tier: {execution_tier}")
     
     # Step 2: Execute operation pipeline on API results
     data = {}
@@ -2839,6 +2844,8 @@ def execute_transformation_pipeline(
             data = _operation_divide(data, operation)
         elif op_type == 'weighted_avg':
             data = _operation_weighted_avg(data, operation)
+        elif op_type == 'db_copy':
+            data = _operation_db_copy(operation, season, entity, season_type)
         else:
             raise ValueError(f"Unknown operation type: {op_type}")
     
@@ -3378,4 +3385,39 @@ def _operation_subtract(api_results: Any, op_config: Dict[str, Any],
             result[entity_id] = a - b
         
         return result
+
+
+def _operation_db_copy(
+    op_config: Dict[str, Any],
+    season: str,
+    entity: Literal['player', 'team'],
+    season_type: int
+) -> Dict[int, Any]:
+    """
+    Copy values from an existing DB column.
+
+    Useful when an API doesn't return a field that exists in another endpoint
+    (e.g. team hustle API has no games column but base stats does).
+
+    Config format:
+        {'type': 'db_copy', 'source_column': 'games'}
+    """
+    source_column = op_config['source_column']
+    table = get_table_name(entity, 'stats')
+    entity_id_col = get_primary_key(entity)
+
+    result: Dict[int, Any] = {}
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT {entity_id_col}, {quote_column(source_column)} "
+            f"FROM {table} WHERE year = %s AND season_type = %s",
+            (season, season_type),
+        )
+        for row in cursor.fetchall():
+            if row[1] is not None:
+                result[row[0]] = row[1]
+        cursor.close()
+
+    return result
 

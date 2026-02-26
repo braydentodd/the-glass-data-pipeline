@@ -443,10 +443,18 @@ DB_COLUMNS = {
             'field': 'G',
             'transform': 'safe_int'
         },
+        # NOTE: Team hustle API does NOT return a games ('G'/'GP') field.
+        # Use db_copy to derive from the base 'games' column (leaguedashteamstats),
+        # which is always populated before hustle stats run.
         'team_source': {
             'endpoint': 'leaguehustlestatsteam',
-            'field': 'G',
-            'transform': 'safe_int'
+            'transformation': {
+                'type': 'pipeline',
+                'endpoint': 'leaguehustlestatsteam',
+                'operations': [
+                    {'type': 'db_copy', 'source_column': 'games'}
+                ]
+            }
         },
         'opponent_source': None
     },
@@ -863,11 +871,11 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'league',
+            'execution_tier': 'team',
             'transformation': {
                 'type': 'pipeline',
                 'endpoint': 'teamdashptshots',
-                'execution_tier': 'league',
+                'execution_tier': 'team',
                 'endpoint_params': {},
                 'operations': [
                     {
@@ -919,11 +927,11 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'league',
+            'execution_tier': 'team',
             'transformation': {
                 'type': 'pipeline',
                 'endpoint': 'teamdashptshots',
-                'execution_tier': 'league',
+                'execution_tier': 'team',
                 'endpoint_params': {},
                 'operations': [
                     {
@@ -975,11 +983,11 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'league',
+            'execution_tier': 'team',
             'transformation': {
                 'type': 'pipeline',
                 'endpoint': 'teamdashptshots',
-                'execution_tier': 'league',
+                'execution_tier': 'team',
                 'endpoint_params': {},
                 'operations': [
                     {
@@ -1031,11 +1039,11 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'league',
+            'execution_tier': 'team',
             'transformation': {
                 'type': 'pipeline',
                 'endpoint': 'teamdashptshots',
-                'execution_tier': 'league',
+                'execution_tier': 'team',
                 'endpoint_params': {},
                 'operations': [
                     {
@@ -1087,11 +1095,11 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'league',
+            'execution_tier': 'team',
             'transformation': {
                 'type': 'pipeline',
                 'endpoint': 'teamdashptshots',
-                'execution_tier': 'league',
+                'execution_tier': 'team',
                 'endpoint_params': {},
                 'operations': [
                     {
@@ -1143,11 +1151,11 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'league',
+            'execution_tier': 'team',
             'transformation': {
                 'type': 'pipeline',
                 'endpoint': 'teamdashptshots',
-                'execution_tier': 'league',
+                'execution_tier': 'team',
                 'endpoint_params': {},
                 'operations': [
                     {
@@ -1199,11 +1207,11 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'league',
+            'execution_tier': 'team',
             'transformation': {
                 'type': 'pipeline',
                 'endpoint': 'teamdashptshots',
-                'execution_tier': 'league',
+                'execution_tier': 'team',
                 'endpoint_params': {},
                 'operations': [
                     {
@@ -1255,11 +1263,11 @@ DB_COLUMNS = {
         },
         'team_source': {
             'endpoint': 'teamdashptshots',
-            'execution_tier': 'league',
+            'execution_tier': 'team',
             'transformation': {
                 'type': 'pipeline',
                 'endpoint': 'teamdashptshots',
-                'execution_tier': 'league',
+                'execution_tier': 'team',
                 'endpoint_params': {},
                 'operations': [
                     {
@@ -1399,12 +1407,23 @@ DB_COLUMNS = {
                 ]
             }
         },
+        # NOTE: Uses pipeline transform (same as player_source) to ensure only the
+        # OverallRebounding result set is read. Direct field extraction would iterate
+        # ALL 5 result sets and overwrite with partial breakdown values.
         'team_source': {
             'endpoint': 'teamdashptreb',
-            'execution_tier': 'team',
-            'result_set': 'OverallRebounding',
-            'field': 'C_OREB',
-            'transform': 'safe_int'
+            'transformation': {
+                'type': 'pipeline',
+                'endpoint': 'teamdashptreb',
+                'execution_tier': 'team',
+                'operations': [
+                    {
+                        'type': 'extract',
+                        'result_set': 'OverallRebounding',
+                        'field': 'C_OREB'
+                    }
+                ]
+            }
         },
         'opponent_source': None
     },
@@ -1433,12 +1452,23 @@ DB_COLUMNS = {
                 ]
             }
         },
+        # NOTE: Uses pipeline transform (same as player_source) to ensure only the
+        # OverallRebounding result set is read. Direct field extraction would iterate
+        # ALL 5 result sets and overwrite with partial breakdown values.
         'team_source': {
             'endpoint': 'teamdashptreb',
-            'execution_tier': 'team',
-            'result_set': 'OverallRebounding',
-            'field': 'C_DREB',
-            'transform': 'safe_int'
+            'transformation': {
+                'type': 'pipeline',
+                'endpoint': 'teamdashptreb',
+                'execution_tier': 'team',
+                'operations': [
+                    {
+                        'type': 'extract',
+                        'result_set': 'OverallRebounding',
+                        'field': 'C_DREB'
+                    }
+                ]
+            }
         },
         'opponent_source': None
     },
@@ -2480,7 +2510,7 @@ ENDPOINTS_CONFIG = {
         'tracking': False,
     },
     'teamdashboardbyshootingsplits': {
-        'min_season': '2013-14',
+        'min_season': '2012-13',
         'execution_tier': 'league',
         'default_result_set': 'ShotTypeTeamDashboard',
         'season_type_param': 'season_type_all_star',
