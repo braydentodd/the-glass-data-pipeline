@@ -1,11 +1,22 @@
 import os
 import sys
 import time
+import warnings
 import argparse
 import threading
 import logging
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Suppress urllib3's "trying to put unkeyed connection" warning.
+# stats.nba.com occasionally responds with Connection: close even when we
+# request keep-alive; urllib3 then can't return the socket to its pool and
+# emits this warning.  It's harmless — the connection is simply discarded.
+warnings.filterwarnings(
+    "ignore",
+    message="Failed to return connection to pool",
+    module="urllib3",
+)
 from psycopg2.extras import execute_values
 from typing import List, Dict, Any, Optional, Tuple, Callable, Literal
 from io import StringIO
@@ -69,7 +80,7 @@ from lib.etl import (
     get_columns_by_endpoint,
     safe_int, safe_float, safe_str, parse_height, parse_birthdate, format_season,
     get_entity_id_field, get_endpoint_config, is_endpoint_available_for_season,
-    with_retry, create_api_call,
+    with_retry, create_api_call, load_endpoint_class,
     get_primary_key, get_table_name,
     quote_column, get_db_connection, return_db_connection, db_connection,
     get_season, get_season_year, build_endpoint_params,
@@ -488,22 +499,33 @@ def execute_endpoint(
         # It should be processed via update_transformation_columns() instead
         return 0
     
-    # CHECK: Does this endpoint require per-team execution?
-    # Look for execution_tier='team' in any column's source config
+    # CHECK: Does this endpoint require special execution routing?
+    # Look for execution_tier in any column's source config
     source_key = f'{entity}_source' if entity in ['player', 'team'] else 'source'
+    needs_team_call_for_players = any(
+        col.get(source_key, {}).get('execution_tier') == 'team_call'
+        for col in cols.values()
+    )
     needs_team_iteration = any(
         col.get(source_key, {}).get('execution_tier') == 'team'
         for col in cols.values()
     )
-    
+
     # Pass column sources to parameter builder for season-type-specific overrides
     col_sources = [col.get(source_key) for col in cols.values() if col.get(source_key)]
     endpoint_params = build_endpoint_params(
-        endpoint_name, season, season_type_name, entity, 
+        endpoint_name, season, season_type_name, entity,
         endpoint_params, col_sources=col_sources
     )
-    
-    if needs_team_iteration:
+
+    if needs_team_call_for_players:
+        # TEAM-CALL-FOR-PLAYERS: 30 per-team calls, player rows aggregated by VS_PLAYER_ID
+        # e.g. teamplayeronoffsummary — off-court team ratings keyed to individual players
+        return _execute_team_call_for_players_endpoint(
+            ctx, endpoint_name, endpoint_params, season,
+            entity, table, season_type, season_type_name, description, cols, player_ids
+        )
+    elif needs_team_iteration:
         # PER-TEAM EXECUTION: Loop through all 30 teams and aggregate results
         return _execute_per_team_endpoint(
             ctx, endpoint_name, endpoint_params, season,
@@ -548,33 +570,8 @@ def _execute_league_wide_endpoint(
     with db_connection() as conn:
         cursor = conn.cursor()
         
-        try:
-            # Dynamically import endpoint class
-            from importlib import import_module
-            module_name = f"nba_api.stats.endpoints.{endpoint_name.lower()}"
-            module = import_module(module_name)
-            
-            # Find the endpoint class using inspect — avoids brittle exclusion lists
-            # (same approach as _execute_per_team_endpoint)
-            import inspect
-            endpoint_classes = [
-                name for name in dir(module)
-                if name[0].isupper()
-                and not name.startswith('_')
-                and inspect.isclass(getattr(module, name))
-                and hasattr(getattr(module, name), '__module__')
-                and getattr(module, name).__module__ == module.__name__
-            ]
-            
-            if not endpoint_classes:
-                logger.error(f"No endpoint class found in {module_name}")
-                return 0
-            
-            class_name = endpoint_classes[0]
-            EndpointClass = getattr(module, class_name)
-            
-        except (ImportError, AttributeError) as e:
-            logger.error(f"Could not import endpoint from {module_name}: {e}")
+        EndpointClass = load_endpoint_class(endpoint_name)
+        if EndpointClass is None:
             return 0
         
         try:
@@ -734,39 +731,9 @@ def _execute_per_team_endpoint(
     """
     # Both player and team tables use season format
     year_value = season  # Use full season string for both: '2024-25'
-    from importlib import import_module
-    
-    # Import endpoint class
-    module_name = f"nba_api.stats.endpoints.{endpoint_name.lower()}"
-    try:
-        module = import_module(module_name)
-        import inspect
-        
-        # Find the main endpoint class dynamically (config-driven, no hardcoding!)
-        # Look for classes that:
-        # 1. Are classes (not functions or variables)
-        # 2. Start with uppercase (PascalCase naming convention)
-        # 3. Don't start with underscore (private)
-        # 4. Are defined in this module (not imported base classes)
-        # 5. Have callable constructors (can be instantiated)
-        endpoint_classes = [
-            name for name in dir(module)
-            if name[0].isupper() 
-            and not name.startswith('_')
-            and not name.endswith('Nullable')
-            and inspect.isclass(getattr(module, name))
-            and hasattr(getattr(module, name), '__module__')
-            and getattr(module, name).__module__ == module.__name__
-        ]
-        
-        if not endpoint_classes:
-            print(f"❌ ERROR: No endpoint class found in {module_name}")
-            return 0
-        
-        EndpointClass = getattr(module, endpoint_classes[0])
-        
-    except (ImportError, AttributeError) as e:
-        logger.error(f"Could not import {module_name}: {e}")
+
+    EndpointClass = load_endpoint_class(endpoint_name)
+    if EndpointClass is None:
         return 0
     
     base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity, endpoint_params)
@@ -1029,9 +996,201 @@ def _execute_per_team_endpoint(
             cursor.close()
 
 
-# ============================================================================
-# TRANSFORMATION ROUTER
-# ============================================================================
+def _execute_team_call_for_players_endpoint(
+    ctx: ETLContext,
+    endpoint_name: str,
+    endpoint_params: Dict[str, Any],
+    season: str,
+    entity: str,
+    table: str,
+    season_type: int,
+    season_type_name: str,
+    description: str,
+    cols: Dict[str, Dict],
+    player_ids: Optional[List[int]] = None
+) -> int:
+    """
+    Execute a per-team endpoint that returns player-level data.
+
+    Use case: teamplayeronoffsummary — requires team_id but rows are keyed by
+    VS_PLAYER_ID (not TEAM_ID).  Calls all 30 teams and **aggregates** across
+    teams for traded players:
+
+    * ``aggregation: 'sum'``              – GP, MIN are summed.
+    * ``aggregation: 'minute_weighted'``  – OFF_RATING, DEF_RATING are averaged
+      weighted by minutes, the industry-standard approach (Basketball Reference,
+      Cleaning the Glass).  Approximation vs. possessions is negligible.
+
+    Column player_source must include:
+        'result_set'      — name of the result set (e.g. PlayersOffCourtTeamPlayerOnOffSummary)
+        'player_id_field' — header name of the player ID column (e.g. VS_PLAYER_ID)
+        'field'           — the stat field to extract
+        'aggregation'     — 'sum' or 'minute_weighted'
+    """
+    year_value = season
+    source_key = f'{entity}_source'
+
+    # Determine result set name and player ID field from first column's config
+    first_source = next(
+        (col.get(source_key, {}) for col in cols.values() if col.get(source_key)), {}
+    )
+    result_set_name = first_source.get('result_set', 'PlayersOffCourtTeamPlayerOnOffSummary')
+    player_id_field = first_source.get('player_id_field', 'VS_PLAYER_ID')
+
+    EndpointClass = load_endpoint_class(endpoint_name)
+    if EndpointClass is None:
+        return 0
+
+    # Rate limiting & failure tracking (mirrors _execute_per_team_endpoint)
+    endpoint_config = get_endpoint_config(endpoint_name)
+    per_call_delay = API_CONFIG.get('rate_limit_delay', 0.6)
+    if endpoint_config and 'retry_config' in endpoint_config:
+        per_call_delay = endpoint_config['retry_config'].get('per_call_delay', per_call_delay)
+
+    FAILURE_THRESHOLD = API_CONFIG.get('api_failure_threshold', 3)
+    consecutive_failures = 0
+
+    # ------------------------------------------------------------------
+    # Phase 1: Collect ALL rows per player across all 30 teams.
+    # Traded players will have one row per team they played on.
+    # {player_id: [row_dict, row_dict, ...]}
+    # ------------------------------------------------------------------
+    player_team_rows: Dict[int, List[Dict[str, Any]]] = {}
+
+    team_ids = list(TEAM_IDS.values())
+    for idx, team_id in enumerate(team_ids):
+        # Look up team abbreviation for logging
+        team_abbr = next((abbr for abbr, tid in TEAM_IDS.items() if tid == team_id), '???')
+
+        params = {**endpoint_params, 'team_id': team_id}
+        api_call = create_api_call(EndpointClass, params, endpoint_name=endpoint_name)
+
+        try:
+            result = api_call()
+            consecutive_failures = 0  # reset on success
+
+            result_sets = result.get('resultSets', [])
+            target_rs = next((rs for rs in result_sets if rs['name'] == result_set_name), None)
+            if target_rs is None:
+                continue
+
+            headers = target_rs['headers']
+            rows = target_rs['rowSet']
+
+            if player_id_field not in headers:
+                continue
+
+            pid_idx = headers.index(player_id_field)
+
+            for row in rows:
+                player_id = row[pid_idx]
+                if not player_id:
+                    continue
+                player_team_rows.setdefault(player_id, []).append(dict(zip(headers, row)))
+
+        except Exception as e:
+            consecutive_failures += 1
+            logger.warning(
+                f"Failed {endpoint_name} for team {team_id} ({team_abbr}): "
+                f"{type(e).__name__}: {str(e)[:100]} "
+                f"[{consecutive_failures}/{FAILURE_THRESHOLD} consecutive failures]"
+            )
+            if consecutive_failures >= FAILURE_THRESHOLD:
+                logger.error(
+                    f"Aborting {endpoint_name}: {consecutive_failures} consecutive failures. "
+                    f"Collected {len(player_team_rows)} players from {idx + 1}/{len(team_ids)} teams."
+                )
+                break
+            continue
+
+        # Rate-limit between team calls (skip after last team)
+        if per_call_delay > 0 and idx < len(team_ids) - 1:
+            time.sleep(per_call_delay)
+
+    if not player_team_rows:
+        logger.warning(f"No player data collected from {endpoint_name} for {season} {season_type_name}")
+        return 0
+
+    # ------------------------------------------------------------------
+    # Phase 2: Aggregate across teams per player.
+    #   - 'sum' columns (GP, MIN): simple addition
+    #   - 'minute_weighted' columns (OFF_RATING, DEF_RATING):
+    #       weighted_avg = Σ(rating_i × min_i) / Σ(min_i)
+    # ------------------------------------------------------------------
+    # Pre-compute which NBA field holds minutes (used for weighting).
+    # The 'MIN' field is always present in teamplayeronoffsummary results.
+    MINUTES_FIELD = 'MIN'
+
+    with db_connection() as conn:
+        cursor = conn.cursor()
+
+        all_records = []
+        for player_id, team_rows in player_team_rows.items():
+            # Compute total minutes once (used as weight denominator)
+            total_minutes = sum((r.get(MINUTES_FIELD) or 0) for r in team_rows)
+
+            values = []
+            for stat_name, stat_cfg in cols.items():
+                source = stat_cfg.get(source_key, {})
+                nba_field = source.get('field')
+                scale = source.get('scale', 1)
+                transform_name = source.get('transform', 'safe_int')
+                aggregation = source.get('aggregation', 'sum')
+
+                if aggregation == 'minute_weighted' and total_minutes > 0:
+                    # Weighted average: Σ(value_i × minutes_i) / Σ(minutes_i)
+                    weighted_sum = 0.0
+                    for r in team_rows:
+                        val = r.get(nba_field)
+                        mins = r.get(MINUTES_FIELD) or 0
+                        if val is not None and mins > 0:
+                            weighted_sum += float(val) * float(mins)
+                    raw_value = weighted_sum / total_minutes
+                else:
+                    # Default: sum across teams (GP, MIN, or fallback)
+                    raw_value = sum((r.get(nba_field) or 0) for r in team_rows)
+
+                if transform_name == 'safe_int':
+                    value = safe_int(raw_value, scale)
+                elif transform_name == 'safe_float':
+                    value = safe_float(raw_value, scale)
+                else:
+                    value = safe_int(raw_value, scale)
+
+                values.append(value)
+
+            values.extend([player_id, year_value, season_type])
+            all_records.append(tuple(values))
+
+        # Filter to specific player_ids if provided (backfill mode)
+        if player_ids is not None:
+            all_records = [rec for rec in all_records if rec[-3] in player_ids]
+
+        if not all_records:
+            conn.commit()
+            cursor.close()
+            return 0
+
+        entity_id_col = 'player_id' if entity == 'player' else 'team_id'
+        set_clause = ', '.join([f"{quote_column(col)} = %s" for col in cols.keys()])
+
+        updated = 0
+        for record in all_records:
+            cursor.execute(f"""
+                UPDATE {table}
+                SET {set_clause}, updated_at = NOW()
+                WHERE {entity_id_col} = %s
+                AND year = %s AND season_type = %s
+            """, record)
+            if cursor.rowcount > 0:
+                updated += 1
+
+        conn.commit()
+        cursor.close()
+        return updated
+
+
+
 
 def apply_transformation(
     ctx: ETLContext,
@@ -2053,6 +2212,9 @@ def run_endpoint_backfill(
                         successes += 1
                         update_backfill_status(endpoint, season, season_type, 'in_progress',
                                              team_successes=successes, teams_total=total_teams, params=params, entity='team')
+                    except APISessionExhausted:
+                        # Must propagate — don't swallow the restart signal
+                        raise
                     except Exception as e:
                         print(f"    Team {team_id} failed: {e}")
                         if API_CONFIG['api_failure_threshold'] == 1:

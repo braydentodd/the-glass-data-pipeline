@@ -122,12 +122,88 @@ COLORS = {
     'white': {'red': 1, 'green': 1, 'blue': 1},
     'light_gray': {'red': 0.95, 'green': 0.95, 'blue': 0.95},
     'dark_gray': {'red': 67/255, 'green': 67/255, 'blue': 67/255},
+    'row_alt': {'red': 0.94, 'green': 0.94, 'blue': 0.94},
 }
 
 COLOR_THRESHOLDS = {
     'low': 0,    # 0% = pure red
     'mid': 50,   # 50% = pure yellow
     'high': 100, # 100% = pure green
+}
+
+
+# ============================================================================
+# SHEET FORMATTING CONFIG
+# ============================================================================
+
+SHEET_FORMATTING = {
+    # Fonts
+    'header_font': 'Staatliches',
+    'data_font': 'Sofia Sans',
+
+    # Font sizes
+    'section_header_size': 12,
+    'team_name_size': 15,          # Team name merged into section header row
+    'subsection_header_size': 12,
+    'column_header_size': 10,
+    'data_size': 10,
+
+    # Header styling
+    'header_bg': 'black',
+    'header_fg': 'white',
+
+    # Data row alternating colors (uses addBanding so colors survive sorting)
+    'row_even_bg': 'white',
+    'row_odd_bg': 'row_alt',
+
+    # Borders — all weight 2, white in header rows, black in data rows
+    'border_weight': 2,
+    'header_border_color': 'white',
+    'data_border_color': 'black',
+
+    # Alignment — all cells centered except overrides
+    'default_h_align': 'CENTER',
+    'default_v_align': 'MIDDLE',
+    'left_align_columns': ['names', 'notes'],  # left-justified in data rows only
+    'bold_columns': ['names'],                  # bold text in data rows
+
+    # Overflow handling
+    'wrap_strategy': 'CLIP',  # CLIP | WRAP | OVERFLOW_CELL
+
+    # Column widths — columns with a numeric value get that enforced pixel width;
+    # everything else auto-resizes to fit contents (autoResizeDimensions).
+    # This is the ONLY place column widths are configured.
+    'column_width_overrides': {
+        'notes': 200,
+    },
+
+    # Default visibility
+    'hide_advanced_columns': True,
+    'hide_percentile_columns': True,
+    'hide_subsection_row': True,
+    'hide_identity_section': True,
+
+    # Layout — 4 header rows
+    # Row 0: Section headers (team name merged into entities section)
+    # Row 1: Subsection headers (hidden by default)
+    # Row 2: Column names
+    # Row 3: Filter row (auto-filter dropdowns)
+    'section_header_row': 0,
+    'subsection_header_row': 1,
+    'column_header_row': 2,
+    'filter_row': 3,
+    'data_start_row': 4,
+    'header_row_count': 4,
+
+    # Freeze
+    'frozen_rows': 4,         # Freeze through filter row
+    'frozen_cols': 1,         # Freeze Names column
+
+    # Row sections (visual grouping in data area)
+    'row_sections': ['current_players', 'team_opponent'],
+
+    # Rate limiting
+    'sync_delay_seconds': 3,  # Delay between team syncs to avoid 429
 }
 
 # ============================================================================
@@ -137,7 +213,9 @@ COLOR_THRESHOLDS = {
 SHEETS_COLUMNS = {
 
     'names': {
+        'stat_category': 'none',
         'display_name': 'Names',
+        'description': 'Player name',
         'section': ['entities'],
         'subsection': None,
         'sheets': 'both',
@@ -150,12 +228,15 @@ SHEETS_COLUMNS = {
         'format': 'number',
         'decimal_places': 0,
         'player_formula': 'name',
-        'team_formula': 'Team',
-        'opponents_formula': 'Opponents',
+        'team_formula': 'TEAM',
+        'opponents_formula': 'OPPONENTS',
+        'minimum_width': 'auto',
     },
     
     'team': {
+        'stat_category': 'none',
         'display_name': 'Tm',
+        'description': 'Team abbreviation',
         'section': ['player_info'],
         'subsection': None,
         'sheets': 'nba',
@@ -170,10 +251,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'team_abbr',
         'team_formula': None,
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'jersey': {
+        'stat_category': 'none',
         'display_name': '#',
+        'description': 'Jersey number',
         'section': ['player_info'],
         'subsection': None,
         'sheets': 'both',
@@ -188,10 +272,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'jersey_number',
         'team_formula': None,
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'experience': {
+        'stat_category': 'none',
         'display_name': 'Exp',
+        'description': 'Years of NBA experience',
         'section': ['player_info'],
         'subsection': None,
         'sheets': 'both',
@@ -206,10 +293,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'years_experience',
         'team_formula': 'years_experience',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'age': {
+        'stat_category': 'none',
         'display_name': 'Age',
+        'description': 'Player age',
         'section': ['player_info'],
         'subsection': None,
         'sheets': 'both',
@@ -224,10 +314,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'age',
         'team_formula': 'age',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'height': {
+        'stat_category': 'none',
         'display_name': 'Ht',
+        'description': 'Height in feet and inches',
         'section': ['player_info'],
         'subsection': None,
         'sheets': 'both',
@@ -242,10 +335,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'height_inches',
         'team_formula': 'height_inches',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'weight': {
+        'stat_category': 'none',
         'display_name': 'Wt',
+        'description': 'Weight in pounds',
         'section': ['player_info'],
         'subsection': None,
         'sheets': 'both',
@@ -260,10 +356,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'weight_lbs',
         'team_formula': 'weight_lbs',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'wingspan': {
+        'stat_category': 'none',
         'display_name': 'WS',
+        'description': 'Wingspan in feet and inches (editable)',
         'section': ['player_info'],
         'subsection': None,
         'sheets': 'both',
@@ -278,10 +377,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'wingspan_inches',
         'team_formula': 'wingspan_inches',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'hand': {
+        'stat_category': 'none',
         'display_name': '🖐️',
+        'description': 'Dominant hand (editable)',
         'section': ['player_info'],
         'subsection': None,
         'sheets': 'both',
@@ -296,10 +398,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'hand',
         'team_formula': None,
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'notes': {
+        'stat_category': 'none',
         'display_name': 'Notes',
+        'description': 'Scouting notes (editable)',
         'section': ['analysis'],
         'subsection': None,
         'sheets': 'both',
@@ -314,10 +419,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'notes',
         'team_formula': 'notes',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
 
     'years': {
+        'stat_category': 'none',
         'display_name': 'Yrs',
+        'description': 'Number of seasons in range',
         'section': ['historical_stats', 'postseason_stats'],
         'subsection': 'rates',
         'sheets': 'both',
@@ -332,12 +440,16 @@ SHEETS_COLUMNS = {
         'player_formula': 'year',
         'team_formula': 'year',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
         
     'games': {
+        'stat_category': 'none',
         'display_name': 'GMS',
+        'description': 'Games played',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
+        'sheets': 'both',
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
@@ -349,10 +461,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'games',
         'team_formula': 'games',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'minutes': {
+        'stat_category': 'none',
         'display_name': 'Min',
+        'description': 'Minutes played',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
         'stat_mode': 'both',
@@ -366,10 +481,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'minutes_x10 / 10',
         'team_formula': 'minutes_x10 / 10',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'pace': {
+        'stat_category': 'none',
         'display_name': 'Pace',
+        'description': 'Possessions per minute',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
         'stat_mode': 'advanced',
@@ -383,10 +501,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'possessions / minutes',
         'team_formula': 'possessions / minutes',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'points': {
+        'stat_category': 'basic',
         'display_name': 'PTS',
+        'description': 'Total points scored',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'both',
@@ -400,10 +521,13 @@ SHEETS_COLUMNS = {
         'player_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
         'team_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
         'opponents_formula': '(opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm',
+        'minimum_width': 'auto',
     },
     
     'true_points_per_shot_attempt': {
+        'stat_category': 'basic',
         'display_name': 'TPS',
+        'description': 'Points per true shot attempt (2FGA + 3FGA + 0.44*FTA)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'both',
@@ -417,10 +541,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'points / (2fga + 3fga + 0.44 * fta)',
         'team_formula': 'points / (2fga + 3fga + 0.44 * fta)',
         'opponents_formula': 'points / (opp_2fga + opp_3fga + 0.44 * opp_fta)',
+        'minimum_width': 'auto',
     },
     
     '2fga': {
+        'stat_category': 'basic',
         'display_name': '2A',
+        'description': 'Two-point field goal attempts',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'basic',
@@ -434,10 +561,13 @@ SHEETS_COLUMNS = {
         'player_formula': '2fga',
         'team_formula': '2fga',
         'opponents_formula': 'opp_2fga',
+        'minimum_width': 'auto',
     },
     
     'Points_Per_Two_attempt': {
+        'stat_category': 'basic',
         'display_name': 'P2',
+        'description': 'Points per two-point attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'basic',
@@ -451,10 +581,13 @@ SHEETS_COLUMNS = {
         'player_formula': '2 * (2fgm / 2fga)',
         'team_formula': '2 * (2fgm / 2fga)',
         'opponents_formula': '2 * (opp_2fgm / opp_2fga)',
+        'minimum_width': 'auto',
     },
     
     '3fga': {
+        'stat_category': 'basic',
         'display_name': '3A',
+        'description': 'Three-point field goal attempts',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'basic',
@@ -468,10 +601,13 @@ SHEETS_COLUMNS = {
         'player_formula': '3fga',
         'team_formula': '3fga',
         'opponents_formula': 'opp_3fga',
+        'minimum_width': 'auto',
     },
     
     'Points_Per_Three_attempt': {
+        'stat_category': 'basic',
         'display_name': 'P3',
+        'description': 'Points per three-point attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'basic',
@@ -485,10 +621,13 @@ SHEETS_COLUMNS = {
         'player_formula': '3 * (3fgm / 3fga)',
         'team_formula': '3 * (3fgm / 3fga)',
         'opponents_formula': '3 * (opp_3fgm / opp_3fga)',
+        'minimum_width': 'auto',
     },
     
     'cont_close_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'CC2A',
+        'description': 'Contested close two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -502,10 +641,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'cont_close_2fga',
         'team_formula': 'cont_close_2fga',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'Points_Per_cont_close_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'PCC2',
+        'description': 'Points per contested close two attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -519,10 +661,13 @@ SHEETS_COLUMNS = {
         'player_formula': '2 * (cont_close_2fgm / cont_close_2fga)',
         'team_formula': '2 * (cont_close_2fgm / cont_close_2fga)',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'open_close_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'OC2A',
+        'description': 'Open close two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -536,10 +681,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'open_close_2fga',
         'team_formula': 'open_close_2fga',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'Points_Per_open_close_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'POC2',
+        'description': 'Points per open close two attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -553,10 +701,13 @@ SHEETS_COLUMNS = {
         'player_formula': '2 * (open_close_2fgm / open_close_2fga)',
         'team_formula': '2 * (open_close_2fgm / open_close_2fga)',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'cont_long_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'CL2A',
+        'description': 'Contested long two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -570,10 +721,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'cont_2fga - cont_close_2fga',
         'team_formula': 'cont_2fga - cont_close_2fga',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'points_per_cont_long_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'PCL2',
+        'description': 'Points per contested long two attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -587,10 +741,13 @@ SHEETS_COLUMNS = {
         'player_formula': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
         'team_formula': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'open_long_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'OL2A',
+        'description': 'Open long two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -604,10 +761,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'open_2fga - open_close_2fga',
         'team_formula': 'open_2fga - open_close_2fga',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'points_per_open_long_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'POL2',
+        'description': 'Points per open long two attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -621,10 +781,13 @@ SHEETS_COLUMNS = {
         'player_formula': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
         'team_formula': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'cont_3fga': {
+        'stat_category': 'tracking',
         'display_name': 'C3A',
+        'description': 'Contested three-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -638,10 +801,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'cont_3fga',
         'team_formula': 'cont_3fga',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'points_per_cont_3fga': {
+        'stat_category': 'tracking',
         'display_name': 'PC3',
+        'description': 'Points per contested three attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -655,10 +821,13 @@ SHEETS_COLUMNS = {
         'player_formula': '3 * (cont_3fgm / cont_3fga)',
         'team_formula': '3 * (cont_3fgm / cont_3fga)',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'open_3fga': {
+        'stat_category': 'tracking',
         'display_name': 'O3A',
+        'description': 'Open three-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -672,10 +841,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'open_3fga',
         'team_formula': 'open_3fga',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'points_per_open_3fga': {
+        'stat_category': 'tracking',
         'display_name': 'PO3',
+        'description': 'Points per open three attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'advanced',
@@ -689,10 +861,13 @@ SHEETS_COLUMNS = {
         'player_formula': '3 * (open_3fgm / open_3fga)',
         'team_formula': '3 * (open_3fgm / open_3fga)',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'free_throw_rate': {
+        'stat_category': 'basic',
         'display_name': 'FTR',
+        'description': 'Free throw attempts per field goal attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'both',
@@ -716,10 +891,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'fta / (2fga + 3fga)',
         'team_formula': 'fta / (2fga + 3fga)',
         'opponents_formula': 'opp_fta / (opp_2fga + opp_3fga)',
+        'minimum_width': 'auto',
     },
     
     'points_per_ft_trip': {
+        'stat_category': 'basic',
         'display_name': 'PFTT',
+        'description': 'Points per free throw trip (FTM / 0.44*FTA)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
         'stat_mode': 'both',
@@ -733,10 +911,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'ftm / (.44 * fta)',
         'team_formula': 'ftm / (.44 * fta)',
         'opponents_formula': 'opp_ftm / (.44 * opp_fta)',
+        'minimum_width': 'auto',
     },
     
     'assists': {
+        'stat_category': 'basic',
         'display_name': 'AST',
+        'description': 'Assists',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'both',
@@ -750,10 +931,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'assists',
         'team_formula': 'assists',
         'opponents_formula': 'opp_assists',
+        'minimum_width': 'auto',
     },
     
     'potential_assists': {
+        'stat_category': 'tracking',
         'display_name': 'PAST',
+        'description': 'Potential assists (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'advanced',
@@ -767,10 +951,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'pot_assists',
         'team_formula': 'pot_assists',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'secondary_assists': {
+        'stat_category': 'tracking',
         'display_name': '2AST',
+        'description': 'Secondary assists (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'advanced',
@@ -784,10 +971,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'sec_assists',
         'team_formula': 'sec_assists',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'passes': {
+        'stat_category': 'tracking',
         'display_name': 'Pass',
+        'description': 'Total passes made (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'advanced',
@@ -801,10 +991,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'passes',
         'team_formula': 'passes',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'touches': {
+        'stat_category': 'tracking',
         'display_name': 'Tou',
+        'description': 'Total touches (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'advanced',
@@ -818,10 +1011,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'touches',
         'team_formula': 'touches',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'seconds_per_touch': {
+        'stat_category': 'tracking',
         'display_name': 'SPT',
+        'description': 'Average seconds per touch (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'advanced',
@@ -835,10 +1031,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'time_on_ball / touches',
         'team_formula': 'time_on_ball / touches',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'dribbles_per_touch': {
+        'stat_category': 'tracking',
         'display_name': 'DPT',
+        'description': 'Average dribbles per touch (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'advanced',
@@ -852,10 +1051,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'dribbles / touches',
         'team_formula': 'dribbles / touches',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'turnover_pct': {
+        'stat_category': 'basic',
         'display_name': 'TOV%',
+        'description': 'Turnovers per possession (%)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'distribution',
         'stat_mode': 'both',
@@ -879,10 +1081,13 @@ SHEETS_COLUMNS = {
         'player_formula': '(turnovers / possessions) * 100',
         'team_formula': '(turnovers / possessions) * 100',
         'opponents_formula': '(opp_turnovers / possessions) * 100',
+        'minimum_width': 'auto',
     },
     
     'oreb_pct': {
+        'stat_category': 'basic',
         'display_name': 'OR%',
+        'description': 'Offensive rebound percentage',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
         'stat_mode': 'both',
@@ -906,10 +1111,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'o_rebound_pct_x1000 / 10',
         'team_formula': 'o_rebound_pct_x1000 / 10',
         'opponents_formula': 'opp_o_rebound_pct_x1000 / 10',
+        'minimum_width': 'auto',
     },
     
     'dreb_pct': {
+        'stat_category': 'basic',
         'display_name': 'DR%',
+        'description': 'Defensive rebound percentage',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
         'stat_mode': 'both',
@@ -933,10 +1141,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'd_rebound_pct_x1000 / 10',
         'team_formula': 'd_rebound_pct_x1000 / 10',
         'opponents_formula': 'opp_d_rebound_pct_x1000 / 10',
+        'minimum_width': 'auto',
     },
     
     'cont_oreb_pct': {
+        'stat_category': 'tracking',
         'display_name': 'COR%',
+        'description': 'Contested offensive rebound % (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
         'stat_mode': 'advanced',
@@ -960,10 +1171,13 @@ SHEETS_COLUMNS = {
         'player_formula': '(cont_o_rebs / o_rebounds) * 100',
         'team_formula': '(cont_o_rebs / o_rebounds) * 100',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'cont_dreb_pct': {
+        'stat_category': 'tracking',
         'display_name': 'CDR%',
+        'description': 'Contested defensive rebound % (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
         'stat_mode': 'advanced',
@@ -987,10 +1201,13 @@ SHEETS_COLUMNS = {
         'player_formula': '(cont_d_rebs / d_rebounds) * 100',
         'team_formula': '(cont_d_rebs / d_rebounds) * 100',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'putback_pct': {
+        'stat_category': 'tracking',
         'display_name': 'PB%',
+        'description': 'Putbacks per offensive rebound % (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
         'stat_mode': 'advanced',
@@ -1004,10 +1221,13 @@ SHEETS_COLUMNS = {
         'player_formula': '(putbacks / o_rebounds) * 100',
         'team_formula': '(putbacks / o_rebounds) * 100',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'off_distance': {
+        'stat_category': 'tracking',
         'display_name': 'Off Dist',
+        'description': 'Offensive distance traveled in miles (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
         'stat_mode': 'advanced',
@@ -1021,10 +1241,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'o_dist_x10 / 10',
         'team_formula': None,
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'def_distance': {
+        'stat_category': 'tracking',
         'display_name': 'Def Dist',
+        'description': 'Defensive distance traveled in miles (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
         'stat_mode': 'advanced',
@@ -1038,10 +1261,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'd_dist_x10 / 10',
         'team_formula': None,
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'def_close_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'DC2A',
+        'description': 'Defended close two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'advanced',
@@ -1055,10 +1281,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'd_close_2fga',
         'team_formula': 'd_close_2fga',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'points_per_def_close_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'PDC2',
+        'description': 'Points allowed per defended close two',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'advanced',
@@ -1072,10 +1301,13 @@ SHEETS_COLUMNS = {
         'player_formula': '2 * (d_close_2fgm / d_close_2fga)',
         'team_formula': '2 * (d_close_2fgm / d_close_2fga)',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'def_long_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'DL2A',
+        'description': 'Defended long two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'advanced',
@@ -1089,10 +1321,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'd_2fga - d_close_2fga',
         'team_formula': None,
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'points_per_def_long_2fga': {
+        'stat_category': 'tracking',
         'display_name': 'PDL2',
+        'description': 'Points allowed per defended long two',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'advanced',
@@ -1106,10 +1341,13 @@ SHEETS_COLUMNS = {
         'player_formula': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
         'team_formula': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'def_3fga': {
+        'stat_category': 'tracking',
         'display_name': 'D3A',
+        'description': 'Defended three-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'advanced',
@@ -1123,10 +1361,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'd_3fga',
         'team_formula': 'd_3fga',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'points_per_def_3fga': {
+        'stat_category': 'tracking',
         'display_name': 'PD3',
+        'description': 'Points allowed per defended three',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'advanced',
@@ -1140,10 +1381,13 @@ SHEETS_COLUMNS = {
         'player_formula': '3 * (d_3fgm / d_3fga)',
         'team_formula': '3 * (d_3fgm / d_3fga)',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'real_def_pct': {
+        'stat_category': 'tracking',
         'display_name': 'RD%',
+        'description': 'Real defensive FG% (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'advanced',
@@ -1157,10 +1401,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'real_d_fg_pct_x1000 / 1000',
         'team_formula': 'real_d_fg_pct_x1000 / 1000',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'block_pct': {
+        'stat_category': 'basic',
         'display_name': 'Blk%',
+        'description': 'Blocks per contest',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'both',
@@ -1184,13 +1431,16 @@ SHEETS_COLUMNS = {
         'player_formula': 'blocks / contests',
         'team_formula': 'blocks / (opp_2fga + opp_3fga)',
         'opponents_formula': 'opp_blocks / (2fga + 3fga)',
+        'minimum_width': 'auto',
     },
     
     'contests': {
-        'display_name': 'Contests',
+        'stat_category': 'hustle',
+        'display_name': 'Cont',
+        'description': 'Shot contests (hustle)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'stat_mode': 'both',
+        'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
@@ -1201,10 +1451,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'contests',
         'team_formula': 'contests',
         'opponents_formula': 'opp_contests',
+        'minimum_width': 'auto',
     },
     
     'steals_plus_charges': {
+        'stat_category': 'basic',
         'display_name': 'TOVF',
+        'description': 'Steals plus charges drawn',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'both',
@@ -1218,10 +1471,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'steals + charges',
         'team_formula': 'steals + charges',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'deflections': {
-        'display_name': 'Deflections',
+        'stat_category': 'hustle',
+        'display_name': 'DFLS',
+        'description': 'Deflections (hustle)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'advanced',
@@ -1235,10 +1491,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'deflections',
         'team_formula': 'deflections',
         'opponents_formula': 'opp_deflections',
+        'minimum_width': 'auto',
     },
     
     'fouls': {
-        'display_name': 'Fouls',
+        'stat_category': 'basic',
+        'display_name': 'Fls',
+        'description': 'Personal fouls',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'both',
@@ -1252,10 +1511,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'fouls',
         'team_formula': 'fouls',
         'opponents_formula': 'opp_fouls',
+        'minimum_width': 'auto',
     },
     
     'off_rating': {
+        'stat_category': 'basic',
         'display_name': 'ORT',
+        'description': 'Offensive rating per 100 possessions',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
         'stat_mode': 'both',
@@ -1269,10 +1531,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'off_rating_x10 / 10',
         'team_formula': 'off_rating_x10 / 10',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'def_rating': {
+        'stat_category': 'basic',
         'display_name': 'DRT',
+        'description': 'Defensive rating per 100 possessions',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
         'stat_mode': 'both',
@@ -1286,10 +1551,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'def_rating_x10 / 10',
         'team_formula': 'def_rating_x10 / 10',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'off_onoff': {
+        'stat_category': 'basic',
         'display_name': 'OO/O',
+        'description': 'Offensive on/off differential',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
         'stat_mode': 'both',
@@ -1303,10 +1571,13 @@ SHEETS_COLUMNS = {
         'player_formula': 'off_onoff_x10 / 10',
         'team_formula': None,
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     'def_onoff': {
+        'stat_category': 'basic',
         'display_name': 'DO/O',
+        'description': 'Defensive on/off differential',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
         'stat_mode': 'both',
@@ -1320,6 +1591,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'def_onoff_x10 / 10',
         'team_formula': None,
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
     
     # ========================================================================
@@ -1327,7 +1599,9 @@ SHEETS_COLUMNS = {
     # ========================================================================
     
     'nba_id': {
+        'stat_category': 'none',
         'display_name': 'NBA ID',
+        'description': 'NBA.com player/team ID',
         'section': ['identity'],
         'subsection': None,
         'stat_mode': 'both',
@@ -1341,5 +1615,6 @@ SHEETS_COLUMNS = {
         'player_formula': 'player_id',
         'team_formula': 'team_id',
         'opponents_formula': None,
+        'minimum_width': 'auto',
     },
 }

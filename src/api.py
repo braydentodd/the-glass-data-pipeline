@@ -10,33 +10,36 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import numpy as np
 
-from config.etl import DB_CONFIG
-from lib.etl import get_table_name
-from config.sheets import (
-    API_CONFIG, NBA_TEAMS, COLUMN_DEFINITIONS,
-    get_reverse_stats, get_editable_fields, get_config_for_export,
-    STAT_ORDER
+from config.etl import DB_CONFIG, NBA_CONFIG
+from config.sheets import API_CONFIG, SERVER_CONFIG
+from lib.etl import get_table_name, get_teams_from_db
+from lib.sheets import (
+    calculate_entity_stats,
+    get_reverse_stats,
+    get_editable_fields,
+    get_config_for_export,
+    fetch_players_for_team,
+    fetch_all_players,
+    fetch_team_stats,
+    calculate_all_percentiles,
+    build_entity_row,
+    build_sheet_columns,
+    get_db_connection as _get_db_conn,
+    SHEETS_COLUMNS,
 )
-from src.stat_engine import calculate_entity_stats
 
-# Build lookup dicts from NBA_TEAMS list
-NBA_TEAMS_BY_ID = {}
-NBA_TEAMS_BY_ABBR = {}
-for abbr, name in NBA_TEAMS:
-    # NBA team IDs start at 1610612737 (ATL) and increment
-    # This is a simplified mapping - ideally should be in database
-    team_id = 1610612737 + NBA_TEAMS.index((abbr, name))
-    NBA_TEAMS_BY_ID[team_id] = name
-    NBA_TEAMS_BY_ABBR[abbr] = team_id
+# Load NBA teams from DB at startup (team_id -> (abbr, name))
+_teams_db = get_teams_from_db()
+NBA_TEAMS_BY_ID = {tid: name for tid, (abbr, name) in _teams_db.items()}
+NBA_TEAMS_BY_ABBR = {abbr: tid for tid, (abbr, name) in _teams_db.items()}
 
 # Get reverse stats and editable fields from config
 REVERSE_STATS = get_reverse_stats()
 EDITABLE_FIELDS = get_editable_fields()
 
-# Build STAT_COLUMNS list from COLUMN_DEFINITIONS
-STAT_COLUMNS = [col for col, defn in COLUMN_DEFINITIONS.items() if defn.get('is_stat', False)]
+# Stat columns for percentile calculation
+STAT_COLUMNS = [k for k, v in SHEETS_COLUMNS.items() if v.get('is_stat', False)]
 
 app = Flask(__name__)
 
@@ -47,60 +50,7 @@ if API_CONFIG['cors_enabled']:
 
 def get_db_connection():
     """Create database connection."""
-    return psycopg2.connect(
-        host=DB_CONFIG['host'],
-        port=DB_CONFIG['port'],
-        database=DB_CONFIG['database'],
-        user=DB_CONFIG['user'],
-        password=DB_CONFIG['password']
-    )
-
-
-def calculate_percentiles(players_data, stat_columns):
-    """
-    Calculate percentiles for all stats across all players.
-    
-    Args:
-        players_data (list): List of player dictionaries with calculated stats
-        stat_columns (list): List of stat column names to calculate percentiles for
-    
-    Returns:
-        list: Players with percentiles added
-    """
-    # Extract calculated stats for all players
-    all_stats = {stat: [] for stat in stat_columns}
-    
-    for player in players_data:
-        calculated = player.get('calculated_stats', {})
-        for stat in stat_columns:
-            value = calculated.get(stat, 0)
-            if value is not None and value > 0:  # Only include players with valid stats
-                all_stats[stat].append(value)
-    
-    # Calculate percentiles for each player
-    for player in players_data:
-        calculated = player['calculated_stats']
-        percentiles = {}
-        
-        for stat in stat_columns:
-            value = calculated.get(stat, 0)
-            stat_values = all_stats[stat]
-            
-            if not stat_values or value is None or value == 0:
-                percentiles[f'{stat}_percentile'] = 0
-            else:
-                # Calculate percentile (what percentage of players this player beats)
-                if stat in REVERSE_STATS:
-                    # For reverse stats (turnovers, fouls), lower is better
-                    percentiles[f'{stat}_percentile'] = 100 - np.percentile(stat_values, 
-                                                         np.searchsorted(sorted(stat_values), value, side='right') / len(stat_values) * 100)
-                else:
-                    # For normal stats, higher is better
-                    percentiles[f'{stat}_percentile'] = np.searchsorted(sorted(stat_values), value, side='right') / len(stat_values) * 100
-        
-        player['percentiles'] = percentiles
-    
-    return players_data
+    return _get_db_conn()
 
 
 @app.route('/health', methods=['GET'])
@@ -128,7 +78,7 @@ def sync_historical_stats():
         years = data.get('years', 3)
         seasons = data.get('seasons', [])
         include_current = data.get('include_current', False)
-        stats_mode = data.get('stats_mode', 'per_36')  # Get stats mode from request
+        stats_mode = data.get('stats_mode', 'per_100')  # Get stats mode from request
         stats_custom_value = data.get('stats_custom_value')  # Get custom value if present
         toggle_percentiles = data.get('toggle_percentiles', False)  # Toggle flag from Apps Script
         # Note: show_percentiles is parsed from sheet header, not passed as parameter
@@ -168,11 +118,11 @@ def sync_historical_stats():
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # Build command arguments - run as module to ensure imports work
-        cmd = [sys.executable, '-m', 'src.sheets_sync']
+        cmd = [sys.executable, '-m', 'src.sheets']
         
-        # Add priority team as first argument if specified
+        # Add priority team as CLI argument if specified
         if priority_team:
-            cmd.append(priority_team.upper())
+            cmd += ['--team', priority_team.upper()]
         
         # Ensure DB_PASSWORD is in environment (required by sync script)
         if 'DB_PASSWORD' not in env:
@@ -215,7 +165,7 @@ def sync_historical_stats():
     except subprocess.TimeoutExpired:
         return jsonify({
             'success': False,
-            'error': 'Sync timed out after 5 minutes'
+            'error': 'Sync timed out after 10 minutes'
         }), 500
     except Exception as e:
         return jsonify({
@@ -245,7 +195,7 @@ def sync_postseason_stats():
         mode = data.get('mode', 'career')
         years = data.get('years', 25)
         seasons = data.get('seasons', [])
-        stats_mode = data.get('stats_mode', 'per_36')
+        stats_mode = data.get('stats_mode', 'per_100')
         stats_custom_value = data.get('stats_custom_value')
         # Note: show_percentiles is parsed from sheet header, not passed as parameter
         priority_team = data.get('priority_team')
@@ -276,10 +226,10 @@ def sync_postseason_stats():
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # Build command arguments
-        cmd = [sys.executable, '-m', 'src.sheets_sync']
+        cmd = [sys.executable, '-m', 'src.sheets']
         
         if priority_team:
-            cmd.append(priority_team.upper())
+            cmd += ['--team', priority_team.upper()]
         
         # Ensure DB_PASSWORD is in environment
         if 'DB_PASSWORD' not in env:
@@ -366,7 +316,7 @@ def calculate_stats():
     team_id = data.get('team_id')
     mode = data.get('mode', 'per_100')
     custom_value = data.get('custom_value')
-    season = data.get('season', '2024-25')
+    season = data.get('season', NBA_CONFIG['current_season'])
     
     if not team_id:
         return jsonify({'error': 'team_id is required'}), 400
@@ -380,95 +330,51 @@ def calculate_stats():
     
     if mode in ['per_minutes', 'per_possessions'] and custom_value is None:
         return jsonify({'error': f'{mode} requires custom_value parameter'}), 400
-    
-    # Fetch players from database
+
+    # Resolve team_id -> team_abbr
+    team_abbr = None
+    for abbr, tid in NBA_TEAMS_BY_ABBR.items():
+        if tid == team_id:
+            team_abbr = abbr
+            break
+    if not team_abbr:
+        return jsonify({'error': 'Team not found in database'}), 404
+
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Parse season year from season string (e.g., "2024-25" -> 2025)
-        season_year = int('20' + season.split('-')[1])
-        
-        query = """
-            SELECT 
-                p.player_id,
-                p.name AS player_name,
-                s.games AS games,
-                s.minutes_x10::float / 10 AS minutes,
-                s.possessions,
-                s.2fgm,
-                s.2fga,
-                s.3fgm,
-                s.3fga,
-                s.ftm,
-                s.fta,
-                s.off_rebounds,
-                s.def_rebounds,
-                s.off_rebound_pct_x1000::float / 1000 AS oreb_pct,
-                s.def_rebound_pct_x1000::float / 1000 AS dreb_pct,
-                s.assists,
-                s.turnovers,
-                s.steals,
-                s.blocks,
-                s.fouls
-            FROM players p
-            LEFT JOIN player_season_stats s 
-                ON s.player_id = p.player_id
-                AND s.year = %s
-                AND s.season_type = 1
-            WHERE p.team_id = %s
-              AND p.team_id IS NOT NULL
-            ORDER BY COALESCE(s.minutes_x10, 0) DESC, p.name
-        """
-        
-        cursor.execute(query, (season_year, team_id))
-        players = cursor.fetchall()
-        
-        cursor.close()
+
+        # Use lib.sheets fetch + calculate (config-driven, no hardcoded SQL)
+        players = fetch_players_for_team(conn, team_abbr, 'current_stats')
+        all_players = fetch_all_players(conn, 'current_stats')
         conn.close()
-        
-        # Convert to list of dicts
-        players_list = [dict(player) for player in players]
-        
-        # Separate players with stats from those without
-        players_with_stats = [p for p in players_list if p.get('games')]
-        players_without_stats = [p for p in players_list if not p.get('games')]
-        
-        # Calculate stats for players with data using generic engine
-        calculated_players = []
-        if players_with_stats:
-            for player in players_with_stats:
-                calculated_stats = calculate_entity_stats(player, STAT_ORDER, mode=mode, custom_value=custom_value)
-                player['calculated_stats'] = calculated_stats
-                calculated_players.append(player)
-        
-        # Add players without stats with empty calculated_stats
-        for player in players_without_stats:
-            calculated_players.append({
-                'player_name': player['player_name'],
-                'calculated_stats': {},
-                'percentiles': {}
+
+        # Calculate percentile populations
+        percentile_pops = calculate_all_percentiles(all_players, 'player', mode)
+
+        # Build column list (for context_section blanking)
+        columns = build_sheet_columns(entity='player', stat_mode='both', show_percentiles=False)
+
+        # Build rows using lib.sheets (same as sync path)
+        player_rows = []
+        for p in players:
+            stats = calculate_entity_stats(p, 'player', mode, custom_value)
+            player_rows.append({
+                'player_id': p.get('player_id'),
+                'name': p.get('name'),
+                'team_abbr': p.get('team_abbr'),
+                'calculated_stats': stats,
             })
-        
-        # Calculate percentiles only for players with stats
-        if calculated_players:
-            stat_cols = [col for col in STAT_COLUMNS if col not in ['games']]
-            players_with_percentiles = calculate_percentiles(calculated_players, stat_cols)
-        
-        # Format response
-        response = {
+
+        return jsonify({
             'team_id': team_id,
-            'team_name': NBA_TEAMS_BY_ID[team_id],
+            'team_abbr': team_abbr,
+            'team_name': NBA_TEAMS_BY_ID.get(team_id, team_abbr),
             'mode': mode,
             'season': season,
-            'players': players_with_percentiles
-        }
-        
-        if custom_value:
-            response['custom_value'] = custom_value
-        
-        return jsonify(response)
-    
+            'players': player_rows,
+            'custom_value': custom_value,
+        })
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -532,7 +438,7 @@ def get_player_stats(player_id):
     
     Response includes stats calculated in all modes for comparison.
     """
-    season = request.args.get('season', '2024-25')
+    season = request.args.get('season', NBA_CONFIG['current_season'])
     
     try:
         conn = get_db_connection()
@@ -555,13 +461,13 @@ def get_player_stats(player_id):
             return jsonify({'error': 'Player not found'}), 404
         
         player_dict = dict(player)
-        
-        # Calculate stats in all modes using generic engine
+
+        # Calculate stats in all modes using config-driven engine
         modes = {
-            'totals': calculate_entity_stats(player_dict, STAT_ORDER, mode='totals'),
-            'per_game': calculate_entity_stats(player_dict, STAT_ORDER, mode='per_game'),
-            'per_100': calculate_entity_stats(player_dict, STAT_ORDER, mode='per_100_poss'),
-            'per_36': calculate_entity_stats(player_dict, STAT_ORDER, mode='per_36'),
+            'totals': calculate_entity_stats(player_dict, 'player', mode='totals'),
+            'per_game': calculate_entity_stats(player_dict, 'player', mode='per_game'),
+            'per_100': calculate_entity_stats(player_dict, 'player', mode='per_100'),
+            'per_36': calculate_entity_stats(player_dict, 'player', mode='per_36'),
         }
         
         return jsonify({
@@ -718,36 +624,26 @@ def update_team(team_id):
 @app.route('/api/config', methods=['GET'])
 def get_config():
     """
-    Provide client configuration for Apps Script.
-    Returns configuration values from centralized config.py
+    Single source of truth for Apps Script.
+    Returns all config Apps Script needs: teams, column ranges, stat lists,
+    colors, editable fields, API base URL. Zero hardcoding in Apps Script.
     """
-    return jsonify(get_config_for_export())
+    mode = request.args.get('mode', 'per_100')
+    try:
+        return jsonify(get_config_for_export(mode=mode))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/column-config', methods=['GET'])
 def get_column_config():
-    """
-    Expose complete column configuration for Apps Script.
-    This is the single source of truth for all column definitions,
-    sections, and formatting rules.
-    
-    Response includes:
-    - column_definitions: Complete metadata for every column
-    - stat_order: Left-to-right order of stats
-    - sections: Section configuration with column ranges
-    - sections_nba: Section configuration for NBA sheet (includes TEAM column)
-    - reverse_stats: Stats where lower is better
-    - editable_fields: Fields that can be edited by user
-    - colors: Color scheme for conditional formatting
-    - color_thresholds: Percentile thresholds for each color
-    """
-    return jsonify(get_config_for_export())
+    """Alias for /api/config for backward compatibility."""
+    return get_config()
 
 
 if __name__ == '__main__':
-    # Run with configuration from config.py
     app.run(
-        host=API_CONFIG['host'], 
-        port=API_CONFIG['port'], 
-        debug=API_CONFIG['debug']
+        host=API_CONFIG.get('host', '0.0.0.0'),
+        port=API_CONFIG.get('port', 5000),
+        debug=API_CONFIG.get('debug', False),
     )

@@ -346,7 +346,7 @@ DB_COLUMNS = {
     'games': {
         'table': 'stats',
         'type': 'SMALLINT',
-        'nullable': True,
+        'nullable': False,
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'yes',
@@ -388,7 +388,7 @@ DB_COLUMNS = {
     'tr_games': {
         'table': 'stats',
         'type': 'SMALLINT',
-        'nullable': True,
+        'nullable': False,
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'yes',
@@ -434,7 +434,7 @@ DB_COLUMNS = {
     'h_games': {
         'table': 'stats',
         'type': 'SMALLINT',
-        'nullable': True,
+        'nullable': False,
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'yes',
@@ -2204,6 +2204,94 @@ DB_COLUMNS = {
         },
         'opponent_source': None
     },
+
+    # ---- On/Off Court columns (teamplayeronoffsummary, per-team → player aggregation) ----
+    # Team ratings when a given player is NOT on the floor.
+    # Pair with o_rating_x10 / d_rating_x10 (on-court) to compute the on/off differential.
+    # Traded players: games & minutes are summed; ratings are minute-weighted averages.
+
+    'off_games': {
+        'table': 'stats',
+        'type': 'SMALLINT',
+        'nullable': False,
+        'update_frequency': 'daily',
+        'api': True,
+        'pt_indicator': 'yes',
+        'player_source': {
+            'endpoint': 'teamplayeronoffsummary',
+            'execution_tier': 'team_call',
+            'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+            'player_id_field': 'VS_PLAYER_ID',
+            'field': 'GP',
+            'transform': 'safe_int',
+            'aggregation': 'sum',
+        },
+        'team_source': None,
+        'opponent_source': None
+    },
+
+    'off_minutes_x10': {
+        'table': 'stats',
+        'type': 'INTEGER',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'pt_indicator': 'off_games',
+        'player_source': {
+            'endpoint': 'teamplayeronoffsummary',
+            'execution_tier': 'team_call',
+            'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+            'player_id_field': 'VS_PLAYER_ID',
+            'field': 'MIN',
+            'transform': 'safe_int',
+            'scale': 10,
+            'aggregation': 'sum',
+        },
+        'team_source': None,
+        'opponent_source': None
+    },
+
+    'off_o_rating_x10': {
+        'table': 'stats',
+        'type': 'SMALLINT',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'pt_indicator': 'off_games',
+        'player_source': {
+            'endpoint': 'teamplayeronoffsummary',
+            'execution_tier': 'team_call',
+            'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+            'player_id_field': 'VS_PLAYER_ID',
+            'field': 'OFF_RATING',
+            'transform': 'safe_int',
+            'scale': 10,
+            'aggregation': 'minute_weighted',
+        },
+        'team_source': None,
+        'opponent_source': None
+    },
+
+    'off_d_rating_x10': {
+        'table': 'stats',
+        'type': 'SMALLINT',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'pt_indicator': 'off_games',
+        'player_source': {
+            'endpoint': 'teamplayeronoffsummary',
+            'execution_tier': 'team_call',
+            'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+            'player_id_field': 'VS_PLAYER_ID',
+            'field': 'DEF_RATING',
+            'transform': 'safe_int',
+            'scale': 10,
+            'aggregation': 'minute_weighted',
+        },
+        'team_source': None,
+        'opponent_source': None
+    },
 }
 
 # ============================================================================
@@ -2228,10 +2316,10 @@ PARALLEL_EXECUTION = {
 }
 
 API_CONFIG = {
-    'rate_limit_delay': 0.6,             # Light delay between API calls (session exhaustion occurs regardless)
-    'per_player_rate_limit': 1.0,        # Increased delay for per-player endpoints to prevent throttling
+    'rate_limit_delay': 1,             # Light delay between API calls (session exhaustion occurs regardless)
+    'per_player_rate_limit': 2,        # Increased delay for per-player endpoints to prevent throttling
     'season_delay': 0.0,                 # No delay needed for single-player sequential backfill
-    'timeout_default': 20,
+    'timeout_default': 30,
     'backoff_divisor': 5,               # Divisor for exponential backoff calculation
     'timeout_bulk': 120,
     'cooldown_after_batch_seconds': 30,  # Wait time after batch failures or before retries
@@ -2242,7 +2330,7 @@ API_CONFIG = {
     'roster_batch_cooldown': 120,        # Wait 120 seconds between batches
     
     # Automatic restart configuration (handles session exhaustion at ~175 requests)
-    'api_failure_threshold': 1,        # Allow 10 consecutive failures before giving up (handles individual player timeouts)
+    'api_failure_threshold': 3,        # Allow 10 consecutive failures before giving up (handles individual player timeouts)
     'api_restart_enabled': True,        # Enable automatic restart via exit code 42
     
     # Standard NBA API parameters (single source of truth)
@@ -2307,6 +2395,7 @@ ENDPOINTS_CONFIG = {
         'per_mode_param': 'per_mode_time',
         'entity_types': ['player'],
         'tracking': True,
+        'games_column': 'h_games',
     },
     'leaguehustlestatsteam': {
         'min_season': '2015-16',
@@ -2316,6 +2405,7 @@ ENDPOINTS_CONFIG = {
         'per_mode_param': 'per_mode_time',
         'entity_types': ['team'],
         'tracking': True,
+        'games_column': 'h_games',
     },
     
     # Defensive Matchup Data (available since 2013-14)
@@ -2424,6 +2514,20 @@ ENDPOINTS_CONFIG = {
         'tracking': False,
         'endpoint_tracker': False,
     },
+
+    # Player On/Off Court — team ratings when a given player is off the floor.
+    # execution_tier='league' so the backfill orchestrator treats it as one aggregate operation
+
+    'teamplayeronoffsummary': {
+        'min_season': '2007-08',
+        'execution_tier': 'league',
+        'default_result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+        'season_type_param': 'season_type_all_star',
+        'per_mode_param': 'per_mode_detailed',
+        'entity_types': ['player'],
+        'tracking': False,
+        'games_column': 'off_games',
+    },
 }
 
 # ============================================================================
@@ -2503,7 +2607,7 @@ API_FIELD_NAMES = {
 
 RETRY_CONFIG = {
     'max_retries': 3,
-    'backoff_base': 20,
+    'backoff_base': 30,
 }
 
 DB_OPERATIONS = {

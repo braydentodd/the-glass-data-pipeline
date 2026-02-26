@@ -222,8 +222,15 @@ def execute_transform(value: Any, transform_name: str, scale: int = 1) -> Any:
 
 def infer_execution_tier_from_endpoint(endpoint_name: str) -> str:
     """Infer execution tier from endpoint name pattern."""
+    # Check ENDPOINTS_CONFIG first — explicit config beats name-pattern inference.
+    # This allows endpoints like teamplayeronoffsummary (starts with 'team' but returns
+    # player data) to declare their own tier rather than being misclassified.
+    ep_cfg = ENDPOINTS_CONFIG.get(endpoint_name, {})
+    if 'execution_tier' in ep_cfg:
+        return ep_cfg['execution_tier']
+
     endpoint_lower = endpoint_name.lower()
-    
+
     # Check player before team to avoid misclassifying teamplayer* endpoints
     if endpoint_lower.startswith('playerdash') or endpoint_lower.startswith('commonplayer'):
         return 'player'
@@ -788,10 +795,11 @@ def with_retry(
                         should_retry = True
                     elif 'Expecting value' in error_msg or 'JSONDecodeError' in error_type:
                         diagnosis = "Invalid JSON - likely HTML error page or empty response from NBA API"
-                        # Don't retry JSON errors for per-player endpoints - usually means no data available
-                        # Per-player endpoints: playerdash*, teamplayerdash*
-                        is_per_player = endpoint_name and ('playerdash' in endpoint_name.lower() or 'teamplayerdash' in endpoint_name.lower())
-                        should_retry = not is_per_player
+                        # Always retry JSON errors - an HTML error page usually means the server was
+                        # temporarily overloaded (especially common after a prior timeout on the same
+                        # player). Not retrying risks silently losing real data.
+                        # If all retries exhaust and it's still JSON, only then is it likely no data.
+                        should_retry = True
                     elif 'ConnectionError' in error_type or 'ConnectionPool' in error_msg:
                         diagnosis = "Connection error - network or server issue"
                         should_retry = True
@@ -835,6 +843,42 @@ def with_retry(
         
         return wrapper
     return decorator
+
+
+def load_endpoint_class(endpoint_name: str):
+    """
+    Dynamically import an nba_api endpoint module and return its primary class.
+
+    Centralises the class-discovery logic that ``_execute_league_wide_endpoint``,
+    ``_execute_per_team_endpoint``, and ``_execute_team_call_for_players_endpoint``
+    all need.  Filters out private names, ``Nullable`` suffixed classes, and
+    anything imported from another module.
+
+    Returns:
+        The endpoint class (e.g. ``LeagueDashPlayerStats``), or ``None`` on error.
+    """
+    from importlib import import_module
+    import inspect as _inspect
+
+    module_name = f"nba_api.stats.endpoints.{endpoint_name.lower()}"
+    try:
+        module = import_module(module_name)
+        candidates = [
+            name for name in dir(module)
+            if name[0].isupper()
+            and not name.startswith('_')
+            and not name.endswith('Nullable')
+            and _inspect.isclass(getattr(module, name))
+            and hasattr(getattr(module, name), '__module__')
+            and getattr(module, name).__module__ == module.__name__
+        ]
+        if not candidates:
+            logger.error(f"No endpoint class found in {module_name}")
+            return None
+        return getattr(module, candidates[0])
+    except (ImportError, AttributeError, IndexError) as e:
+        logger.error(f"Could not import {endpoint_name}: {e}")
+        return None
 
 
 def create_api_call(
@@ -1307,24 +1351,22 @@ def uses_tracking_games(col_name: str) -> bool:
 
 def get_games_column_for_endpoint(endpoint_name: str) -> str:
     """
-    Get the appropriate games column for NULL/0 cleanup based on endpoint.
+    Get the appropriate games column for NULL/0 cleanup based on endpoint config.
     
-    Args:
-        endpoint_name: Name of the endpoint
-    
-    Returns:
-        - 'h_games' for hustle stats endpoints
-        - 'tr_games' for other tracking endpoints
-        - 'games' for regular stats endpoints
+    Resolution order:
+        1. Explicit ``games_column`` in ENDPOINTS_CONFIG (e.g. hustle → 'h_games')
+        2. ``tracking: True`` → 'tr_games'
+        3. Otherwise → 'games'
     """
-    # Hustle stats endpoints use h_games
-    if endpoint_name in ('leaguehustlestatsplayer', 'leaguehustlestatsteam'):
-        return 'h_games'
-    
-    # Other tracking endpoints use tr_games
     endpoint_config = get_endpoint_config(endpoint_name)
-    is_tracking = endpoint_config.get('tracking', False)
-    return 'tr_games' if is_tracking else 'games'
+    # Explicit override takes priority (hustle endpoints declare 'h_games')
+    explicit = endpoint_config.get('games_column')
+    if explicit:
+        return explicit
+    # Tracking endpoints default to tr_games
+    if endpoint_config.get('tracking', False):
+        return 'tr_games'
+    return 'games'
 
 
 # ============================================================================
