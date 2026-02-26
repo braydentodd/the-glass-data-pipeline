@@ -157,6 +157,11 @@ def evaluate_formula(col_key: str, entity_data: dict,
         # If formula starts with uppercase, it's a display literal (e.g. 'TEAM', 'OPPONENTS')
         if compiled and compiled[0].isupper():
             return compiled
+        # Distinguish "field exists but is NULL" from "field not in dataset"
+        # NULL in DB → None → empty cell, no percentile color
+        # Field absent → 0 → safe default for calculations
+        if compiled in entity_data:
+            return None
         return 0
 
     # Evaluate compiled expression
@@ -288,6 +293,29 @@ def _get_all_stat_db_fields() -> set:
         return set()
 
 
+def _get_all_team_stat_db_fields() -> set:
+    """
+    Fetch all stat column names from team_season_stats table.
+
+    Includes team-only columns like opp_* opponent stats that don't exist
+    in player_season_stats.
+    """
+    _EXCLUDE = {'team_id', 'year', 'season_type', 'updated_at'}
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'team_season_stats'"
+        )
+        fields = {r[0] for r in cur.fetchall()} - _EXCLUDE
+        cur.close()
+        conn.close()
+        return fields
+    except Exception:
+        return set()
+
+
 # Well-known entity table fields (not in stats table)
 _PLAYER_ENTITY_FIELDS = {
     'player_id', 'name', 'team_id', 'height_inches', 'weight_lbs',
@@ -300,11 +328,16 @@ _TEAM_ENTITY_FIELDS = {
 
 # Dynamically computed at import time
 _ALL_STAT_DB_FIELDS = _get_all_stat_db_fields()
+_ALL_TEAM_STAT_DB_FIELDS = _get_all_team_stat_db_fields()
 
 # Stat fields = formula variables that are NOT entity fields
 _STAT_TABLE_FIELDS = _ALL_STAT_DB_FIELDS - _PLAYER_ENTITY_FIELDS - _TEAM_ENTITY_FIELDS
 # Remove literal strings used as display labels
 _STAT_TABLE_FIELDS = {f for f in _STAT_TABLE_FIELDS if not f[0].isupper()}
+
+# Team stat fields (includes team-only columns like opp_* opponent stats)
+_TEAM_STAT_TABLE_FIELDS = _ALL_TEAM_STAT_DB_FIELDS - _TEAM_ENTITY_FIELDS
+_TEAM_STAT_TABLE_FIELDS = {f for f in _TEAM_STAT_TABLE_FIELDS if not f[0].isupper()}
 
 
 def _quote_col(col: str) -> str:
@@ -466,8 +499,8 @@ def fetch_team_stats(conn, team_abbr: str, section: str = 'current_stats',
         st = 1 if section == 'historical_stats' else '2, 3'
         year_filter, params = _build_year_filter(years_config, current_year, st)
 
-        # For aggregation, SUM all numeric stat columns
-        s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(_STAT_TABLE_FIELDS)]
+        # For aggregation, SUM all numeric stat columns (use team-specific fields for opp_*)
+        s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(_TEAM_STAT_TABLE_FIELDS)]
         s_fields.append('COUNT(DISTINCT s.year) AS year')
 
         query = f"""
@@ -489,8 +522,9 @@ def fetch_team_stats(conn, team_abbr: str, section: str = 'current_stats',
 
     result = dict(row)
     team_data = {k: v for k, v in result.items() if not k.startswith('opp_')}
-    opp_data = {k.replace('opp_', ''): v for k, v in result.items() if k.startswith('opp_')}
+    opp_data = {k: v for k, v in result.items() if k.startswith('opp_')}
     # Also include non-opponent fields for opponent formula evaluation
+    # (e.g., 'possessions', '2fga', '3fga' used in opponent formulas)
     for k, v in team_data.items():
         if k not in opp_data:
             opp_data[k] = v
@@ -522,7 +556,7 @@ def fetch_all_teams(conn, section: str = 'current_stats',
         st = 1 if section == 'historical_stats' else '2, 3'
         year_filter, params = _build_year_filter(years_config, current_year, st)
 
-        s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(_STAT_TABLE_FIELDS)]
+        s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(_TEAM_STAT_TABLE_FIELDS)]
         s_fields.append('COUNT(DISTINCT s.year) AS year')
 
         query = f"""
@@ -542,7 +576,7 @@ def fetch_all_teams(conn, section: str = 'current_stats',
     opponents = []
     for row in rows:
         team_data = {k: v for k, v in row.items() if not k.startswith('opp_')}
-        opp_data = {k.replace('opp_', ''): v for k, v in row.items() if k.startswith('opp_')}
+        opp_data = {k: v for k, v in row.items() if k.startswith('opp_')}
         for k, v in team_data.items():
             if k not in opp_data:
                 opp_data[k] = v

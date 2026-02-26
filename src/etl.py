@@ -1356,7 +1356,7 @@ def update_player_rosters(ctx: ETLContext) -> Tuple[int, int, List[int]]:
                         'player_id': player_id,
                         'team_id': team_id,  # Use team from roster
                         'name': player_name,
-                        'jersey_number': safe_str(player_row.get('NUM')),  # Use DB column name from config
+                        'jersey_number': safe_int(player_row.get('NUM')),  # SMALLINT column — safe_int handles NaN → None
                         'weight_lbs': None,  # Will get from annual ETL or commonplayerinfo for new players
                         'age': None
                     }
@@ -1675,8 +1675,26 @@ def update_basic_stats(ctx: ETLContext, entity: Literal['player', 'team'], skip_
     # CRITICAL: Exclude primary key from all_cols (it's added explicitly to avoid duplicates)
     entity_id_field = get_primary_key(entity)
     all_cols = {k: v for k, v in all_cols.items() if k != entity_id_field}
-    
-    # Process season types - either specific one or all from config
+
+    # For teams, dynamically add opp_* virtual columns from each base column's
+    # opponent_source config. The opponent DataFrame is merged into df below,
+    # bringing OPP_-prefixed fields into every row. We build the virtual entries
+    # here so the record-building loop writes them without needing separate
+    # team_source definitions in DB_COLUMNS.
+    if entity == 'team':
+        opp_cols = {}
+        for col_name, col_config in list(all_cols.items()):
+            opp_source = col_config.get('opponent_source')
+            if opp_source and isinstance(opp_source, dict):
+                opp_col_name = f'opp_{col_name}'
+                opp_cols[opp_col_name] = {
+                    **col_config,
+                    'team_source': opp_source,
+                    'player_source': None,
+                    'opponent_source': None,  # prevent recursion
+                }
+        all_cols.update(opp_cols)
+
     if season_type is not None:
         # Backfill mode: process only the specified season type
         season_type_name = next(

@@ -152,9 +152,15 @@ def safe_float(value: Any, scale: int = 1) -> Optional[int]:
 
 
 def safe_str(value: Any) -> Optional[str]:
-    """Safely convert to string"""
+    """Safely convert to string, handling None/NaN/empty."""
     if value is None or value == '' or (hasattr(value, '__len__') and len(value) == 0):
         return None
+    # Handle pandas/numpy NaN (float('nan'))
+    try:
+        if isinstance(value, float) and value != value:  # NaN != NaN
+            return None
+    except (TypeError, ValueError):
+        pass
     return str(value)
 
 
@@ -2896,6 +2902,10 @@ def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
     team_ids = list(TEAM_IDS.values())
     
     results = []
+    consecutive_failures = 0
+    FAILURE_THRESHOLD = API_CONFIG.get('api_failure_threshold', 3)
+    RESTART_ENABLED = API_CONFIG.get('api_restart_enabled', True)
+
     for idx, team_id in enumerate(team_ids):
         params = {**base_params, 'team_id': team_id}
         
@@ -2908,6 +2918,7 @@ def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
         try:
             result = api_call()
             results.append(result)
+            consecutive_failures = 0  # Reset on success
             
             # Apply per-call delay if configured (prevent rate limiting)
             endpoint_config = get_endpoint_config(endpoint_name)
@@ -2916,7 +2927,18 @@ def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
                 if delay > 0:
                     time.sleep(delay)
         except Exception as e:
+            consecutive_failures += 1
             logger.warning(f"Failed to fetch {endpoint_name} for team {team_id}: {e}")
+
+            # AUTO-RESTART: If hit failure threshold, trigger subprocess restart
+            if RESTART_ENABLED and consecutive_failures >= FAILURE_THRESHOLD:
+                logger.warning("AUTOMATIC RESTART TRIGGERED:")
+                logger.warning(f"Reason: Session exhaustion in {endpoint_name}")
+                logger.warning(f"Hit {consecutive_failures} consecutive failures (threshold: {FAILURE_THRESHOLD})")
+                logger.warning("Restarting process to get fresh API session")
+                raise APISessionExhausted(
+                    f"API session exhausted after {consecutive_failures} consecutive failures in {endpoint_name}"
+                )
     
     
     # Store in cache

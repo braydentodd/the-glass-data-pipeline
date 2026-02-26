@@ -2360,7 +2360,7 @@ API_CONFIG = {
     'roster_batch_cooldown': 120,        # Wait 120 seconds between batches
     
     # Automatic restart configuration (handles session exhaustion at ~175 requests)
-    'api_failure_threshold': 3,        # Allow 10 consecutive failures before giving up (handles individual player timeouts)
+    'api_failure_threshold': 1,        # Restart on first consecutive failure — one timeout means the session is dead
     'api_restart_enabled': True,        # Enable automatic restart via exit code 42
     
     # Standard NBA API parameters (single source of truth)

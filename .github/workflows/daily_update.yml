@@ -50,6 +50,22 @@ jobs:
         chmod +x run_etl.sh
         ./run_etl.sh 20  # Max 20 restarts
     
+    - name: Sync Google Sheets
+      env:
+        DB_HOST: ${{ secrets.DB_HOST }}
+        DB_PORT: ${{ secrets.DB_PORT }}
+        DB_NAME: ${{ secrets.DB_NAME }}
+        DB_USER: ${{ secrets.DB_USER }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_FILE }}
+        GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+        GOOGLE_SPREADSHEET_NAME: ${{ secrets.GOOGLE_SPREADSHEET_NAME }}
+        PYTHONUNBUFFERED: "1"
+      run: |
+        source venv/bin/activate
+        chmod +x sync_sheets.sh
+        ./sync_sheets.sh
+
     - name: Upload logs
       if: always()
       uses: actions/upload-artifact@v4
