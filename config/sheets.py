@@ -6,7 +6,7 @@ This config drives:
 - Sheet column generation (src/sheets.py)
 - Stat calculations (lib/sheets.py)
 - Percentile generation (auto-generated columns)
-- Section organization (player_info, analysis, rates, scoring, distribution, rebounding, defense, onoff, identity)
+- Section organization (player_info, analysis, rates, scoring, ball_management, rebounding, defense, onoff, identity)
 """
 
 import os
@@ -91,7 +91,7 @@ SECTION_CONFIG = {
 SUBSECTIONS = [
     'rates',          # Games, Minutes, Possessions
     'scoring',        # Points, TS%, 2fg/3, Rim/Mid/3PT tracking, FT
-    'distribution',   # Touches, Assists, Potential Assists, Turnovers
+    'ball_management',   # Touches, Assists, Potential Assists, Turnovers
     'rebounding',     # OREB%, DREB%, Contested OREB/DREB%, Putbacks
     'movement',       # Offensive/Defensive distance traveled
     'defense',        # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
@@ -169,13 +169,6 @@ SHEET_FORMATTING = {
 
     # Overflow handling
     'wrap_strategy': 'CLIP',  # CLIP | WRAP | OVERFLOW_CELL
-
-    # Column widths — columns with a numeric value get that enforced pixel width;
-    # everything else auto-resizes to fit contents (autoResizeDimensions).
-    # This is the ONLY place column widths are configured.
-    'column_width_overrides': {
-        'notes': 200,
-    },
 
     # Default visibility
     'hide_advanced_columns': True,
@@ -272,7 +265,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'jersey_number',
         'team_formula': None,
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 20,
     },
     
     'experience': {
@@ -398,7 +391,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'hand',
         'team_formula': None,
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 20,
     },
     
     'notes': {
@@ -419,7 +412,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'notes',
         'team_formula': 'notes',
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 500,
     },
 
     'years': {
@@ -440,7 +433,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'year',
         'team_formula': 'year',
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 30,
     },
         
     'games': {
@@ -461,7 +454,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'games',
         'team_formula': 'games',
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 30,
     },
     
     'minutes': {
@@ -521,7 +514,7 @@ SHEETS_COLUMNS = {
         'player_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
         'team_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
         'opponents_formula': '(opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm',
-        'minimum_width': 'auto',
+        'minimum_width': 30,
     },
     
     'true_points_per_shot_attempt': {
@@ -538,9 +531,9 @@ SHEETS_COLUMNS = {
         'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 2,
-        'player_formula': 'points / (2fga + 3fga + 0.44 * fta)',
-        'team_formula': 'points / (2fga + 3fga + 0.44 * fta)',
-        'opponents_formula': 'points / (opp_2fga + opp_3fga + 0.44 * opp_fta)',
+        'player_formula': '((2fgm * 2) + (3fgm * 3) + ftm) / (2fga + 3fga + 0.44 * fta)',
+        'team_formula': '((2fgm * 2) + (3fgm * 3) + ftm) / (2fga + 3fga + 0.44 * fta)',
+        'opponents_formula': '((opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm) / (opp_2fga + opp_3fga + 0.44 * opp_fta)',
         'minimum_width': 'auto',
     },
     
@@ -581,46 +574,6 @@ SHEETS_COLUMNS = {
         'player_formula': '2 * (2fgm / 2fga)',
         'team_formula': '2 * (2fgm / 2fga)',
         'opponents_formula': '2 * (opp_2fgm / opp_2fga)',
-        'minimum_width': 'auto',
-    },
-    
-    '3fga': {
-        'stat_category': 'basic',
-        'display_name': '3A',
-        'description': 'Three-point field goal attempts',
-        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'scoring',
-        'stat_mode': 'basic',
-        'has_percentile': True,
-        'is_stat': True,
-        'editable': False,
-        'reverse_percentile': False,
-        'scale_with_mode': True,
-        'format': 'number',
-        'decimal_places': 1,
-        'player_formula': '3fga',
-        'team_formula': '3fga',
-        'opponents_formula': 'opp_3fga',
-        'minimum_width': 'auto',
-    },
-    
-    'Points_Per_Three_attempt': {
-        'stat_category': 'basic',
-        'display_name': 'P3',
-        'description': 'Points per three-point attempt',
-        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'scoring',
-        'stat_mode': 'basic',
-        'has_percentile': True,
-        'is_stat': True,
-        'editable': False,
-        'reverse_percentile': False,
-        'scale_with_mode': False,
-        'format': 'number',
-        'decimal_places': 2,
-        'player_formula': '3 * (3fgm / 3fga)',
-        'team_formula': '3 * (3fgm / 3fga)',
-        'opponents_formula': '3 * (opp_3fgm / opp_3fga)',
         'minimum_width': 'auto',
     },
     
@@ -784,6 +737,46 @@ SHEETS_COLUMNS = {
         'minimum_width': 'auto',
     },
     
+    '3fga': {
+        'stat_category': 'basic',
+        'display_name': '3A',
+        'description': 'Three-point field goal attempts',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'scoring',
+        'stat_mode': 'basic',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'scale_with_mode': True,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': '3fga',
+        'team_formula': '3fga',
+        'opponents_formula': 'opp_3fga',
+        'minimum_width': 'auto',
+    },
+    
+    'Points_Per_Three_attempt': {
+        'stat_category': 'basic',
+        'display_name': 'P3',
+        'description': 'Points per three-point attempt',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'scoring',
+        'stat_mode': 'basic',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'scale_with_mode': False,
+        'format': 'number',
+        'decimal_places': 2,
+        'player_formula': '3 * (3fgm / 3fga)',
+        'team_formula': '3 * (3fgm / 3fga)',
+        'opponents_formula': '3 * (opp_3fgm / opp_3fga)',
+        'minimum_width': 'auto',
+    },
+    
     'cont_3fga': {
         'stat_category': 'tracking',
         'display_name': 'C3A',
@@ -917,21 +910,31 @@ SHEETS_COLUMNS = {
     'assists': {
         'stat_category': 'basic',
         'display_name': 'AST',
-        'description': 'Assists',
+        'description': 'Assists per 100 possessions',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'distribution',
+        'subsection': 'ball_management',
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'scale_with_mode': True,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'assists',
-        'team_formula': 'assists',
-        'opponents_formula': 'opp_assists',
-        'minimum_width': 'auto',
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'AST',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'assists',
+                'team_formula': 'assists',
+                'opponents_formula': 'opp_assists',
+            },
+        },
+        'player_formula': '(assists / possessions) * 100',
+        'team_formula': '(assists / possessions) * 100',
+        'opponents_formula': '(opp_assists / possessions) * 100',
+        'minimum_width': 30,
     },
     
     'potential_assists': {
@@ -939,7 +942,7 @@ SHEETS_COLUMNS = {
         'display_name': 'PAST',
         'description': 'Potential assists (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'distribution',
+        'subsection': 'ball_management',
         'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
@@ -959,7 +962,7 @@ SHEETS_COLUMNS = {
         'display_name': '2AST',
         'description': 'Secondary assists (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'distribution',
+        'subsection': 'ball_management',
         'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
@@ -979,7 +982,7 @@ SHEETS_COLUMNS = {
         'display_name': 'Pass',
         'description': 'Total passes made (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'distribution',
+        'subsection': 'ball_management',
         'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
@@ -999,7 +1002,7 @@ SHEETS_COLUMNS = {
         'display_name': 'Tou',
         'description': 'Total touches (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'distribution',
+        'subsection': 'ball_management',
         'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
@@ -1019,7 +1022,7 @@ SHEETS_COLUMNS = {
         'display_name': 'SPT',
         'description': 'Average seconds per touch (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'distribution',
+        'subsection': 'ball_management',
         'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
@@ -1039,7 +1042,7 @@ SHEETS_COLUMNS = {
         'display_name': 'DPT',
         'description': 'Average dribbles per touch (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'distribution',
+        'subsection': 'ball_management',
         'stat_mode': 'advanced',
         'has_percentile': True,
         'is_stat': True,
@@ -1059,7 +1062,7 @@ SHEETS_COLUMNS = {
         'display_name': 'TOV%',
         'description': 'Turnovers per possession (%)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'distribution',
+        'subsection': 'ball_management',
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
@@ -1095,6 +1098,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'nullable': True,
         'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
@@ -1110,8 +1114,8 @@ SHEETS_COLUMNS = {
         },
         'player_formula': 'o_rebound_pct_x1000 / 10',
         'team_formula': 'o_rebound_pct_x1000 / 10',
-        'opponents_formula': 'opp_o_rebound_pct_x1000 / 10',
-        'minimum_width': 'auto',
+        'opponents_formula': None,
+        'minimum_width': 30,
     },
     
     'dreb_pct': {
@@ -1125,6 +1129,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'nullable': True,
         'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
@@ -1140,7 +1145,7 @@ SHEETS_COLUMNS = {
         },
         'player_formula': 'd_rebound_pct_x1000 / 10',
         'team_formula': 'd_rebound_pct_x1000 / 10',
-        'opponents_formula': 'opp_d_rebound_pct_x1000 / 10',
+        'opponents_formula': None,
         'minimum_width': 'auto',
     },
     
@@ -1404,10 +1409,10 @@ SHEETS_COLUMNS = {
         'minimum_width': 'auto',
     },
     
-    'block_pct': {
+    'blocks': {
         'stat_category': 'basic',
-        'display_name': 'Blk%',
-        'description': 'Blocks per contest',
+        'display_name': 'Blk',
+        'description': 'Blocks',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'both',
@@ -1416,21 +1421,11 @@ SHEETS_COLUMNS = {
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
-        'format': 'percentage',
+        'format': 'number',
         'decimal_places': 1,
-        'mode_overrides': {
-            'totals': {
-                'display_name': 'BLK',
-                'format': 'number',
-                'decimal_places': 1,
-                'player_formula': 'blocks',
-                'team_formula': 'blocks',
-                'opponents_formula': 'opp_blocks',
-            },
-        },
-        'player_formula': 'blocks / contests',
-        'team_formula': 'blocks / (opp_2fga + opp_3fga)',
-        'opponents_formula': 'opp_blocks / (2fga + 3fga)',
+        'player_formula': 'blocks',
+        'team_formula': 'blocks',
+        'opponents_formula': 'opp_blocks',
         'minimum_width': 'auto',
     },
     
@@ -1457,7 +1452,7 @@ SHEETS_COLUMNS = {
     'steals_plus_charges': {
         'stat_category': 'basic',
         'display_name': 'TOVF',
-        'description': 'Steals plus charges drawn',
+        'description': 'Steals plus charges per 100 possessions',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'stat_mode': 'both',
@@ -1465,11 +1460,21 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'scale_with_mode': True,
+        'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'steals + charges',
-        'team_formula': 'steals + charges',
+        'mode_overrides': {
+            'totals': {
+                'display_name': 'TOVF',
+                'format': 'number',
+                'decimal_places': 1,
+                'player_formula': 'steals + charges_drawn',
+                'team_formula': 'steals + charges',
+                'opponents_formula': None,
+            },
+        },
+        'player_formula': '((steals + charges_drawn) / possessions) * 100',
+        'team_formula': '((steals + charges_drawn) / possessions) * 100',
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
@@ -1514,7 +1519,7 @@ SHEETS_COLUMNS = {
         'minimum_width': 'auto',
     },
     
-    'off_rating': {
+    'o_rating': {
         'stat_category': 'basic',
         'display_name': 'ORT',
         'description': 'Offensive rating per 100 possessions',
@@ -1525,16 +1530,17 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'nullable': True,
         'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'off_rating_x10 / 10',
-        'team_formula': 'off_rating_x10 / 10',
+        'player_formula': 'o_rating_x10 / 10',
+        'team_formula': 'o_rating_x10 / 10',
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
     
-    'def_rating': {
+    'd_rating': {
         'stat_category': 'basic',
         'display_name': 'DRT',
         'description': 'Defensive rating per 100 possessions',
@@ -1545,19 +1551,20 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
+        'nullable': True,
         'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'def_rating_x10 / 10',
-        'team_formula': 'def_rating_x10 / 10',
+        'player_formula': 'd_rating_x10 / 10',
+        'team_formula': 'd_rating_x10 / 10',
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
     
-    'off_onoff': {
+    'net_off_o_rating': {
         'stat_category': 'basic',
-        'display_name': 'OO/O',
-        'description': 'Offensive on/off differential',
+        'display_name': 'NOOO',
+        'description': 'Net Offensive on/off Team Rating',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
         'stat_mode': 'both',
@@ -1565,19 +1572,20 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'nullable': True,
         'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'off_onoff_x10 / 10',
+        'player_formula': '(o_rating_x10 / 10) - (off_o_rating_x10 / 10)',
         'team_formula': None,
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
     
-    'def_onoff': {
+    'net_off_d_rating': {
         'stat_category': 'basic',
-        'display_name': 'DO/O',
-        'description': 'Defensive on/off differential',
+        'display_name': 'NDOO',
+        'description': 'Net Defensive on/off Team Rating',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
         'stat_mode': 'both',
@@ -1585,10 +1593,11 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
+        'nullable': True,
         'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'def_onoff_x10 / 10',
+        'player_formula': '(d_rating_x10 / 10) - (off_d_rating_x10 / 10)',
         'team_formula': None,
         'opponents_formula': None,
         'minimum_width': 'auto',

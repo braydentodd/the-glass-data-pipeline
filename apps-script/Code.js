@@ -79,7 +79,7 @@ function getColors() {
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
-  ui.createMenu('Stats')
+  ui.createMenu('Display Settings')
     .addItem('Totals',              'switchToTotals')
     .addItem('Per Game',            'switchToPerGame')
     .addItem('Per 36 Minutes',      'switchToPer36')
@@ -88,23 +88,19 @@ function onOpen() {
     .addItem('Toggle Advanced Stats', 'toggleAdvancedStats')
     .addItem('Toggle Percentiles',    'togglePercentiles')
     .addSeparator()
-    .addItem('Historical Timeframe...', 'showHistoricalStatsDialog')
+    .addItem('Toggle Player Info',      'togglePlayerInfo')
+    .addItem('Toggle Analysis',         'toggleAnalysis')
+    .addItem('Toggle Current Stats',    'toggleCurrentStats')
+    .addItem('Toggle Historical Stats', 'toggleHistoricalStats')
+    .addItem('Toggle Postseason Stats', 'togglePostseasonStats')
     .addSeparator()
-    .addSubMenu(
-      ui.createMenu('Sections')
-        .addItem('Toggle Player Info',      'togglePlayerInfo')
-        .addItem('Toggle Analysis',         'toggleAnalysis')
-        .addItem('Toggle Current Stats',    'toggleCurrentStats')
-        .addItem('Toggle Historical Stats', 'toggleHistoricalStats')
-        .addItem('Toggle Postseason Stats', 'togglePostseasonStats')
-        .addSeparator()
-        .addItem('Show All Sections',       'showAllSections')
-    )
+    .addItem('Historical Timeframe', 'showHistoricalStatsDialog')
     .addToUi();
 }
 
 // ============================================================
-// EDIT TRIGGER - wingspan / notes write-back to DB
+// EDIT TRIGGER - config-driven write-back to DB for all
+//                editable fields (wingspan, hand, notes, …)
 // ============================================================
 
 function onEditInstallable(e) {
@@ -115,45 +111,51 @@ function onEditInstallable(e) {
 
   if (!nbaTeams.hasOwnProperty(sheetName) && sheetName !== 'NBA') return;
 
-  var colIndices = config.column_indices || {};
-  var editedCol  = e.range.getColumn();
-  var editedRow  = e.range.getRow();
-
-  // Skip header rows (config-driven layout)
-  var layout = config.layout || {};
+  var layout    = config.layout || {};
+  var editedRow = e.range.getRow();
   if (editedRow <= (layout.header_row_count || 4)) return;
 
-  var wingspanCol = colIndices.wingspan;
-  var notesCol    = colIndices.notes;
-  if (!wingspanCol && !notesCol) return;
+  // Determine which editable column was edited (config-driven)
+  var editableColumns = config.editable_columns || [];
+  var editedCol       = e.range.getColumn();
+  var isNba           = (sheetName === 'NBA');
+  var matched         = null;
 
+  for (var i = 0; i < editableColumns.length; i++) {
+    var ec     = editableColumns[i];
+    var colIdx = isNba ? ec.nba_col_index : ec.team_col_index;
+    if (colIdx === editedCol) { matched = ec; break; }
+  }
+  if (!matched) return;
+
+  var ss         = SpreadsheetApp.getActiveSpreadsheet();
   var playerName = sheet.getRange(editedRow, 1).getValue();
   if (!playerName) return;
 
-  var teamAbbr = (sheetName === 'NBA')
+  var colIndices = config.column_indices || {};
+  var teamAbbr   = isNba
     ? sheet.getRange(editedRow, colIndices.team || 2).getValue()
     : sheetName;
 
-  if (editedCol === wingspanCol) {
-    var wingspan = parseWingspan(e.range.getValue());
-    if (wingspan === null) {
-      SpreadsheetApp.getActiveSpreadsheet().toast(
-        "Invalid wingspan. Use feet'inches (e.g. 6'8) or total inches.",
-        'Error', 5
-      );
+  var value = e.range.getValue();
+
+  // Field-specific validation
+  if (matched.col_key === 'wingspan') {
+    value = parseWingspan(value);
+    if (value === null) {
+      ss.toast("Invalid wingspan. Use feet'inches (e.g. 6'8) or total inches.", 'Error', 5);
       return;
     }
-    var playerId = getPlayerIdByName(playerName, teamAbbr);
-    if (playerId) {
-      try { updatePlayerField(playerId, 'wingspan', wingspan); }
-      catch (err) { SpreadsheetApp.getActiveSpreadsheet().toast('Error saving wingspan: ' + err.message, 'Error', 5); }
-    }
-  } else if (editedCol === notesCol) {
-    var playerId2 = getPlayerIdByName(playerName, teamAbbr);
-    if (playerId2) {
-      try { updatePlayerField(playerId2, 'notes', e.range.getValue()); }
-      catch (err) { SpreadsheetApp.getActiveSpreadsheet().toast('Error saving note: ' + err.message, 'Error', 5); }
-    }
+  }
+
+  var playerId = getPlayerIdByName(playerName, teamAbbr);
+  if (!playerId) return;
+
+  try {
+    updatePlayerField(playerId, matched.db_field, value);
+    ss.toast(matched.display_name + ' saved for ' + playerName, 'Saved ✓', 3);
+  } catch (err) {
+    ss.toast('Error saving ' + matched.display_name + ': ' + err.message, 'Error', 5);
   }
 }
 

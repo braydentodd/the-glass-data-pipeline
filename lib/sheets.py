@@ -166,6 +166,13 @@ def evaluate_formula(col_key: str, entity_data: dict,
 
     # Evaluate compiled expression
     try:
+        # For nullable columns, return None if any source field is NULL in DB
+        if col_def.get('nullable', False):
+            formula_str = col_def.get(ftype)
+            if formula_str:
+                for var_name in _extract_formula_variables(formula_str):
+                    if var_name in entity_data and entity_data[var_name] is None:
+                        return None
         local_vars = _sanitize_entity_data(entity_data)
         local_vars['STAT_CONSTANTS'] = STAT_CONSTANTS
         return eval(compiled, {"__builtins__": {}}, local_vars)
@@ -801,7 +808,7 @@ def get_columns_by_filters(section=None, subsection=None, entity=None,
             fkey = f'{entity}_formula'
             if col_def.get(fkey) is None:
                 continue
-        if stat_mode:
+        if stat_mode and stat_mode != 'both':
             col_mode = col_def.get('stat_mode', 'both')
             if col_mode != 'both' and col_mode != stat_mode:
                 continue
@@ -1653,24 +1660,23 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             },
         }
     })
-    # Enforce column width overrides from config (only columns with numeric values)
-    width_overrides = fmt.get('column_width_overrides', {})
-    for col_key, width in width_overrides.items():
-        if isinstance(width, (int, float)):
-            col_idx = get_column_index(col_key, columns_list)
-            if col_idx is not None:
-                requests.append({
-                    'updateDimensionProperties': {
-                        'range': {
-                            'sheetId': ws_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': col_idx,
-                            'endIndex': col_idx + 1,
-                        },
-                        'properties': {'pixelSize': int(width)},
-                        'fields': 'pixelSize',
-                    }
-                })
+    # Enforce minimum_width from column definitions (only columns with numeric values)
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        min_width = col_def.get('minimum_width')
+        if isinstance(min_width, (int, float)):
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'pixelSize': int(min_width)},
+                    'fields': 'pixelSize',
+                }
+            })
 
     # ---- 16. Hide advanced stat columns ----
     if fmt.get('hide_advanced_columns', True):
@@ -2191,8 +2197,6 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
     }
 
     # --- Column indices for edit detection (1-indexed for Sheets) --------
-    wingspan_idx = get_column_index('wingspan', team_columns)
-    notes_idx = get_column_index('notes', team_columns)
     nba_id_idx = get_column_index('nba_id', team_columns)
     team_col_idx = get_column_index('team', nba_columns)
     stats_start = None
@@ -2201,6 +2205,25 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
             stats_start = i + 1  # 1-indexed
             break
 
+    # --- Editable columns (config-driven for Apps Script) ----------------
+    editable_columns = []
+    for col_key, col_def in SHEETS_COLUMNS.items():
+        if not col_def.get('editable', False):
+            continue
+        db_field = col_def.get('player_formula')
+        if not db_field or any(op in db_field for op in '+-*/('):
+            continue
+        team_idx = get_column_index(col_key, team_columns)
+        nba_idx = get_column_index(col_key, nba_columns)
+        editable_columns.append({
+            'col_key': col_key,
+            'team_col_index': (team_idx or 0) + 1,
+            'nba_col_index': (nba_idx or 0) + 1 if nba_idx is not None else None,
+            'db_field': db_field,
+            'display_name': col_def.get('display_name', col_key),
+            'format': col_def.get('format', 'text'),
+        })
+
     return {
         'api_base_url': f"http://{SERVER_CONFIG['production_host']}:{SERVER_CONFIG['production_port']}",
         'sheet_id': GOOGLE_SHEETS_CONFIG.get('spreadsheet_id', ''),
@@ -2208,9 +2231,8 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
         'stat_columns': stat_columns,
         'reverse_stats': get_reverse_stats(),
         'editable_fields': get_editable_fields(),
+        'editable_columns': editable_columns,
         'column_indices': {
-            'wingspan': (wingspan_idx or 0) + 1,
-            'notes': (notes_idx or 0) + 1,
             'player_id': (nba_id_idx or 0) + 1,
             'team': (team_col_idx or 0) + 1,
             'stats_start': stats_start or 9,

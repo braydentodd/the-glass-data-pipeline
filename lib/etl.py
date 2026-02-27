@@ -2052,11 +2052,40 @@ def get_endpoint_parameter_combinations(endpoint_name: str, entity: Literal['pla
     if not param_combinations:
         param_combinations = [{}]
 
-    # Sort: empty dict first (basic stats), then by JSON string
+    # Build a set of param combinations that write indicator columns
+    # (pt_indicator='yes'). These MUST run first so that the NULL/zero
+    # cleanup for later param combinations sees the correct indicator value.
+    # Without this, e.g. Passing cleanup sees tr_games=0 (default) and
+    # NULLs pot_assists/passes/sec_assists before Possessions can set tr_games.
+    indicator_param_sets = set()
+    for col_name, col_meta in DB_COLUMNS.items():
+        if not isinstance(col_meta, dict):
+            continue
+        if col_meta.get('pt_indicator') != 'yes':
+            continue
+        source_config = col_meta.get(source_key)
+        if not source_config or not isinstance(source_config, dict):
+            continue
+        if source_config.get('endpoint') != endpoint_name:
+            continue
+        # Extract the param combo for this indicator column
+        ind_params = source_config.get('params', {}).copy()
+        for key in PARAM_KEYS:
+            if key in source_config and key not in ind_params:
+                ind_params[key] = source_config[key]
+        ind_relevant = {k: v for k, v in ind_params.items()
+                        if k in PARAM_KEYS and not k.startswith('_')}
+        indicator_param_sets.add(json.dumps(ind_relevant, sort_keys=True))
+
+    # Sort: empty dict first (basic stats), then indicator-writing param
+    # combinations (must run before dependents), then everything else.
     def sort_key(params_dict):
         if not params_dict:
             return (0, '')
-        return (1, json.dumps(params_dict, sort_keys=True))
+        param_json = json.dumps(params_dict, sort_keys=True)
+        if param_json in indicator_param_sets:
+            return (0.5, param_json)  # Indicator combos run right after base
+        return (1, param_json)
 
     param_combinations.sort(key=sort_key)
     return param_combinations
@@ -2076,7 +2105,6 @@ def get_columns_for_endpoint_params(endpoint_name: str, params: Dict[str, Any], 
         List of column names that use this exact endpoint+params combination
         (includes both direct extraction and transformation columns)
     """
-    import json
     
     source_key = f'{entity}_source'
     matching_columns = []
@@ -2903,7 +2931,7 @@ def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
     
     results = []
     consecutive_failures = 0
-    FAILURE_THRESHOLD = API_CONFIG.get('api_failure_threshold', 3)
+    FAILURE_THRESHOLD = API_CONFIG.get('api_failure_threshold', 1)
     RESTART_ENABLED = API_CONFIG.get('api_restart_enabled', True)
 
     for idx, team_id in enumerate(team_ids):

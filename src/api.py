@@ -521,11 +521,12 @@ def update_player(player_id):
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        returning_fields = ['player_id', 'name'] + allowed_fields
         query = f"""
             UPDATE players 
             SET {', '.join(updates)}
             WHERE player_id = %s
-            RETURNING player_id, name, wingspan_inches, notes
+            RETURNING {', '.join(returning_fields)}
         """
         
         cursor.execute(query, values)
@@ -540,13 +541,10 @@ def update_player(player_id):
         cursor.close()
         conn.close()
         
-        return jsonify({
-            'success': True,
-            'player_id': updated_player[0],
-            'name': updated_player[1],
-            'wingspan_inches': updated_player[2],
-            'notes': updated_player[3]
-        })
+        result = {'success': True}
+        for i, field in enumerate(returning_fields):
+            result[field] = updated_player[i]
+        return jsonify(result)
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
