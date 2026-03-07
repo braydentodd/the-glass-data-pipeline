@@ -16,8 +16,8 @@ load_dotenv()
 # ============================================================================
 
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', ''),
-    'port': int(os.getenv('DB_PORT', '')),
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'port': int(os.getenv('DB_PORT', '5432')),
     'database': os.getenv('DB_NAME', ''),
     'user': os.getenv('DB_USER', ''),
     'password': os.getenv('DB_PASSWORD', '')
@@ -2346,8 +2346,8 @@ PARALLEL_EXECUTION = {
 }
 
 API_CONFIG = {
-    'rate_limit_delay': 1,             # Light delay between API calls (session exhaustion occurs regardless)
-    'per_player_rate_limit': 2,        # Increased delay for per-player endpoints to prevent throttling
+    'rate_limit_delay': 1.2,             # Light delay between API calls (session exhaustion occurs regardless)
+    'per_player_rate_limit': 2.5,        # Increased delay for per-player endpoints to prevent throttling
     'season_delay': 0.0,                 # No delay needed for single-player sequential backfill
     'timeout_default': 30,
     'backoff_divisor': 5,               # Divisor for exponential backoff calculation

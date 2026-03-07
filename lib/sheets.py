@@ -161,13 +161,16 @@ def evaluate_formula(col_key: str, entity_data: dict,
         # NULL in DB → None → empty cell, no percentile color
         # Field absent → 0 → safe default for calculations
         if compiled in entity_data:
+            # Non-nullable columns (games, years) → 0 instead of None
+            if not col_def.get('nullable', True):
+                return 0
             return None
         return 0
 
     # Evaluate compiled expression
     try:
         # For nullable columns, return None if any source field is NULL in DB
-        if col_def.get('nullable', False):
+        if col_def.get('nullable', True):
             formula_str = col_def.get(ftype)
             if formula_str:
                 for var_name in _extract_formula_variables(formula_str):
@@ -188,6 +191,48 @@ def evaluate_formula(col_key: str, entity_data: dict,
 # ============================================================================
 # STAT CALCULATION ENGINE
 # ============================================================================
+
+def _eval_dynamic_formula(formula_str: str, entity_data: dict,
+                          col_def: dict, mode: str) -> Any:
+    """Evaluate a formula string directly against entity data with scaling.
+
+    Used for dynamically-generated opponent columns that don't exist in
+    SHEETS_COLUMNS and therefore aren't handled by calculate_entity_stats.
+    """
+    if not formula_str or not entity_data:
+        return None
+    try:
+        # Check for None source fields
+        if col_def.get('nullable', True):
+            for var_name in _extract_formula_variables(formula_str):
+                if var_name in entity_data and entity_data[var_name] is None:
+                    return None
+
+        # Simple field lookup or expression
+        if formula_str.isidentifier():
+            raw = entity_data.get(formula_str)
+        else:
+            local_vars = _sanitize_entity_data(entity_data)
+            local_vars['STAT_CONSTANTS'] = STAT_CONSTANTS
+            compiled = compile(formula_str, '<dynamic>', 'eval')
+            raw = eval(compiled, {"__builtins__": {}}, local_vars)
+
+        if raw is None:
+            return None
+
+        # Apply mode-based scaling
+        scale = col_def.get('scale_with_mode', False)
+        if mode == 'totals' or not scale:
+            return raw
+        games = entity_data.get('games', 0) or 0
+        minutes = (entity_data.get('minutes_x10', 0) or 0) / 10.0
+        possessions = entity_data.get('possessions', 0) or 0
+        if scale == 'per_game_only':
+            return raw / max(games, 1)
+        return _apply_scaling(raw, mode, games, minutes, possessions)
+    except (ZeroDivisionError, TypeError, ValueError, NameError):
+        return None
+
 
 def _apply_scaling(raw_value: Any, mode: str, games: float, minutes: float,
                    possessions: float, custom_value: Any = None) -> Any:
@@ -491,7 +536,7 @@ def fetch_team_stats(conn, team_abbr: str, section: str = 'current_stats',
 
     if section == 'current_stats':
         query = f"""
-        SELECT s.*, t.team_abbr
+        SELECT s.*, t.team_abbr, t.notes
         FROM teams t
         LEFT JOIN {stats_table} s
             ON s.team_id = t.team_id
@@ -511,14 +556,14 @@ def fetch_team_stats(conn, team_abbr: str, section: str = 'current_stats',
         s_fields.append('COUNT(DISTINCT s.year) AS year')
 
         query = f"""
-        SELECT t.team_abbr, {', '.join(s_fields)}
+        SELECT t.team_abbr, t.notes, {', '.join(s_fields)}
         FROM teams t
         LEFT JOIN {stats_table} s
             ON s.team_id = t.team_id
             {year_filter}
             AND s.season_type IN ({st})
         WHERE t.team_abbr = %s
-        GROUP BY t.team_abbr
+        GROUP BY t.team_abbr, t.notes
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params + (team_abbr,))
@@ -675,14 +720,13 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
             if val is None:
                 continue
 
-            # Apply minute-weighting for stat categories that have a minutes field
+            # Skip entities with 0 minutes for stat categories that require minutes
             if minutes_field:
                 raw_minutes = (entity.get(minutes_field, 0) or 0) / 10.0
-                if raw_minutes > 0:
-                    values.append(val * raw_minutes)
-                # Skip entities with 0 minutes for this category
-            else:
-                values.append(val)
+                if raw_minutes <= 0:
+                    continue
+
+            values.append(val)
 
         if values:
             percentiles[col_key] = sorted(values)
@@ -690,17 +734,14 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
     return percentiles
 
 
-def get_percentile_rank(value: Any, sorted_values: List, reverse: bool = False,
-                        weight: float = 1.0) -> float:
+def get_percentile_rank(value: Any, sorted_values: List, reverse: bool = False) -> float:
     """
     Calculate percentile rank using binary search on pre-sorted values.
 
     Args:
         value: The value to rank
-        sorted_values: Pre-sorted list of all values (minute-weighted)
+        sorted_values: Pre-sorted list of all values
         reverse: True if lower is better (turnovers, fouls)
-        weight: The minute weight to apply to value before ranking
-                (must match the weighting used to build sorted_values)
 
     Returns:
         Percentile rank 0-100
@@ -708,11 +749,9 @@ def get_percentile_rank(value: Any, sorted_values: List, reverse: bool = False,
     if not sorted_values or value is None:
         return 50.0
 
-    weighted_value = value * weight if weight != 1.0 else value
-
     n = len(sorted_values)
     # Count how many values this beats
-    pos = bisect_left(sorted_values, weighted_value)
+    pos = bisect_left(sorted_values, value)
 
     if reverse:
         percentile = (1 - pos / n) * 100
@@ -728,18 +767,6 @@ _MINUTES_FIELD = {
     'tracking': 'tr_minutes_x10',
     'hustle': 'h_minutes_x10',
 }
-
-
-def _get_minute_weight(col_key: str, entity_data: dict) -> float:
-    """Get the minute-weight for a column based on its stat_category.
-    Returns 1.0 for 'none' category (no weighting)."""
-    col_def = SHEETS_COLUMNS.get(col_key, {})
-    stat_cat = col_def.get('stat_category', 'none')
-    minutes_field = _MINUTES_FIELD.get(stat_cat)
-    if not minutes_field:
-        return 1.0
-    raw_minutes = (entity_data.get(minutes_field, 0) or 0) / 10.0
-    return max(raw_minutes, 0.0) or 1.0  # Avoid 0 weight; fall back to 1.0
 
 
 # ============================================================================
@@ -871,22 +898,28 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
 
     all_columns = []
 
+    # Determine entity for column lookup — Teams sheet uses 'team' entity
+    col_entity = 'team' if sheet_type == 'teams' else entity
+
     for section in SECTIONS:
         # Always fetch ALL columns (both basic + advanced) for structure
         section_cols = get_columns_for_section_and_entity(
-            section=section, entity=entity,
+            section=section, entity=col_entity,
             stat_mode='both', include_percentiles=False
         )
         for col_key, col_def in section_cols:
             # Skip columns not meant for this sheet type
             col_sheets = col_def.get('sheets', 'both')
-            if col_sheets == 'nba' and sheet_type != 'nba':
+            if col_sheets == 'nba' and sheet_type not in ('nba', 'players'):
                 continue
 
             # Advanced stat columns start hidden when hide_advanced_columns is True
             col_mode = col_def.get('stat_mode', 'both')
             visible = True
             if hide_advanced and col_mode == 'advanced':
+                visible = False
+            # Columns with sheets='players' are visible only on players sheet
+            if col_sheets == 'players' and sheet_type not in ('players', 'nba'):
                 visible = False
 
             all_columns.append((col_key, col_def, visible, section))
@@ -899,7 +932,75 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
                 pct_visible = show_percentiles
                 all_columns.append((pct_key, pct_def, pct_visible, section))
 
+    # --- Teams sheet: insert opponent columns after each subsection ------
+    if sheet_type == 'teams':
+        all_columns = _insert_opponent_columns(
+            all_columns, pct_columns, hide_advanced, show_percentiles
+        )
+
     return all_columns
+
+
+def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
+                             hide_advanced: bool,
+                             show_percentiles: bool) -> List[Tuple]:
+    """Insert opponent stat columns after each subsection for the Teams sheet.
+
+    For each stats subsection (scoring, defense, etc.), collects columns that
+    have an opponents_formula and appends mirrored opponent versions at the
+    end of that subsection.  Opponent columns use the opponents_formula as
+    their team_formula so existing row-building code evaluates them correctly.
+    Display names get an 'O' prefix; subsection gets 'opp_' prefix.
+    """
+    result: List[Tuple] = []
+    pending_opp: List[Tuple] = []
+    prev_subsection = None
+    prev_ctx = None
+
+    def _flush_opp():
+        nonlocal pending_opp
+        if pending_opp:
+            result.extend(pending_opp)
+            pending_opp = []
+
+    for entry in columns:
+        col_key, col_def, vis, ctx = entry
+        subsection = col_def.get('subsection')
+        is_stats = SECTION_CONFIG.get(ctx, {}).get('is_stats_section', False)
+
+        # Subsection boundary in a stats section → flush pending opponents
+        if is_stats and subsection != prev_subsection and prev_subsection is not None:
+            _flush_opp()
+
+        # When leaving a stats section entirely, flush
+        if not is_stats and prev_ctx and SECTION_CONFIG.get(prev_ctx, {}).get('is_stats_section', False):
+            _flush_opp()
+
+        result.append(entry)
+        prev_subsection = subsection
+        prev_ctx = ctx
+
+        # Skip non-stat columns and percentile columns
+        if not is_stats or not col_def.get('is_stat') or col_def.get('is_generated_percentile'):
+            continue
+        opp_formula = col_def.get('opponents_formula')
+        if not opp_formula:
+            continue
+
+        # Create opponent mirror column (no percentile counterpart)
+        opp_def = dict(col_def)
+        opp_def['display_name'] = f"O{col_def['display_name']}"
+        opp_def['team_formula'] = opp_formula
+        opp_def['opponents_formula'] = None
+        opp_def['is_opponent_col'] = True
+        opp_def['has_percentile'] = True  # Opponents get percentile coloring too
+        opp_def['subsection'] = f"opp_{subsection}" if subsection else None
+        opp_key = f'opp_{col_key}'
+        opp_vis = vis  # same visibility as the base column
+        pending_opp.append((opp_key, opp_def, opp_vis, ctx))
+
+    _flush_opp()  # Flush any remaining
+    return result
 
 
 def get_column_index(column_key: str, columns_list: List[Tuple],
@@ -954,13 +1055,13 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
     _section_display_overrides = {}
     if current_year:
         _section_display_overrides['current_stats'] = format_section_header(
-            'current_stats', current_year=current_year)
+            'current_stats', current_year=current_year, mode=mode)
         _section_display_overrides['historical_stats'] = format_section_header(
             'historical_stats', years_config=historical_config,
-            current_year=current_year, is_postseason=False)
+            current_year=current_year, is_postseason=False, mode=mode)
         _section_display_overrides['postseason_stats'] = format_section_header(
             'postseason_stats', years_config=postseason_config,
-            current_year=current_year, is_postseason=True)
+            current_year=current_year, is_postseason=True, mode=mode)
     else:
         # Legacy fallback
         if hist_timeframe:
@@ -1127,8 +1228,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
 
             if value is not None and base_key in pcts:
                 reverse = base_def.get('reverse_percentile', False)
-                weight = _get_minute_weight(base_key, sec_entity)
-                rank = get_percentile_rank(value, pcts[base_key], reverse, weight)
+                rank = get_percentile_rank(value, pcts[base_key], reverse)
                 row.append(round(rank))
             else:
                 row.append('')
@@ -1139,23 +1239,39 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         if col_key == 'years':
             # In merged mode, get the year count from the section's entity data
             if section_data and is_stats_section and col_ctx in section_data:
-                year_count = section_data[col_ctx][0].get('year', '')
+                year_count = section_data[col_ctx][0].get('year')
             elif not section_data:
-                year_count = entity_data.get('year', '')
+                year_count = entity_data.get('year')
             else:
-                year_count = ''
+                year_count = None
             # year count is already an integer from COUNT(DISTINCT s.year)
-            row.append(year_count if year_count else '')
+            # Non-nullable: show 0 when missing (with percentile color)
+            if year_count is None or year_count == '':
+                row.append(0 if not col_def.get('nullable', True) else '')
+            else:
+                row.append(year_count)
             continue
 
         # Info column (non-stat) — simple field lookup
         if not col_def.get('is_stat', False):
             use_entity = sec_entity if section_data and is_stats_section else primary_entity
             value = evaluate_formula(col_key, use_entity, entity_type, mode)
-            if col_def.get('format') == 'height' and value:
+            if value is None:
+                row.append('')
+            elif col_def.get('format') == 'height':
                 row.append(format_height(value))
             else:
-                row.append(value if value else '')
+                row.append(value)
+            continue
+
+        # Dynamically-generated opponent column (Teams sheet) — eval directly
+        if col_def.get('is_opponent_col'):
+            formula_str = col_def.get('team_formula')
+            value = _eval_dynamic_formula(formula_str, sec_entity, col_def, mode)
+            override = col_def.get('mode_overrides', {}).get(mode)
+            active_def = override if override else col_def
+            formatted = format_stat_value(value, active_def)
+            row.append(formatted if formatted is not None else '')
             continue
 
         # Stat column — use pre-calculated value
@@ -1198,65 +1314,79 @@ def format_stat_value(value: Any, col_def: dict) -> Any:
 
 
 def format_height(inches: Any) -> str:
-    """Format height in inches to feet-inches string. 80 → 6'8\"."""
+    """Format height in inches to feet-inches string. 80 → 6'8\", 78.5 → 6'6.5\"."""
     if not inches:
         return ''
     feet = int(inches // 12)
-    remaining = int(inches % 12)
-    return f"{feet}'{remaining}\""
+    remaining = inches % 12
+    # Whole inches for individual players, 1 decimal for team averages
+    if remaining == int(remaining):
+        return f"{feet}'{int(remaining)}\""
+    return f"{feet}'{remaining:.1f}\""
 
 
 def format_section_header(section: str, years_config: Optional[dict] = None,
                           current_year: int = 0,
-                          is_postseason: bool = False) -> str:
+                          is_postseason: bool = False,
+                          mode: Optional[str] = None) -> str:
     """
     Build the full section header display string.
 
-    Current stats:   "2025-26 Regular Season Stats"
-    Historical/Post: "Last 3 Regular Season Stats (2023-24 to 2025-26)"
-                     "Career Regular Season Stats"
-                     "Career Previous Regular Season Stats"
-                     "Last 3 Previous Postseason Stats (2022-23 to 2024-25)"
+    Current stats:   "2025-26 Regular Season Stats per 100 Poss"
+    Historical/Post: "Last 3 Regular Season Stats (2023-24 to 2025-26) per 36 Mins"
+                     "Career Regular Season Stats Totals"
 
     Args:
         section: 'current_stats', 'historical_stats', or 'postseason_stats'
         years_config: {mode, value, include_current} for hist/post
         current_year: End-year integer (e.g. 2026 for 2025-26 season)
         is_postseason: True for postseason sections
+        mode: Stats display mode ('per_game', 'per_36', 'per_100', 'totals')
     """
+    _MODE_LABELS = {
+        'per_game': 'per Game',
+        'per_36': 'per 36 Mins',
+        'per_100': 'per 100 Poss',
+        'totals': 'Totals',
+    }
+
     season_label = 'Postseason' if is_postseason else 'Regular Season'
 
-    # Current stats: just "YYYY-YY Regular Season Stats"
+    # Current stats: just "YYYY-YY Regular Season Stats (mode)"
     if section == 'current_stats':
         season_str = _year_to_season(current_year)
-        return f"{season_str} {season_label} Stats"
+        header = f"{season_str} {season_label} Stats"
+        mode_label = _MODE_LABELS.get(mode, '')
+        return f"{header} {mode_label}" if mode_label else header
 
     # Historical / Postseason sections
-    mode = (years_config or {}).get('mode', 'years')
+    mode_cfg = (years_config or {}).get('mode', 'years')
     value = (years_config or {}).get('value', 3)
     include_current = (years_config or {}).get('include_current', False)
 
     previous = '' if include_current else ' Previous'
+    mode_label = _MODE_LABELS.get(mode, '')
+    mode_suffix = f" {mode_label}" if mode_label else ''
 
-    if mode == 'career':
-        return f"Career{previous} {season_label} Stats"
-    elif mode == 'years':
+    if mode_cfg == 'career':
+        return f"Career{previous} {season_label} Stats{mode_suffix}"
+    elif mode_cfg == 'years':
         start = 0 if include_current else 1
         end_year = current_year - start
         start_year = current_year - (start + value - 1)
         range_str = f" ({_year_to_season(start_year)} to {_year_to_season(end_year)})"
-        return f"Last {value}{previous} {season_label} Stats{range_str}"
-    elif mode == 'seasons':
+        return f"Last {value}{previous} {season_label} Stats{range_str}{mode_suffix}"
+    elif mode_cfg == 'seasons':
         seasons = value if isinstance(value, list) else []
         if seasons:
             n = len(seasons)
             first = min(seasons)
             last = max(seasons)
             range_str = f" ({first} to {last})"
-            return f"Last {n}{previous} {season_label} Stats{range_str}"
-        return f"{season_label} Stats"
+            return f"Last {n}{previous} {season_label} Stats{range_str}{mode_suffix}"
+        return f"{season_label} Stats{mode_suffix}"
     else:
-        return f"{season_label} Stats"
+        return f"{season_label} Stats{mode_suffix}"
 
 
 def format_years_range(years_config: Optional[dict], current_year: int) -> str:
@@ -1336,10 +1466,16 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               header_merges: list, n_data_rows: int,
                               team_name: str,
                               percentile_cells: Optional[List[dict]] = None,
-                              n_player_rows: int = 0) -> list:
+                              n_player_rows: int = 0,
+                              sheet_type: str = 'team',
+                              show_advanced: bool = False,
+                              show_percentiles: bool = False) -> list:
     """
     Build ALL Google Sheets batch_update requests for a worksheet.
     100% config-driven from SHEET_FORMATTING.
+
+    show_advanced / show_percentiles override config defaults so that
+    syncs respect the user's current toggle state.
 
     Args:
         ws_id: Worksheet ID
@@ -1349,6 +1485,9 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         team_name: Full team name for display
         percentile_cells: List of {row, col, percentile, reverse} for shading
         n_player_rows: Number of player rows (for filter range; team/opp excluded)
+        sheet_type: 'team', 'players', or 'teams'
+        show_advanced: If True, keep advanced columns visible (override config)
+        show_percentiles: If True, keep percentile columns visible (override config)
 
     Returns:
         List of request dicts for spreadsheet.batch_update
@@ -1362,6 +1501,11 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     header_border_color = get_color_for_raw(COLORS[fmt['header_border_color']])
     data_border_color = get_color_for_raw(COLORS[fmt['data_border_color']])
     wrap_strategy = fmt.get('wrap_strategy', 'CLIP')
+
+    # Respect current toggle state: override config defaults
+    hide_advanced = not show_advanced if show_advanced else fmt.get('hide_advanced_columns', True)
+    hide_percentiles = not show_percentiles if show_percentiles else fmt.get('hide_percentile_columns', True)
+    hide_subsection_row = hide_advanced  # subsection row visibility matches advanced state
 
     requests = []
 
@@ -1515,32 +1659,34 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             }
         })
 
+    # ---- 6b. Clear stale borders from previous syncs ----
+    # ws.clear() removes values but NOT formatting/borders.
+    # If the roster size changed, old borders would persist at wrong positions.
+    if n_data_rows > 0:
+        requests.append({
+            'updateBorders': {
+                'range': _range(ws_id, data_start, total_rows, 0, n_cols),
+                'top': {'style': 'NONE'},
+                'bottom': {'style': 'NONE'},
+                'left': {'style': 'NONE'},
+                'right': {'style': 'NONE'},
+                'innerHorizontal': {'style': 'NONE'},
+                'innerVertical': {'style': 'NONE'},
+            }
+        })
+
     # ---- 7. Alternating row colors via addBanding (survives sorting) ----
-    # Banding applies to player rows only (team/opp rows get separate styling)
-    if n_player_rows > 0:
+    # Banding covers ALL data rows including team/opponent rows
+    if n_data_rows > 0:
         requests.append({
             'addBanding': {
                 'bandedRange': {
-                    'range': _range(ws_id, data_start, data_start + n_player_rows, 0, n_cols),
+                    'range': _range(ws_id, data_start, data_start + n_data_rows, 0, n_cols),
                     'rowProperties': {
                         'firstBandColor': get_color_for_raw(COLORS[fmt['row_even_bg']]),
                         'secondBandColor': get_color_for_raw(COLORS[fmt['row_odd_bg']]),
                     },
                 },
-            }
-        })
-    # Team and opponent rows get white background
-    if n_data_rows > n_player_rows:
-        team_opp_start = data_start + n_player_rows
-        requests.append({
-            'repeatCell': {
-                'range': _range(ws_id, team_opp_start, total_rows, 0, n_cols),
-                'cell': {
-                    'userEnteredFormat': {
-                        'backgroundColor': get_color_for_raw(COLORS['white']),
-                    },
-                },
-                'fields': 'userEnteredFormat.backgroundColor',
             }
         })
 
@@ -1605,17 +1751,15 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 11. Subsection borders — ONLY when advanced columns are visible ----
-    # In basic mode (hide_advanced_columns=True) subsection borders are hidden
-    # since basic columns form a single group; they only help when advanced
-    # stats are toggled on and need visual separation.
-    if not fmt.get('hide_advanced_columns', True):
+    # ---- 11. Subsection borders — shown when advanced columns are visible ----
+    if not hide_advanced:
         subsection_boundaries = _get_subsection_boundaries(columns_list)
+        sub_hdr_row = fmt['subsection_header_row']  # 0-indexed row 1
         for boundary_col in subsection_boundaries:
-            # Header portion — white border
+            # Header portion (from subsection row through filter row) — white border
             requests.append({
                 'updateBorders': {
-                    'range': _range(ws_id, 0, header_end, boundary_col, boundary_col + 1),
+                    'range': _range(ws_id, sub_hdr_row, header_end, boundary_col, boundary_col + 1),
                     'left': _border_style_v2(border_weight, header_border_color),
                 }
             })
@@ -1678,16 +1822,33 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 16. Hide advanced stat columns ----
-    if fmt.get('hide_advanced_columns', True):
+    # ---- 16. Hide advanced stat columns (respects current toggle state) ----
+    if hide_advanced:
         requests.extend(_build_hide_advanced_requests(ws_id, columns_list))
 
-    # ---- 17. Hide percentile columns ----
-    if fmt.get('hide_percentile_columns', True):
+    # ---- 17. Hide percentile columns (respects current toggle state) ----
+    if hide_percentiles:
         requests.extend(_build_hide_percentile_requests(ws_id, columns_list))
+    # When percentiles are visible, hide the base value columns instead
+    if not hide_percentiles:
+        for idx, entry in enumerate(columns_list):
+            col_def = entry[1]
+            if col_def.get('has_percentile', False) and not col_def.get('is_generated_percentile', False):
+                requests.append({
+                    'updateDimensionProperties': {
+                        'range': {
+                            'sheetId': ws_id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': idx,
+                            'endIndex': idx + 1,
+                        },
+                        'properties': {'hiddenByUser': True},
+                        'fields': 'hiddenByUser',
+                    }
+                })
 
-    # ---- 18. Hide subsection row ----
-    if fmt.get('hide_subsection_row', True):
+    # ---- 18. Hide subsection row (tied to advanced stats state) ----
+    if hide_subsection_row:
         requests.append({
             'updateDimensionProperties': {
                 'range': {
@@ -1706,6 +1867,24 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         for idx, entry in enumerate(columns_list):
             col_ctx = entry[3] if len(entry) > 3 else None
             if col_ctx == 'identity':
+                requests.append({
+                    'updateDimensionProperties': {
+                        'range': {
+                            'sheetId': ws_id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': idx,
+                            'endIndex': idx + 1,
+                        },
+                        'properties': {'hiddenByUser': True},
+                        'fields': 'hiddenByUser',
+                    }
+                })
+
+    # ---- 19b. Hide columns with sheets='players' on non-players sheets ----
+    if sheet_type not in ('players', 'nba'):
+        for idx, entry in enumerate(columns_list):
+            col_def = entry[1]
+            if col_def.get('sheets') == 'players':
                 requests.append({
                     'updateDimensionProperties': {
                         'range': {
@@ -1974,12 +2153,16 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                             pct_curr: dict, pct_hist: dict, pct_post: dict,
                             entity_type: str = 'player',
                             mode: str = 'per_game',
-                            hist_years: str = '', post_years: str = '') -> Tuple[list, List[dict]]:
+                            hist_years: str = '', post_years: str = '',
+                            opp_percentiles: Optional[dict] = None) -> Tuple[list, List[dict]]:
     """
     Build a single merged data row with current + historical + postseason stats.
 
     Returns (row_values, percentile_cells) where percentile_cells is a list of
     {col: col_idx, percentile: rank, reverse: bool} dicts (row is set by caller).
+
+    opp_percentiles: optional dict of {opp_col_key: {section: sorted_values}}
+      for opponent column percentile coloring on the Teams sheet.
     """
     section_data = {}
     if current_data:
@@ -2015,6 +2198,23 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             # Stats section — use the section-specific percentile populations
             if col_ctx in section_data:
                 sec_entity, sec_pcts, _ = section_data[col_ctx]
+
+                # Opponent columns: use opp_percentiles if available
+                if col_def.get('is_opponent_col') and opp_percentiles:
+                    opp_pop = opp_percentiles.get(col_key, {}).get(col_ctx)
+                    if opp_pop is not None:
+                        formula_str = col_def.get('team_formula')
+                        value = _eval_dynamic_formula(formula_str, sec_entity, col_def, mode)
+                        if value is not None:
+                            reverse = col_def.get('reverse_percentile', False)
+                            rank = get_percentile_rank(value, opp_pop, reverse)
+                            percentile_cells.append({
+                                'col': col_idx,
+                                'percentile': rank,
+                                'reverse': reverse,
+                            })
+                    continue
+
                 calculated = calculate_entity_stats(sec_entity, entity_type, mode)
                 base_key = col_def.get('base_stat', col_key.replace('_pct', '')) if is_pct else col_key
                 base_def = SHEETS_COLUMNS.get(base_key, col_def)
@@ -2022,8 +2222,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
 
                 if value is not None and base_key in sec_pcts:
                     reverse = base_def.get('reverse_percentile', False)
-                    weight = _get_minute_weight(base_key, sec_entity)
-                    rank = get_percentile_rank(value, sec_pcts[base_key], reverse, weight)
+                    rank = get_percentile_rank(value, sec_pcts[base_key], reverse)
                     percentile_cells.append({
                         'col': col_idx,
                         'percentile': rank,
@@ -2046,8 +2245,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
 
             if value is not None and base_key in sec_pcts:
                 reverse = base_def.get('reverse_percentile', False)
-                weight = _get_minute_weight(base_key, sec_entity)
-                rank = get_percentile_rank(value, sec_pcts[base_key], reverse, weight)
+                rank = get_percentile_rank(value, sec_pcts[base_key], reverse)
                 percentile_cells.append({
                     'col': col_idx,
                     'percentile': rank,
@@ -2066,6 +2264,131 @@ def create_text_format(font_family=None, font_size=None, bold=False,
     if font_size:
         fmt['fontSize'] = font_size
     return fmt
+
+
+# ============================================================================
+# SUMMARY ROW BUILDING (Best, 75th, Average, 25th, Worst)
+# ============================================================================
+
+# Config-driven summary thresholds
+SUMMARY_THRESHOLDS = [
+    ('Best', 100),
+    ('75th Percentile', 75),
+    ('Average', 50),
+    ('25th Percentile', 25),
+    ('Worst', 0),
+]
+
+
+def _get_value_at_percentile(sorted_values: List, percentile: float,
+                             reverse: bool = False) -> Any:
+    """Get the interpolated value at a given percentile (0-100) from sorted values."""
+    if not sorted_values:
+        return None
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    # For reverse columns (lower = better), Best (100) → lowest value
+    if reverse:
+        percentile = 100 - percentile
+    idx = percentile / 100 * (n - 1)
+    lower = int(idx)
+    upper = min(lower + 1, n - 1)
+    frac = idx - lower
+    return sorted_values[lower] * (1 - frac) + sorted_values[upper] * frac
+
+
+def build_summary_rows(columns_list: List[Tuple],
+                       percentile_pops: dict,
+                       mode: str = 'per_100',
+                       opp_percentiles: Optional[dict] = None) -> Tuple[List[list], List[dict]]:
+    """
+    Build summary rows (Best, 75th, Average, 25th, Worst) for Teams/Players sheets.
+
+    For each stat column, looks up the value at that percentile threshold.
+    Non-stat columns are left blank except 'names' which gets the label.
+    Generated percentile columns show the percentile level itself.
+
+    Returns:
+        (rows, percentile_cells) where rows is list of 5 row lists,
+        and percentile_cells is list of {row, col, percentile} dicts
+        (row index is relative — caller must add data_start offset).
+    """
+    rows = []
+    pct_cells = []
+
+    for label, pct_level in SUMMARY_THRESHOLDS:
+        row = []
+        for col_idx, entry in enumerate(columns_list):
+            col_key, col_def = entry[0], entry[1]
+            col_ctx = entry[3] if len(entry) > 3 else None
+
+            # Names column gets the label
+            if col_key == 'names':
+                row.append(label)
+                continue
+
+            # Non-stat, non-percentile columns are blank
+            if not col_def.get('is_stat', False) and not col_def.get('is_generated_percentile', False):
+                row.append('')
+                continue
+
+            # Generated percentile columns show the percentile level
+            if col_def.get('is_generated_percentile', False):
+                row.append(pct_level)
+                # Color this cell at its percentile level
+                pct_cells.append({
+                    'col': col_idx,
+                    'percentile': pct_level,
+                    'reverse': False,  # Already correct direction
+                    'row_offset': len(rows),
+                })
+                continue
+
+            # Opponent columns: use opp_percentiles populations
+            if col_def.get('is_opponent_col') and opp_percentiles:
+                col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+                if col_ctx_cfg.get('is_stats_section') and col_ctx:
+                    opp_pop = opp_percentiles.get(col_key, {}).get(col_ctx)
+                    if opp_pop:
+                        reverse = col_def.get('reverse_percentile', False)
+                        val = _get_value_at_percentile(opp_pop, pct_level, reverse)
+                        if val is not None:
+                            formatted = format_stat_value(val, col_def)
+                            row.append(formatted if formatted is not None else '')
+                            pct_cells.append({
+                                'col': col_idx,
+                                'percentile': pct_level,
+                                'reverse': False,
+                                'row_offset': len(rows),
+                            })
+                            continue
+                row.append('')
+                continue
+
+            # Regular stat columns: look up in section-specific populations
+            col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+            if col_ctx_cfg.get('is_stats_section') and col_key in percentile_pops:
+                pop_key = f'{col_ctx}:{col_key}' if f'{col_ctx}:{col_key}' in percentile_pops else col_key
+                sorted_vals = percentile_pops.get(pop_key, percentile_pops.get(col_key))
+                if sorted_vals:
+                    reverse = col_def.get('reverse_percentile', False)
+                    val = _get_value_at_percentile(sorted_vals, pct_level, reverse)
+                    if val is not None:
+                        formatted = format_stat_value(val, col_def)
+                        row.append(formatted if formatted is not None else '')
+                        pct_cells.append({
+                            'col': col_idx,
+                            'percentile': pct_level,
+                            'reverse': False,
+                            'row_offset': len(rows),
+                        })
+                        continue
+            row.append('')
+
+        rows.append(row)
+
+    return rows, pct_cells
 
 
 def create_cell_format(background_color='white', text_format=None,
@@ -2123,14 +2446,18 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
     # --- Stat columns list -----------------------------------------------
     stat_columns = [k for k, v in SHEETS_COLUMNS.items() if v.get('is_stat', False)]
 
-    # --- Build full column lists for both sheet types --------------------
+    # --- Build full column lists for all sheet types --------------------
     team_columns = build_sheet_columns(
         entity='player', stat_mode='both',
         show_percentiles=True, sheet_type='team'
     )
     nba_columns = build_sheet_columns(
         entity='player', stat_mode='both',
-        show_percentiles=True, sheet_type='nba'
+        show_percentiles=True, sheet_type='players'
+    )
+    teams_columns = build_sheet_columns(
+        entity='team', stat_mode='both',
+        show_percentiles=True, sheet_type='teams'
     )
 
     # --- Helper: find contiguous ranges of matching column indices --------
@@ -2160,17 +2487,20 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
             return None
         return {'start': min(indices) + 1, 'count': len(indices)}  # 1-indexed
 
-    column_ranges = {'team_sheet': {}, 'nba_sheet': {}}
+    column_ranges = {'team_sheet': {}, 'nba_sheet': {}, 'teams_sheet': {}}
     _sec_rename = {'analysis': 'notes'}
     for sec in ('current_stats', 'historical_stats', 'postseason_stats',
                 'player_info', 'analysis'):
         key = _sec_rename.get(sec, sec.replace('_stats', ''))
         team_range = _section_range(team_columns, sec)
         nba_range = _section_range(nba_columns, sec)
+        teams_range = _section_range(teams_columns, sec)
         if team_range:
             column_ranges['team_sheet'][key] = team_range
         if nba_range:
             column_ranges['nba_sheet'][key] = nba_range
+        if teams_range:
+            column_ranges['teams_sheet'][key] = teams_range
 
     # --- Advanced column ranges ------------------------------------------
     def _advanced_indices(cols):
@@ -2180,8 +2510,9 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
         ])
 
     advanced_column_ranges = {
-        'team_sheet': _contiguous_ranges(_advanced_indices(team_columns)),
-        'nba_sheet':  _contiguous_ranges(_advanced_indices(nba_columns)),
+        'team_sheet':  _contiguous_ranges(_advanced_indices(team_columns)),
+        'nba_sheet':   _contiguous_ranges(_advanced_indices(nba_columns)),
+        'teams_sheet': _contiguous_ranges(_advanced_indices(teams_columns)),
     }
 
     # --- Percentile column ranges ----------------------------------------
@@ -2192,8 +2523,61 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
         ])
 
     percentile_column_ranges = {
-        'team_sheet': _contiguous_ranges(_percentile_indices(team_columns)),
-        'nba_sheet':  _contiguous_ranges(_percentile_indices(nba_columns)),
+        'team_sheet':  _contiguous_ranges(_percentile_indices(team_columns)),
+        'nba_sheet':   _contiguous_ranges(_percentile_indices(nba_columns)),
+        'teams_sheet': _contiguous_ranges(_percentile_indices(teams_columns)),
+    }
+
+    # --- Base value columns that have percentile counterparts ------------
+    # Used by Apps Script to swap between value view and percentile view
+    def _base_value_with_pct_indices(cols):
+        return sorted([
+            i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
+            if col_def.get('has_percentile', False)
+            and not col_def.get('is_generated_percentile', False)
+        ])
+
+    base_value_column_ranges = {
+        'team_sheet':  _contiguous_ranges(_base_value_with_pct_indices(team_columns)),
+        'nba_sheet':   _contiguous_ranges(_base_value_with_pct_indices(nba_columns)),
+        'teams_sheet': _contiguous_ranges(_base_value_with_pct_indices(teams_columns)),
+    }
+
+    # --- Subsection boundaries (for border management in toggles) --------
+    subsection_boundaries = {
+        'team_sheet':  [b + 1 for b in _get_subsection_boundaries(team_columns)],  # 1-indexed
+        'nba_sheet':   [b + 1 for b in _get_subsection_boundaries(nba_columns)],
+        'teams_sheet': [b + 1 for b in _get_subsection_boundaries(teams_columns)],
+    }
+
+    # --- Always-hidden columns per sheet type (1-indexed) ----------------
+    # Columns with sheets='players' are always hidden on team/teams sheets
+    def _always_hidden_indices(cols):
+        return [i + 1 for i, (ck, cd, v, cx) in enumerate(cols)
+                if cd.get('sheets') == 'players']
+
+    always_hidden_columns = {
+        'team_sheet':  _always_hidden_indices(team_columns),
+        'teams_sheet': _always_hidden_indices(teams_columns),
+        'nba_sheet':   [],  # nothing always-hidden on players sheet
+    }
+
+    # --- Stats section column ranges (for border scoping in JS) ----------
+    # JS needs to know which columns are in stats sections so it only
+    # applies subsection borders there (not in entities/player_info/analysis)
+    def _stats_section_range(cols):
+        start = end = None
+        for idx, (ck, cd, v, cx) in enumerate(cols):
+            if SECTION_CONFIG.get(cx, {}).get('is_stats_section'):
+                if start is None:
+                    start = idx + 1  # 1-indexed
+                end = idx + 1
+        return {'start': start, 'end': end} if start else None
+
+    stats_section_ranges = {
+        'team_sheet':  _stats_section_range(team_columns),
+        'nba_sheet':   _stats_section_range(nba_columns),
+        'teams_sheet': _stats_section_range(teams_columns),
     }
 
     # --- Column indices for edit detection (1-indexed for Sheets) --------
@@ -2224,10 +2608,30 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
             'format': col_def.get('format', 'text'),
         })
 
+    # --- Editable columns for teams_sheet ----
+    teams_editable = []
+    for col_key, col_def in SHEETS_COLUMNS.items():
+        if not col_def.get('editable', False):
+            continue
+        tf = col_def.get('team_formula')
+        if tf and tf != 'TEAM' and not any(op in tf for op in '+-*/('):
+            ti = get_column_index(col_key, teams_columns)
+            if ti is not None:
+                teams_editable.append({
+                    'col_key': col_key,
+                    'col_index': ti + 1,
+                    'db_field': tf,
+                    'display_name': col_def.get('display_name', col_key),
+                })
+
+    # Reverse mapping: full team name → abbreviation (for Teams sheet edit detection)
+    team_name_to_abbr = {name: abbr for _, (abbr, name) in teams_from_db.items()}
+
     return {
         'api_base_url': f"http://{SERVER_CONFIG['production_host']}:{SERVER_CONFIG['production_port']}",
         'sheet_id': GOOGLE_SHEETS_CONFIG.get('spreadsheet_id', ''),
         'nba_teams': nba_teams,
+        'team_name_to_abbr': team_name_to_abbr,
         'stat_columns': stat_columns,
         'reverse_stats': get_reverse_stats(),
         'editable_fields': get_editable_fields(),
@@ -2240,6 +2644,12 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
         'column_ranges': column_ranges,
         'advanced_column_ranges': advanced_column_ranges,
         'percentile_column_ranges': percentile_column_ranges,
+        'base_value_column_ranges': base_value_column_ranges,
+        'subsection_boundaries': subsection_boundaries,
+        'always_hidden_columns': always_hidden_columns,
+        'stats_section_ranges': stats_section_ranges,
+        'subsection_row_index': SHEET_FORMATTING['subsection_header_row'] + 1,  # 1-indexed
+        'teams_editable_columns': teams_editable,
         'colors': {
             'red': {'r': int(COLORS['red']['red'] * 255), 'g': int(COLORS['red']['green'] * 255), 'b': int(COLORS['red']['blue'] * 255)},
             'yellow': {'r': int(COLORS['yellow']['red'] * 255), 'g': int(COLORS['yellow']['green'] * 255), 'b': int(COLORS['yellow']['blue'] * 255)},

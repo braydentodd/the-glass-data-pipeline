@@ -22,7 +22,7 @@
 // ============================================================
 
 /** Bootstrap URL — single place to change if server moves. */
-var BOOTSTRAP_URL = 'http://150.136.255.23:5001/api/config';
+var BOOTSTRAP_URL = 'http://150.136.255.23:5000/api/config';
 
 var CONFIG = null;
 
@@ -108,38 +108,102 @@ function onEditInstallable(e) {
   var sheetName = sheet.getName().toUpperCase();
   var config    = loadConfig();
   var nbaTeams  = config.nba_teams || {};
+  var sheetType = _getSheetType(sheetName);
 
-  if (!nbaTeams.hasOwnProperty(sheetName) && sheetName !== 'NBA') return;
+  if (!sheetType) return;
 
   var layout    = config.layout || {};
   var editedRow = e.range.getRow();
   if (editedRow <= (layout.header_row_count || 4)) return;
 
-  // Determine which editable column was edited (config-driven)
+  var editedCol = e.range.getColumn();
+  var ss        = SpreadsheetApp.getActiveSpreadsheet();
+
+  // ---- Teams sheet: every row is a team, save notes to teams table ----
+  if (sheetType === 'teams') {
+    var teamsEditable = config.teams_editable_columns || [];
+    var matched = null;
+    for (var i = 0; i < teamsEditable.length; i++) {
+      if (teamsEditable[i].col_index === editedCol) { matched = teamsEditable[i]; break; }
+    }
+    if (!matched) return;
+
+    // Get entity name (team name or abbreviation) from Names column
+    var entityName = sheet.getRange(editedRow, 1).getValue();
+    if (!entityName) return;
+
+    // Resolve team abbreviation (could be full name or abbreviation)
+    var nameToAbbr = config.team_name_to_abbr || {};
+    var teamAbbr = nbaTeams.hasOwnProperty(String(entityName).toUpperCase())
+      ? String(entityName).toUpperCase()
+      : nameToAbbr[entityName];
+    if (!teamAbbr) {
+      ss.toast('Could not identify team: ' + entityName, 'Error', 3);
+      return;
+    }
+    var teamId = nbaTeams[teamAbbr];
+    if (!teamId) {
+      ss.toast('Could not find team: ' + teamAbbr, 'Error', 3);
+      return;
+    }
+    try {
+      updateTeamField(teamId, matched.db_field, e.range.getValue());
+      ss.toast(matched.display_name + ' saved for ' + teamAbbr, 'Saved \u2713', 3);
+    } catch (err) {
+      ss.toast('Error saving: ' + err.message, 'Error', 5);
+    }
+    return;
+  }
+
+  // ---- Team/Players sheets: player or team row editing ----
   var editableColumns = config.editable_columns || [];
-  var editedCol       = e.range.getColumn();
-  var isNba           = (sheetName === 'NBA');
+  var isPlayersSheet  = (sheetType === 'players');
   var matched         = null;
 
   for (var i = 0; i < editableColumns.length; i++) {
     var ec     = editableColumns[i];
-    var colIdx = isNba ? ec.nba_col_index : ec.team_col_index;
+    var colIdx = isPlayersSheet ? ec.nba_col_index : ec.team_col_index;
     if (colIdx === editedCol) { matched = ec; break; }
   }
   if (!matched) return;
 
-  var ss         = SpreadsheetApp.getActiveSpreadsheet();
-  var playerName = sheet.getRange(editedRow, 1).getValue();
-  if (!playerName) return;
+  var entityName = sheet.getRange(editedRow, 1).getValue();
+  if (!entityName) return;
 
   var colIndices = config.column_indices || {};
-  var teamAbbr   = isNba
+  var teamAbbr   = isPlayersSheet
     ? sheet.getRange(editedRow, colIndices.team || 2).getValue()
     : sheetName;
 
   var value = e.range.getValue();
 
-  // Field-specific validation
+  // ---- TEAM row: save to teams table ----
+  if (entityName === 'TEAM') {
+    if (matched.col_key !== 'notes') {
+      ss.toast('Only notes can be edited for teams', 'Info', 3);
+      return;
+    }
+    var teamId = nbaTeams[teamAbbr];
+    if (!teamId) {
+      ss.toast('Could not find team: ' + teamAbbr, 'Error', 3);
+      return;
+    }
+    try {
+      updateTeamField(teamId, 'notes', value);
+      ss.toast('Notes saved for ' + teamAbbr, 'Saved \u2713', 3);
+    } catch (err) {
+      ss.toast('Error saving team notes: ' + err.message, 'Error', 5);
+    }
+    return;
+  }
+
+  // ---- OPPONENTS row: not editable ----
+  if (entityName === 'OPPONENTS') {
+    ss.toast('Opponent rows cannot be edited', 'Info', 3);
+    return;
+  }
+
+  // ---- Player row: save via player API ----
   if (matched.col_key === 'wingspan') {
     value = parseWingspan(value);
     if (value === null) {
@@ -148,12 +212,12 @@ function onEditInstallable(e) {
     }
   }
 
-  var playerId = getPlayerIdByName(playerName, teamAbbr);
+  var playerId = getPlayerIdByName(entityName, teamAbbr);
   if (!playerId) return;
 
   try {
     updatePlayerField(playerId, matched.db_field, value);
-    ss.toast(matched.display_name + ' saved for ' + playerName, 'Saved ✓', 3);
+    ss.toast(matched.display_name + ' saved for ' + entityName, 'Saved \u2713', 3);
   } catch (err) {
     ss.toast('Error saving ' + matched.display_name + ': ' + err.message, 'Error', 5);
   }
@@ -163,10 +227,10 @@ function onEditInstallable(e) {
 // MODE SWITCHING
 // ============================================================
 
-function switchToTotals()  { triggerSync('totals');   }
-function switchToPerGame() { triggerSync('per_game'); }
-function switchToPer36()   { triggerSync('per_36');   }
-function switchToPer100()  { triggerSync('per_100');  }
+function switchToTotals()  { triggerSync('totals',   {priorityTeam: _getActiveTeamAbbr()}); }
+function switchToPerGame() { triggerSync('per_game', {priorityTeam: _getActiveTeamAbbr()}); }
+function switchToPer36()   { triggerSync('per_36',   {priorityTeam: _getActiveTeamAbbr()}); }
+function switchToPer100()  { triggerSync('per_100',  {priorityTeam: _getActiveTeamAbbr()}); }
 
 // ============================================================
 // ADVANCED STATS & PERCENTILES TOGGLE
@@ -174,95 +238,273 @@ function switchToPer100()  { triggerSync('per_100');  }
 
 /**
  * Toggle advanced stat columns across all sheets.
- * Detects current state from the active sheet.
+ * Active sheet is processed first for immediate visual feedback.
+ * Manages subsection borders: shown with advanced, hidden with basic.
  */
 function toggleAdvancedStats() {
   var ss     = SpreadsheetApp.getActiveSpreadsheet();
   var config = loadConfig();
   var ranges = config.advanced_column_ranges || {};
-  var teamR  = ranges.team_sheet || [];
-  var nbaR   = ranges.nba_sheet  || [];
-
-  if (!teamR.length && !nbaR.length) {
-    ss.toast('Advanced column ranges not configured', 'Error', 3);
-    return;
-  }
 
   // Detect current state from active sheet
   var active     = ss.getActiveSheet();
   var activeName = active.getName().toUpperCase();
-  var nbaTeams   = config.nba_teams || {};
-  var detectR    = nbaTeams.hasOwnProperty(activeName) ? teamR : nbaR;
+  var activeType = _getSheetType(activeName);
+  var activeKey  = _getRangeKey(activeType);
+  var detectR    = (ranges[activeKey] || []);
   var newVisible = true;
   if (detectR.length > 0 && detectR[0].start <= active.getMaxColumns()) {
     try { newVisible = active.isColumnHiddenByUser(detectR[0].start); }
     catch (e) { Logger.log('toggleAdvancedStats detect error: ' + e); }
   }
 
-  _applyColumnRangeList(teamR, nbaR, newVisible);
+  // Save state to DocumentProperties for DRY toggle management
+  PropertiesService.getDocumentProperties().setProperty(
+    'SHOW_ADVANCED', newVisible ? 'true' : 'false'
+  );
+
+  // Apply column visibility + subsection borders (active sheet first)
+  var boundaries = config.subsection_boundaries || {};
+  _applyColumnRangeListWithBorders(ranges, newVisible, boundaries);
   ss.toast(newVisible ? 'Advanced stats shown' : 'Advanced stats hidden', 'View', 3);
 }
 
 /**
  * Toggle percentile columns across all sheets.
- * Detects current state from the active sheet.
+ * Swaps between value view and percentile view:
+ *   - Percentile ON  → show percentile columns, hide base value columns
+ *   - Percentile OFF → show base value columns, hide percentile columns
+ * Active sheet is processed first for immediate visual feedback.
  */
 function togglePercentiles() {
   var ss     = SpreadsheetApp.getActiveSpreadsheet();
   var config = loadConfig();
-  var ranges = config.percentile_column_ranges || {};
-  var teamR  = ranges.team_sheet || [];
-  var nbaR   = ranges.nba_sheet  || [];
 
-  if (!teamR.length && !nbaR.length) {
-    ss.toast('Percentile column ranges not configured', 'Error', 3);
-    return;
-  }
+  var pctRanges = config.percentile_column_ranges || {};
+  var valRanges = config.base_value_column_ranges || {};
 
+  // Detect: are percentiles currently visible?
   var active     = ss.getActiveSheet();
   var activeName = active.getName().toUpperCase();
-  var nbaTeams   = config.nba_teams || {};
-  var detectR    = nbaTeams.hasOwnProperty(activeName) ? teamR : nbaR;
-  var newVisible = true;
+  var activeType = _getSheetType(activeName);
+  var activeKey  = _getRangeKey(activeType);
+  var detectR    = (pctRanges[activeKey] || []);
+  var percentilesCurrentlyVisible = false;
   if (detectR.length > 0 && detectR[0].start <= active.getMaxColumns()) {
-    try { newVisible = active.isColumnHiddenByUser(detectR[0].start); }
+    try { percentilesCurrentlyVisible = !active.isColumnHiddenByUser(detectR[0].start); }
     catch (e) { Logger.log('togglePercentiles detect error: ' + e); }
   }
 
-  _applyColumnRangeList(teamR, nbaR, newVisible);
-  ss.toast(newVisible ? 'Percentiles shown' : 'Percentiles hidden', 'View', 3);
+  var showPercentiles = !percentilesCurrentlyVisible;
+  var sheets = ss.getSheets();
+
+  function applyToSheet(sheet) {
+    var name      = sheet.getName().toUpperCase();
+    var sheetType = _getSheetType(name);
+    if (!sheetType) return;
+    var rangeKey = _getRangeKey(sheetType);
+    var pctR = pctRanges[rangeKey] || [];
+    var valR = valRanges[rangeKey] || [];
+
+    var maxCols = sheet.getMaxColumns();
+    _applyRangeVisibility(sheet, pctR, maxCols, showPercentiles);
+    _applyRangeVisibility(sheet, valR, maxCols, !showPercentiles);
+
+    // Re-hide always-hidden columns and respect advanced toggle state
+    _rehideAlwaysHidden(sheet, sheetType);
+    var showAdv = PropertiesService.getDocumentProperties().getProperty('SHOW_ADVANCED') === 'true';
+    if (!showAdv) {
+      var advR = (config.advanced_column_ranges || {})[rangeKey] || [];
+      _applyRangeVisibility(sheet, advR, maxCols, false);
+    }
+  }
+
+  applyToSheet(active);
+  SpreadsheetApp.flush();
+
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].getSheetId() === active.getSheetId()) continue;
+    applyToSheet(sheets[i]);
+  }
+
+  PropertiesService.getDocumentProperties().setProperty(
+    'SHOW_PERCENTILES', showPercentiles ? 'true' : 'false'
+  );
+  ss.toast(showPercentiles ? 'Percentiles shown' : 'Values shown', 'View', 3);
 }
 
 /**
  * Apply show/hide to a list of column ranges across all sheets.
+ * Active sheet is processed first for immediate visual feedback.
  */
-function _applyColumnRangeList(teamRanges, nbaRanges, visible) {
-  var ss       = SpreadsheetApp.getActiveSpreadsheet();
-  var config   = loadConfig();
-  var nbaTeams = config.nba_teams || {};
-  var sheets   = ss.getSheets();
+function _applyColumnRangeList(allRanges, visible) {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var active = ss.getActiveSheet();
+  var sheets = ss.getSheets();
+
+  function applyToSheet(sheet) {
+    var name      = sheet.getName().toUpperCase();
+    var sheetType = _getSheetType(name);
+    if (!sheetType) return;
+    var rangeKey  = _getRangeKey(sheetType);
+    var rangeList = allRanges[rangeKey] || [];
+    _applyRangeVisibility(sheet, rangeList, sheet.getMaxColumns(), visible);
+  }
+
+  applyToSheet(active);
+  SpreadsheetApp.flush();
 
   for (var i = 0; i < sheets.length; i++) {
-    var sheet = sheets[i];
-    var name  = sheet.getName().toUpperCase();
-    var rangeList;
-    if (nbaTeams.hasOwnProperty(name))      rangeList = teamRanges;
-    else if (name === 'NBA')                rangeList = nbaRanges;
-    else continue;
+    if (sheets[i].getSheetId() === active.getSheetId()) continue;
+    applyToSheet(sheets[i]);
+  }
+}
+
+// ============================================================
+// TOGGLE HELPERS
+// ============================================================
+
+/**
+ * Determine sheet type: 'team', 'players', 'teams', or null.
+ */
+function _getSheetType(sheetName) {
+  var config = loadConfig();
+  var nbaTeams = config.nba_teams || {};
+  var upper = sheetName.toUpperCase();
+  if (nbaTeams.hasOwnProperty(upper)) return 'team';
+  if (upper === 'NBA' || upper === 'PLAYERS') return 'players';
+  if (upper === 'TEAMS') return 'teams';
+  return null;
+}
+
+/** Map sheet type to the config range key. */
+function _getRangeKey(sheetType) {
+  if (sheetType === 'team')    return 'team_sheet';
+  if (sheetType === 'players') return 'nba_sheet';
+  if (sheetType === 'teams')   return 'teams_sheet';
+  return null;
+}
+
+/** Check if a sheet is a managed non-team sheet (Players, Teams, or legacy NBA). */
+function _isNbaSheet(name) {
+  return name === 'NBA' || name === 'PLAYERS' || name === 'TEAMS';
+}
+
+/** Get active team abbreviation if on a team sheet, else null. */
+function _getActiveTeamAbbr() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var name = ss.getActiveSheet().getName().toUpperCase();
+  var config = loadConfig();
+  var nbaTeams = config.nba_teams || {};
+  return nbaTeams.hasOwnProperty(name) ? name : null;
+}
+
+/** Apply show/hide to column ranges on a single sheet. */
+function _applyRangeVisibility(sheet, rangeList, maxCols, visible) {
+  for (var r = 0; r < rangeList.length; r++) {
+    var rng = rangeList[r];
+    if (rng.start > maxCols) continue;
+    var count = Math.min(rng.count, maxCols - rng.start + 1);
+    try {
+      if (visible) sheet.showColumns(rng.start, count);
+      else         sheet.hideColumns(rng.start, count);
+    } catch (e) {
+      Logger.log('_applyRangeVisibility error: ' + e);
+    }
+  }
+}
+
+/**
+ * Apply column visibility + subsection border management.
+ * Used by toggleAdvancedStats to add/remove subsection borders,
+ * show/hide the subsection header row, and apply white borders
+ * on subheader cells.
+ * Active sheet processed first for immediate feedback.
+ *
+ * @param {Object} allRanges  - advanced_column_ranges from config (keyed by range key)
+ * @param {boolean} visible   - whether to show (true) or hide (false)
+ * @param {Object} boundaries - subsection_boundaries from config (keyed by range key)
+ */
+function _applyColumnRangeListWithBorders(allRanges, visible, boundaries) {
+  var ss       = SpreadsheetApp.getActiveSpreadsheet();
+  var config   = loadConfig();
+  var layout   = config.layout || {};
+  var subRow   = config.subsection_row_index || 2;  // 1-indexed
+  var colNameRow = subRow + 1;  // Column name header row
+  var statsSectionRanges = config.stats_section_ranges || {};
+  var active   = ss.getActiveSheet();
+  var sheets   = ss.getSheets();
+
+  function applyToSheet(sheet) {
+    var name      = sheet.getName().toUpperCase();
+    var sheetType = _getSheetType(name);
+    if (!sheetType) return;
+    var rangeKey  = _getRangeKey(sheetType);
+    var rangeList = allRanges[rangeKey] || [];
+    var borderCols = (boundaries[rangeKey] || []);
+    var statsRange = statsSectionRanges[rangeKey] || {};
 
     var maxCols = sheet.getMaxColumns();
-    for (var r = 0; r < rangeList.length; r++) {
-      var rng = rangeList[r];
-      // Guard against ranges that exceed the sheet's column count
-      if (rng.start > maxCols) continue;
-      var count = Math.min(rng.count, maxCols - rng.start + 1);
+    var maxRows = sheet.getMaxRows();
+    _applyRangeVisibility(sheet, rangeList, maxCols, visible);
+
+    // Show/hide subsection header row
+    try {
+      if (visible) sheet.showRows(subRow, 1);
+      else         sheet.hideRows(subRow, 1);
+    } catch (e) {
+      Logger.log('Subsection row toggle error on ' + name + ': ' + e);
+    }
+
+    // White borders on subsection header row — ONLY for stats section columns
+    // (entities, player_info, analysis sections should NOT have borders)
+    if (visible && statsRange.start && statsRange.end) {
       try {
-        if (visible) sheet.showColumns(rng.start, count);
-        else         sheet.hideColumns(rng.start, count);
+        var statsColCount = statsRange.end - statsRange.start + 1;
+        var subStatsRange = sheet.getRange(subRow, statsRange.start, 1, statsColCount);
+        subStatsRange.setBorder(true, true, true, true, true, true, '#FFFFFF',
+          SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
       } catch (e) {
-        Logger.log('_applyColumnRangeList error on sheet ' + name + ': ' + e);
+        Logger.log('Subsection stats border error on ' + name + ': ' + e);
       }
     }
+
+    // Add or remove subsection borders: full header (subheader + col names) + all data rows
+    var headerRows = layout.header_row_count || 4;
+    for (var b = 0; b < borderCols.length; b++) {
+      var col = borderCols[b];
+      if (col > maxCols) continue;
+      try {
+        if (visible) {
+          // White SOLID_MEDIUM left border on header rows (subheader + column name rows)
+          var headerBorderRange = sheet.getRange(subRow, col, colNameRow - subRow + 1, 1);
+          headerBorderRange.setBorder(null, true, null, null, null, null, '#FFFFFF',
+            SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+          // Black SOLID_MEDIUM left border on all data rows (including team/opp/summary)
+          var dataRange = sheet.getRange(headerRows + 1, col, maxRows - headerRows, 1);
+          dataRange.setBorder(null, true, null, null, null, null, '#000000',
+            SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+        } else {
+          // Remove borders from subheader through all data rows
+          var fullRange = sheet.getRange(subRow, col, maxRows - subRow + 1, 1);
+          fullRange.setBorder(null, false, null, null, null, null);
+        }
+      } catch (e) {
+        Logger.log('Border error on ' + name + ' col ' + col + ': ' + e);
+      }
+    }
+
+    // Re-hide always-hidden columns and respect current toggle states
+    _rehideAlwaysHidden(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType);
+  }
+
+  applyToSheet(active);
+  SpreadsheetApp.flush();
+
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].getSheetId() === active.getSheetId()) continue;
+    applyToSheet(sheets[i]);
   }
 }
 
@@ -327,6 +569,10 @@ function triggerSync(mode, options) {
     ? options.showPercentiles
     : (props.getProperty('SHOW_PERCENTILES') === 'true');
 
+  var showAdvanced = (options.showAdvanced !== undefined)
+    ? options.showAdvanced
+    : (props.getProperty('SHOW_ADVANCED') === 'true');
+
   // Unified timeframe for both historical and postseason
   var histMode    = props.getProperty('HIST_MODE') || 'career';
   var histYears   = parseInt(props.getProperty('HIST_YEARS') || '25');
@@ -346,6 +592,7 @@ function triggerSync(mode, options) {
     years:            histYears,
     include_current:  includeCurr,
     show_percentiles: showPercentiles,
+    show_advanced:    showAdvanced,
     priority_team:    options.priorityTeam || null,
   };
   if (histSeason) payload.seasons = [histSeason];
@@ -408,6 +655,22 @@ function updatePlayerField(playerId, fieldName, fieldValue) {
 }
 
 // ============================================================
+// TEAM FIELD UPDATE
+// ============================================================
+
+function updateTeamField(teamId, fieldName, fieldValue) {
+  var payload = {};
+  payload[fieldName] = fieldValue;
+  var response = UrlFetchApp.fetch(getApiBaseUrl() + '/api/teams/' + teamId, {
+    method: 'put', contentType: 'application/json',
+    payload: JSON.stringify(payload), muteHttpExceptions: true
+  });
+  var data = JSON.parse(response.getContentText());
+  if (response.getResponseCode() !== 200) throw new Error(data.error || 'Unknown error');
+  return data;
+}
+
+// ============================================================
 // WINGSPAN PARSER
 // ============================================================
 
@@ -450,21 +713,66 @@ function getPercentileColor(percentile) {
 // ============================================================
 
 /**
+ * Re-hide columns that must always be hidden on certain sheet types.
+ * Called after any toggle that shows columns (e.g. player_info section
+ * on team sheets should never reveal the team column).
+ */
+function _rehideAlwaysHidden(sheet, sheetType) {
+  var config     = loadConfig();
+  var rangeKey   = _getRangeKey(sheetType);
+  var hiddenCols = (config.always_hidden_columns || {})[rangeKey] || [];
+  var maxCols    = sheet.getMaxColumns();
+  for (var h = 0; h < hiddenCols.length; h++) {
+    var col = hiddenCols[h];
+    if (col <= maxCols) {
+      try { sheet.hideColumns(col, 1); }
+      catch (e) { Logger.log('_rehideAlwaysHidden error: ' + e); }
+    }
+  }
+}
+
+/**
+ * Re-apply current toggle states (percentiles, advanced) after any section toggle.
+ * Ensures toggles are DRY — showing a section doesn't reveal columns that should
+ * be hidden by another toggle (e.g. percentile columns when in values mode).
+ */
+function _reapplyToggles(sheet, sheetType) {
+  var config   = loadConfig();
+  var props    = PropertiesService.getDocumentProperties();
+  var rangeKey = _getRangeKey(sheetType);
+  var maxCols  = sheet.getMaxColumns();
+
+  // Re-hide percentile or base-value columns based on current SHOW_PERCENTILES state
+  var showPct  = props.getProperty('SHOW_PERCENTILES') === 'true';
+  var pctR     = (config.percentile_column_ranges || {})[rangeKey] || [];
+  var valR     = (config.base_value_column_ranges || {})[rangeKey] || [];
+  _applyRangeVisibility(sheet, pctR, maxCols, showPct);
+  _applyRangeVisibility(sheet, valR, maxCols, !showPct);
+
+  // Re-hide advanced columns if advanced mode is off
+  var showAdv  = props.getProperty('SHOW_ADVANCED') === 'true';
+  if (!showAdv) {
+    var advR = (config.advanced_column_ranges || {})[rangeKey] || [];
+    _applyRangeVisibility(sheet, advR, maxCols, false);
+  }
+}
+
+/**
  * Generic column-section visibility toggle.
  * Detects current visibility state from the active sheet.
+ * After showing, re-hides always-hidden columns (e.g. team column on team sheets).
  */
 function _toggleSection(sectionKey, labelOn, labelOff) {
   var ss           = SpreadsheetApp.getActiveSpreadsheet();
   var config       = loadConfig();
-  var nbaTeams     = config.nba_teams || {};
   var columnRanges = config.column_ranges || {};
-  var teamRanges   = ((columnRanges.team_sheet || {})[sectionKey]) || null;
-  var nbaRanges    = ((columnRanges.nba_sheet  || {})[sectionKey]) || null;
 
   // Detect current state from active sheet
   var activeSheet = ss.getActiveSheet();
   var activeName  = activeSheet.getName().toUpperCase();
-  var detectRange = nbaTeams.hasOwnProperty(activeName) ? teamRanges : nbaRanges;
+  var activeType  = _getSheetType(activeName);
+  var activeKey   = _getRangeKey(activeType);
+  var detectRange = (columnRanges[activeKey] || {})[sectionKey] || null;
   var newVisible  = true;
   if (detectRange && detectRange.start <= activeSheet.getMaxColumns()) {
     try { newVisible = activeSheet.isColumnHiddenByUser(detectRange.start); }
@@ -474,7 +782,12 @@ function _toggleSection(sectionKey, labelOn, labelOff) {
   var sheets       = ss.getSheets();
   var updatedCount = 0;
 
-  function applyToSheet(sheet, ranges) {
+  function applyToSheet(sheet) {
+    var name      = sheet.getName().toUpperCase();
+    var sheetType = _getSheetType(name);
+    if (!sheetType) return;
+    var rangeKey = _getRangeKey(sheetType);
+    var ranges   = (columnRanges[rangeKey] || {})[sectionKey] || null;
     if (!ranges) return;
     var maxCols = sheet.getMaxColumns();
     if (ranges.start > maxCols) return;
@@ -486,17 +799,19 @@ function _toggleSection(sectionKey, labelOn, labelOff) {
     } catch (e) {
       Logger.log('_toggleSection error on ' + sheet.getName() + ': ' + e);
     }
+    // Re-hide always-hidden columns and respect current toggle states
+    if (newVisible) {
+      _rehideAlwaysHidden(sheet, sheetType);
+      _reapplyToggles(sheet, sheetType);
+    }
   }
 
-  if (nbaTeams.hasOwnProperty(activeName))       applyToSheet(activeSheet, teamRanges);
-  else if (activeName === 'NBA')                  applyToSheet(activeSheet, nbaRanges);
+  applyToSheet(activeSheet);
+  SpreadsheetApp.flush();
 
   for (var i = 0; i < sheets.length; i++) {
-    var sheet = sheets[i];
-    if (sheet.getSheetId() === activeSheet.getSheetId()) continue;
-    var name = sheet.getName().toUpperCase();
-    if (nbaTeams.hasOwnProperty(name))       applyToSheet(sheet, teamRanges);
-    else if (name === 'NBA')                 applyToSheet(sheet, nbaRanges);
+    if (sheets[i].getSheetId() === activeSheet.getSheetId()) continue;
+    applyToSheet(sheets[i]);
   }
 
   ss.toast(
@@ -516,20 +831,20 @@ function showAllSections() {
   var sections = ['current', 'historical', 'postseason', 'player_info', 'notes'];
   var ss       = SpreadsheetApp.getActiveSpreadsheet();
   var config   = loadConfig();
-  var nbaTeams = config.nba_teams || {};
   var colRange = config.column_ranges || {};
   var sheets   = ss.getSheets();
   for (var i = 0; i < sheets.length; i++) {
-    var sheet = sheets[i];
-    var name  = sheet.getName().toUpperCase();
-    var ranges;
-    if (nbaTeams.hasOwnProperty(name))       ranges = colRange.team_sheet || {};
-    else if (name === 'NBA')                 ranges = colRange.nba_sheet  || {};
-    else continue;
+    var sheet     = sheets[i];
+    var name      = sheet.getName().toUpperCase();
+    var sheetType = _getSheetType(name);
+    if (!sheetType) continue;
+    var rangeKey = _getRangeKey(sheetType);
+    var ranges   = colRange[rangeKey] || {};
     for (var s = 0; s < sections.length; s++) {
       var r = ranges[sections[s]];
       if (r) sheet.showColumns(r.start, r.count);
     }
+    _rehideAlwaysHidden(sheet, sheetType);
   }
   ss.toast('All sections shown', 'Section Visibility', 3);
 }

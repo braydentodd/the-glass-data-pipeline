@@ -6,6 +6,8 @@ Provides endpoints for switching between stat modes (totals, per-game, per-100, 
 import sys
 import os
 import subprocess
+import threading
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
@@ -80,8 +82,8 @@ def sync_historical_stats():
         include_current = data.get('include_current', False)
         stats_mode = data.get('stats_mode', 'per_100')  # Get stats mode from request
         stats_custom_value = data.get('stats_custom_value')  # Get custom value if present
-        toggle_percentiles = data.get('toggle_percentiles', False)  # Toggle flag from Apps Script
-        # Note: show_percentiles is parsed from sheet header, not passed as parameter
+        show_percentiles = data.get('show_percentiles', False)  # Current percentile toggle state
+        show_advanced = data.get('show_advanced', False)  # Current advanced stats toggle state
         priority_team = data.get('priority_team')  # Optional: team to process first
         sync_section = data.get('sync_section')  # Optional: 'historical', 'postseason', or None for full sync (default: None)
         
@@ -89,15 +91,11 @@ def sync_historical_stats():
         env = os.environ.copy()
         env['HISTORICAL_MODE'] = mode
         env['INCLUDE_CURRENT_YEAR'] = 'true' if include_current else 'false'
-        env['STATS_MODE'] = stats_mode  # Pass stats mode to sync script
-        # Note: SHOW_PERCENTILES removed - Python will parse from sheet header
-        
-        # Pass toggle flag if requested
-        if toggle_percentiles:
-            env['TOGGLE_PERCENTILES'] = 'true'
+        env['STATS_MODE'] = stats_mode
+        env['SHOW_PERCENTILES'] = 'true' if show_percentiles else 'false'
+        env['SHOW_ADVANCED'] = 'true' if show_advanced else 'false'
         
         # Only set SYNC_SECTION if explicitly requested (for partial syncs)
-        # If not set, Python script will do a FULL sync (current + historical + postseason)
         if sync_section:
             env['SYNC_SECTION'] = sync_section
         
@@ -128,45 +126,34 @@ def sync_historical_stats():
         if 'DB_PASSWORD' not in env:
             env['DB_PASSWORD'] = os.environ.get('DB_PASSWORD', '')
         
-        # Run the sheets_sync module
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=project_root,
-            env=env,
-            timeout=600  # Increased to 10 minutes for all 30 teams
+        # Run sync in background thread so the API responds immediately.
+        # This makes mode switching feel instant — sheets update in background.
+        def _run_sync_bg(bg_cmd, bg_env, bg_cwd):
+            try:
+                result = subprocess.run(
+                    bg_cmd, capture_output=True, text=True,
+                    cwd=bg_cwd, env=bg_env, timeout=600
+                )
+                if result.stdout:
+                    print(f"[SYNC OUTPUT] {result.stdout}", file=sys.stderr, flush=True)
+                if result.stderr:
+                    print(f"[SYNC STDERR] {result.stderr}", file=sys.stderr, flush=True)
+                if result.returncode != 0:
+                    print(f"[SYNC FAILED] exit code {result.returncode}", file=sys.stderr, flush=True)
+            except subprocess.TimeoutExpired:
+                print("[SYNC TIMEOUT] Sync exceeded 10 minute limit", file=sys.stderr, flush=True)
+            except Exception as exc:
+                print(f"[SYNC ERROR] {exc}", file=sys.stderr, flush=True)
+
+        thread = threading.Thread(
+            target=_run_sync_bg, args=(cmd, env, project_root), daemon=True
         )
-        
-        # Log subprocess output for debugging
-        if result.stdout:
-            print(f"[SYNC OUTPUT] {result.stdout}", file=sys.stderr, flush=True)
-        if result.stderr:
-            print(f"[SYNC STDERR] {result.stderr}", file=sys.stderr, flush=True)
-        
-        if result.returncode == 0:
-            return jsonify({
-                'success': True,
-                'message': 'Historical stats synced successfully'
-            })
-        else:
-            # Get detailed error information
-            error_msg = f"Sync failed (exit code {result.returncode})"
-            if result.stderr:
-                error_msg += f": {result.stderr[:1000]}"  # First 1000 chars
-            
-            return jsonify({
-                'success': False,
-                'error': error_msg,
-                'stderr': result.stderr[:3000] if result.stderr else '',
-                'stdout': result.stdout[:3000] if result.stdout else ''
-            }), 500
-            
-    except subprocess.TimeoutExpired:
+        thread.start()
+
         return jsonify({
-            'success': False,
-            'error': 'Sync timed out after 10 minutes'
-        }), 500
+            'success': True,
+            'message': 'Sync started — sheets will update shortly'
+        }), 202
     except Exception as e:
         return jsonify({
             'success': False,
@@ -206,7 +193,8 @@ def sync_postseason_stats():
         env['INCLUDE_CURRENT_YEAR'] = 'false'  # Postseason never includes current
         env['STATS_MODE'] = stats_mode
         env['SEASON_TYPE'] = '2,3'  # 2 = Playoffs, 3 = Play-in
-        # Note: SHOW_PERCENTILES removed - Python will parse from sheet header
+        env['SHOW_PERCENTILES'] = 'true' if data.get('show_percentiles', False) else 'false'
+        env['SHOW_ADVANCED'] = 'true' if data.get('show_advanced', False) else 'false'
         env['SYNC_SECTION'] = 'postseason'  # Tell sync script to write to postseason columns
         
         if stats_custom_value:
@@ -235,38 +223,29 @@ def sync_postseason_stats():
         if 'DB_PASSWORD' not in env:
             env['DB_PASSWORD'] = os.environ.get('DB_PASSWORD', '')
         
-        # Run the sheets_sync module
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=project_root,
-            env=env,
-            timeout=600
+        # Run sync in background thread for speed
+        def _run_post_sync(bg_cmd, bg_env, bg_cwd):
+            try:
+                result = subprocess.run(
+                    bg_cmd, capture_output=True, text=True,
+                    cwd=bg_cwd, env=bg_env, timeout=600
+                )
+                if result.stdout:
+                    print(f"[POST SYNC OUTPUT] {result.stdout}", file=sys.stderr, flush=True)
+                if result.stderr:
+                    print(f"[POST SYNC STDERR] {result.stderr}", file=sys.stderr, flush=True)
+            except Exception as exc:
+                print(f"[POST SYNC ERROR] {exc}", file=sys.stderr, flush=True)
+
+        thread = threading.Thread(
+            target=_run_post_sync, args=(cmd, env, project_root), daemon=True
         )
-        
-        if result.returncode == 0:
-            return jsonify({
-                'success': True,
-                'message': 'Postseason stats synced successfully'
-            })
-        else:
-            error_msg = f"Sync failed (exit code {result.returncode})"
-            if result.stderr:
-                error_msg += f": {result.stderr[:1000]}"
-            
-            return jsonify({
-                'success': False,
-                'error': error_msg,
-                'stderr': result.stderr[:3000] if result.stderr else '',
-                'stdout': result.stdout[:3000] if result.stdout else ''
-            }), 500
-            
-    except subprocess.TimeoutExpired:
+        thread.start()
+
         return jsonify({
-            'success': False,
-            'error': 'Sync timed out after 10 minutes'
-        }), 500
+            'success': True,
+            'message': 'Postseason sync started \u2014 sheets will update shortly'
+        }), 202
     except Exception as e:
         return jsonify({
             'success': False,
@@ -592,7 +571,7 @@ def update_team(team_id):
             UPDATE teams 
             SET {', '.join(updates)}
             WHERE team_id = %s
-            RETURNING team_id, abbreviation, full_name, notes
+            RETURNING team_id, team_abbr, team_name, notes
         """
         
         cursor.execute(query, values)
@@ -610,8 +589,8 @@ def update_team(team_id):
         return jsonify({
             'success': True,
             'team_id': updated_team[0],
-            'abbreviation': updated_team[1],
-            'full_name': updated_team[2],
+            'team_abbr': updated_team[1],
+            'team_name': updated_team[2],
             'notes': updated_team[3]
         })
     
