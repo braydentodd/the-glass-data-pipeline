@@ -95,8 +95,21 @@ SUBSECTIONS = [
     'rebounding',     # OREB%, DREB%, Contested OREB/DREB%, Putbacks
     'movement',       # Offensive/Defensive distance traveled
     'defense',        # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
+    'opponent',       # All opponent stats (Teams sheet only, between defense and on/off)
     'onoff',          # Offensive/Defensive Rating, Off-court ratings
 ]
+
+# Display names for subsections — used in header row
+SUBSECTION_DISPLAY_NAMES = {
+    'rates': 'Rates',
+    'scoring': 'Scoring',
+    'ball_management': 'Ball Management',
+    'rebounding': 'Rebounding',
+    'movement': 'Movement',
+    'defense': 'Defense',
+    'opponent': 'Opponent',
+    'onoff': 'On/Off',
+}
 
 # Section order - determines left-to-right column layout in sheets
 SECTIONS = [
@@ -211,7 +224,7 @@ SHEETS_COLUMNS = {
         'description': 'Player name',
         'section': ['entities'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
@@ -232,7 +245,7 @@ SHEETS_COLUMNS = {
         'description': 'Team abbreviation',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': 'players',
+        'sheets': ['all_players'],
         'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
@@ -253,7 +266,7 @@ SHEETS_COLUMNS = {
         'description': 'Jersey number',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
@@ -274,7 +287,7 @@ SHEETS_COLUMNS = {
         'description': 'Years of NBA experience',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
@@ -295,7 +308,7 @@ SHEETS_COLUMNS = {
         'description': 'Player age',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
@@ -316,7 +329,7 @@ SHEETS_COLUMNS = {
         'description': 'Height in feet and inches',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
@@ -337,7 +350,7 @@ SHEETS_COLUMNS = {
         'description': 'Weight in pounds',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
@@ -358,7 +371,7 @@ SHEETS_COLUMNS = {
         'description': 'Wingspan in feet and inches (editable)',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': False,
@@ -379,7 +392,7 @@ SHEETS_COLUMNS = {
         'description': 'Dominant hand (editable)',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
@@ -400,7 +413,7 @@ SHEETS_COLUMNS = {
         'description': 'Scouting notes (editable)',
         'section': ['analysis'],
         'subsection': None,
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
@@ -421,7 +434,7 @@ SHEETS_COLUMNS = {
         'description': 'Number of seasons in range',
         'section': ['historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
@@ -443,7 +456,7 @@ SHEETS_COLUMNS = {
         'description': 'Games played',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'sheets': 'both',
+        'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'is_stat': True,
@@ -493,8 +506,8 @@ SHEETS_COLUMNS = {
         'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': '(240 / (minutes_x10 / 10)) * possessions',
-        'team_formula': '(240 / (minutes_x10 / 10)) * possessions',
+        'player_formula': '(48 / (minutes_x10 / 10)) * possessions',
+        'team_formula': '(48 / (minutes_x10 / 10)) * possessions',
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
@@ -516,7 +529,7 @@ SHEETS_COLUMNS = {
         'player_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
         'team_formula': '(2fgm * 2) + (3fgm * 3) + ftm',
         'opponents_formula': '(opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm',
-        'minimum_width': 30,
+        'minimum_width': 35,
     },
     
     'true_points_per_shot_attempt': {
@@ -1033,8 +1046,8 @@ SHEETS_COLUMNS = {
         'scale_with_mode': False,
         'format': 'number',
         'decimal_places': 1,
-        'player_formula': 'time_on_ball / touches',
-        'team_formula': 'time_on_ball / touches',
+        'player_formula': '(60 * time_on_ball) / touches',
+        'team_formula': '(60 * time_on_ball) / touches',
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
@@ -1209,9 +1222,9 @@ SHEETS_COLUMNS = {
         'minimum_width': 'auto',
     },
     
-    'putback_pct': {
+    'putbacks': {
         'stat_category': 'tracking',
-        'display_name': 'PB%',
+        'display_name': 'PBS',
         'description': 'Putbacks per offensive rebound % (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
@@ -1220,18 +1233,18 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'scale_with_mode': False,
-        'format': 'percentage',
+        'scale_with_mode': True,
+        'format': 'number',
         'decimal_places': 1,
-        'player_formula': '(putbacks / o_rebounds) * 100',
-        'team_formula': '(putbacks / o_rebounds) * 100',
+        'player_formula': 'putbacks',
+        'team_formula': 'putbacks',
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
     
     'off_distance': {
         'stat_category': 'tracking',
-        'display_name': 'Off Dist',
+        'display_name': 'ODST',
         'description': 'Offensive distance traveled in miles (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
@@ -1246,12 +1259,12 @@ SHEETS_COLUMNS = {
         'player_formula': 'o_dist_x10 / 10',
         'team_formula': None,
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 31,
     },
     
     'def_distance': {
         'stat_category': 'tracking',
-        'display_name': 'Def Dist',
+        'display_name': 'DDST',
         'description': 'Defensive distance traveled in miles (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
@@ -1286,7 +1299,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'd_close_2fga',
         'team_formula': 'd_close_2fga',
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 31,
     },
     
     'points_per_def_close_2fga': {
@@ -1420,7 +1433,7 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'scale_with_mode': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
         'player_formula': 'blocks',
@@ -1536,7 +1549,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'o_rating_x10 / 10',
         'team_formula': 'o_rating_x10 / 10',
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 39,
     },
     
     'd_rating': {

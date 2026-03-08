@@ -12,7 +12,7 @@ import time
 import hashlib
 import json
 from typing import Dict, List, Optional, Any, Tuple
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -21,6 +21,7 @@ from config.etl import DB_CONFIG, NBA_CONFIG
 from lib.etl import get_table_name
 from config.sheets import (
     SHEETS_COLUMNS, SECTIONS, SECTION_CONFIG, SUBSECTIONS,
+    SUBSECTION_DISPLAY_NAMES,
     STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS,
     GOOGLE_SHEETS_CONFIG, API_CONFIG, SERVER_CONFIG,
     SHEET_FORMATTING,
@@ -159,12 +160,16 @@ def evaluate_formula(col_key: str, entity_data: dict,
             return compiled
         # Distinguish "field exists but is NULL" from "field not in dataset"
         # NULL in DB → None → empty cell, no percentile color
-        # Field absent → 0 → safe default for calculations
+        # Field absent for stat columns → 0 → safe default for calculations
+        # Field absent for non-stat columns → '' → empty cell (e.g., notes on teams)
         if compiled in entity_data:
             # Non-nullable columns (games, years) → 0 instead of None
             if not col_def.get('nullable', True):
                 return 0
             return None
+        # Non-stat columns (notes, hand, etc.) should show empty, not 0
+        if not col_def.get('is_stat', False):
+            return ''
         return 0
 
     # Evaluate compiled expression
@@ -738,6 +743,9 @@ def get_percentile_rank(value: Any, sorted_values: List, reverse: bool = False) 
     """
     Calculate percentile rank using binary search on pre-sorted values.
 
+    Uses midpoint of bisect_left/bisect_right to handle ties correctly:
+    all equal values get 50th percentile instead of 0 or 100.
+
     Args:
         value: The value to rank
         sorted_values: Pre-sorted list of all values
@@ -750,13 +758,18 @@ def get_percentile_rank(value: Any, sorted_values: List, reverse: bool = False) 
         return 50.0
 
     n = len(sorted_values)
-    # Count how many values this beats
-    pos = bisect_left(sorted_values, value)
+    if n == 1:
+        return 50.0
+
+    # Use average of left/right insertion points to handle ties
+    pos_left = bisect_left(sorted_values, value)
+    pos_right = bisect_right(sorted_values, value)
+    avg_pos = (pos_left + pos_right - 1) / 2.0
 
     if reverse:
-        percentile = (1 - pos / n) * 100
+        percentile = (1 - avg_pos / (n - 1)) * 100
     else:
-        percentile = (pos / n) * 100
+        percentile = (avg_pos / (n - 1)) * 100
 
     return max(0, min(100, percentile))
 
@@ -884,7 +897,7 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
     build_entity_row to blank out wrong-section stats on a given row.
 
     Percentile columns are interleaved immediately after their base stat column.
-    Columns with sheets='nba' are excluded on team sheets.
+    Columns are filtered by their 'sheets' array (e.g. ['all_teams', 'all_players', 'teams']).
 
     Always builds with stat_mode='both' so all columns exist in the structure
     (needed for JS toggle ranges). The visible flag is set based on
@@ -893,24 +906,41 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
     fmt = SHEET_FORMATTING
     hide_advanced = fmt.get('hide_advanced_columns', True)
 
+    # Map sheet_type to the sheets array key
+    _SHEET_TYPE_KEY = {
+        'team': 'all_teams',
+        'players': 'all_players',
+        'nba': 'all_players',
+        'teams': 'teams',
+    }
+    sheet_key = _SHEET_TYPE_KEY.get(sheet_type, 'all_teams')
+
+    # Determine entity for formula lookups (data population)
+    col_entity = 'team' if sheet_type == 'teams' else entity
+
     # Get percentile column defs
     pct_columns = generate_percentile_columns()
 
     all_columns = []
 
-    # Determine entity for column lookup — Teams sheet uses 'team' entity
-    col_entity = 'team' if sheet_type == 'teams' else entity
-
     for section in SECTIONS:
-        # Always fetch ALL columns (both basic + advanced) for structure
+        # Get ALL columns for this section (no entity filter — use sheets array instead)
         section_cols = get_columns_for_section_and_entity(
-            section=section, entity=col_entity,
+            section=section, entity=None,
             stat_mode='both', include_percentiles=False
         )
         for col_key, col_def in section_cols:
-            # Skip columns not meant for this sheet type
-            col_sheets = col_def.get('sheets', 'both')
-            if col_sheets == 'nba' and sheet_type not in ('nba', 'players'):
+            # Filter by sheets array
+            col_sheets = col_def.get('sheets', ['all_teams', 'all_players', 'teams'])
+            if isinstance(col_sheets, str):
+                # Legacy string format fallback
+                if col_sheets == 'both':
+                    col_sheets = ['all_teams', 'all_players', 'teams']
+                elif col_sheets in ('players', 'nba'):
+                    col_sheets = ['all_players']
+                else:
+                    col_sheets = ['all_teams', 'all_players', 'teams']
+            if sheet_key not in col_sheets:
                 continue
 
             # Advanced stat columns start hidden when hide_advanced_columns is True
@@ -918,9 +948,16 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
             visible = True
             if hide_advanced and col_mode == 'advanced':
                 visible = False
-            # Columns with sheets='players' are visible only on players sheet
-            if col_sheets == 'players' and sheet_type not in ('players', 'nba'):
+            # Basic stat columns hidden when advanced stats are shown
+            if not hide_advanced and col_mode == 'basic':
                 visible = False
+
+            # Columns without the entity formula are hidden (exist for structure)
+            fkey = f'{col_entity}_formula'
+            if col_def.get('is_stat', False) or col_def.get(fkey) is not None:
+                pass  # Has data for this entity
+            else:
+                visible = False  # No formula → hidden (e.g. jersey on teams sheet)
 
             all_columns.append((col_key, col_def, visible, section))
 
@@ -944,62 +981,78 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
 def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
                              hide_advanced: bool,
                              show_percentiles: bool) -> List[Tuple]:
-    """Insert opponent stat columns after each subsection for the Teams sheet.
+    """Insert opponent stat columns as a single 'opponent' subsection on the Teams sheet.
 
-    For each stats subsection (scoring, defense, etc.), collects columns that
-    have an opponents_formula and appends mirrored opponent versions at the
-    end of that subsection.  Opponent columns use the opponents_formula as
-    their team_formula so existing row-building code evaluates them correctly.
-    Display names get an 'O' prefix; subsection gets 'opp_' prefix.
+    Collects all columns that have an opponents_formula and groups them into
+    a single 'opponent' subsection placed between 'defense' and 'onoff'.
+    Opponent columns use the opponents_formula as their team_formula so
+    existing row-building code evaluates them correctly.
+    Display names get an 'O' prefix.
     """
-    result: List[Tuple] = []
-    pending_opp: List[Tuple] = []
-    prev_subsection = None
-    prev_ctx = None
-
-    def _flush_opp():
-        nonlocal pending_opp
-        if pending_opp:
-            result.extend(pending_opp)
-            pending_opp = []
-
+    # First pass: collect opponent columns per section context, grouped by original subsection
+    opp_by_ctx: dict = {}  # {ctx: [(opp_key, opp_def, vis, ctx), ...]}
     for entry in columns:
         col_key, col_def, vis, ctx = entry
-        subsection = col_def.get('subsection')
         is_stats = SECTION_CONFIG.get(ctx, {}).get('is_stats_section', False)
-
-        # Subsection boundary in a stats section → flush pending opponents
-        if is_stats and subsection != prev_subsection and prev_subsection is not None:
-            _flush_opp()
-
-        # When leaving a stats section entirely, flush
-        if not is_stats and prev_ctx and SECTION_CONFIG.get(prev_ctx, {}).get('is_stats_section', False):
-            _flush_opp()
-
-        result.append(entry)
-        prev_subsection = subsection
-        prev_ctx = ctx
-
-        # Skip non-stat columns and percentile columns
         if not is_stats or not col_def.get('is_stat') or col_def.get('is_generated_percentile'):
             continue
         opp_formula = col_def.get('opponents_formula')
         if not opp_formula:
             continue
 
-        # Create opponent mirror column (no percentile counterpart)
+        col_mode = col_def.get('stat_mode', 'both')
         opp_def = dict(col_def)
         opp_def['display_name'] = f"O{col_def['display_name']}"
         opp_def['team_formula'] = opp_formula
         opp_def['opponents_formula'] = None
         opp_def['is_opponent_col'] = True
-        opp_def['has_percentile'] = True  # Opponents get percentile coloring too
-        opp_def['subsection'] = f"opp_{subsection}" if subsection else None
+        opp_def['has_percentile'] = True
+        opp_def['subsection'] = 'opponent'
         opp_key = f'opp_{col_key}'
-        opp_vis = vis  # same visibility as the base column
-        pending_opp.append((opp_key, opp_def, opp_vis, ctx))
 
-    _flush_opp()  # Flush any remaining
+        opp_vis = True
+        if hide_advanced and col_mode == 'advanced':
+            opp_vis = False
+        if not hide_advanced and col_mode == 'basic':
+            opp_vis = False
+
+        if ctx not in opp_by_ctx:
+            opp_by_ctx[ctx] = []
+        opp_by_ctx[ctx].append((opp_key, opp_def, opp_vis, ctx))
+
+    # Second pass: rebuild columns, inserting opponent block between defense and onoff
+    result: List[Tuple] = []
+    prev_subsection = None
+    prev_ctx = None
+
+    for entry in columns:
+        col_key, col_def, vis, ctx = entry
+        subsection = col_def.get('subsection')
+        is_stats = SECTION_CONFIG.get(ctx, {}).get('is_stats_section', False)
+
+        # Detect transition from defense to onoff — insert opponents here
+        if is_stats and subsection == 'onoff' and prev_subsection == 'defense' and prev_ctx == ctx:
+            opp_entries = opp_by_ctx.get(ctx, [])
+            if opp_entries:
+                result.extend(opp_entries)
+
+        # When switching context sections, also flush opponents if defense was the last subsection
+        if ctx != prev_ctx and prev_ctx is not None:
+            if prev_subsection == 'defense':
+                opp_entries = opp_by_ctx.get(prev_ctx, [])
+                if opp_entries:
+                    result.extend(opp_entries)
+
+        result.append(entry)
+        prev_subsection = subsection
+        prev_ctx = ctx
+
+    # If the last subsection was defense (no onoff follows), flush remaining
+    if prev_subsection == 'defense' and prev_ctx:
+        opp_entries = opp_by_ctx.get(prev_ctx, [])
+        if opp_entries and opp_entries[0] not in result:
+            result.extend(opp_entries)
+
     return result
 
 
@@ -1110,10 +1163,11 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
         if sc.get('is_stats_section') and subsection:
             if subsection != cur_subsection:
                 if cur_subsection is not None and sub_start < idx:
-                    merges.append({'row': 1, 'start_col': sub_start, 'end_col': idx, 'value': cur_subsection.title()})
+                    sub_display = SUBSECTION_DISPLAY_NAMES.get(cur_subsection, cur_subsection.title())
+                    merges.append({'row': 1, 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
                 cur_subsection = subsection
                 sub_start = idx
-                row2.append(subsection.title())
+                row2.append(SUBSECTION_DISPLAY_NAMES.get(subsection, subsection.title()))
             else:
                 row2.append('')
         else:
@@ -1138,7 +1192,8 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
             )
         merges.append({'row': 0, 'start_col': sec_start, 'end_col': n, 'value': display})
     if cur_subsection:
-        merges.append({'row': 1, 'start_col': sub_start, 'end_col': n, 'value': cur_subsection.title()})
+        sub_display = SUBSECTION_DISPLAY_NAMES.get(cur_subsection, cur_subsection.title())
+        merges.append({'row': 1, 'start_col': sub_start, 'end_col': n, 'value': sub_display})
 
     return {
         'row1': row1, 'row2': row2, 'row3': row3,
@@ -1300,9 +1355,7 @@ def format_stat_value(value: Any, col_def: dict) -> Any:
 
     if fmt == 'percentage':
         # Value is already 0-100 from formula (e.g., (turnovers/possessions)*100)
-        # Some are 0-1 ratios — check magnitude
-        if isinstance(value, (int, float)) and 0 < abs(value) < 1:
-            value = value * 100
+        # Do NOT auto-scale — formulas are responsible for correct magnitude.
         rounded = round(value, decimals)
     else:
         rounded = round(value, decimals)
@@ -1825,6 +1878,9 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 16. Hide advanced stat columns (respects current toggle state) ----
     if hide_advanced:
         requests.extend(_build_hide_advanced_requests(ws_id, columns_list))
+    else:
+        # Advanced visible → hide basic stat columns (swap behavior)
+        requests.extend(_build_hide_basic_requests(ws_id, columns_list))
 
     # ---- 17. Hide percentile columns (respects current toggle state) ----
     if hide_percentiles:
@@ -1880,23 +1936,25 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     }
                 })
 
-    # ---- 19b. Hide columns with sheets='players' on non-players sheets ----
-    if sheet_type not in ('players', 'nba'):
-        for idx, entry in enumerate(columns_list):
-            col_def = entry[1]
-            if col_def.get('sheets') == 'players':
-                requests.append({
-                    'updateDimensionProperties': {
-                        'range': {
-                            'sheetId': ws_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': idx,
-                            'endIndex': idx + 1,
-                        },
-                        'properties': {'hiddenByUser': True},
-                        'fields': 'hiddenByUser',
-                    }
-                })
+    # ---- 19b. Hide columns without entity formula (e.g. jersey on teams) ----
+    col_entity = 'team' if sheet_type == 'teams' else 'player'
+    fkey = f'{col_entity}_formula'
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        # Non-stat columns without a formula for this entity get hidden
+        if not col_def.get('is_stat', False) and col_def.get(fkey) is None:
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'hiddenByUser': True},
+                    'fields': 'hiddenByUser',
+                }
+            })
 
     # ---- 20. Auto-filter on filter row — excludes team/opp rows from sort ----
     filter_end = data_start + n_player_rows if n_player_rows > 0 else total_rows
@@ -2036,6 +2094,29 @@ def _build_hide_advanced_requests(ws_id: int, columns_list: List[Tuple]) -> list
         col_ctx = entry[3] if len(entry) > 3 else None
         col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
         if col_ctx_cfg.get('is_stats_section') and col_def.get('stat_mode') == 'advanced':
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'hiddenByUser': True},
+                    'fields': 'hiddenByUser',
+                }
+            })
+    return requests
+
+
+def _build_hide_basic_requests(ws_id: int, columns_list: List[Tuple]) -> list:
+    """Build requests to hide basic stat columns (when advanced mode is shown)."""
+    requests = []
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        col_ctx = entry[3] if len(entry) > 3 else None
+        col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+        if col_ctx_cfg.get('is_stats_section') and col_def.get('stat_mode') == 'basic':
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -2368,8 +2449,8 @@ def build_summary_rows(columns_list: List[Tuple],
 
             # Regular stat columns: look up in section-specific populations
             col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
-            if col_ctx_cfg.get('is_stats_section') and col_key in percentile_pops:
-                pop_key = f'{col_ctx}:{col_key}' if f'{col_ctx}:{col_key}' in percentile_pops else col_key
+            pop_key = f'{col_ctx}:{col_key}'
+            if col_ctx_cfg.get('is_stats_section') and (pop_key in percentile_pops or col_key in percentile_pops):
                 sorted_vals = percentile_pops.get(pop_key, percentile_pops.get(col_key))
                 if sorted_vals:
                     reverse = col_def.get('reverse_percentile', False)
@@ -2515,6 +2596,19 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
         'teams_sheet': _contiguous_ranges(_advanced_indices(teams_columns)),
     }
 
+    # --- Basic column ranges (hidden when advanced mode is on) -----------
+    def _basic_indices(cols):
+        return sorted([
+            i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
+            if col_def.get('stat_mode') == 'basic'
+        ])
+
+    basic_column_ranges = {
+        'team_sheet':  _contiguous_ranges(_basic_indices(team_columns)),
+        'nba_sheet':   _contiguous_ranges(_basic_indices(nba_columns)),
+        'teams_sheet': _contiguous_ranges(_basic_indices(teams_columns)),
+    }
+
     # --- Percentile column ranges ----------------------------------------
     def _percentile_indices(cols):
         return sorted([
@@ -2551,14 +2645,20 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
     }
 
     # --- Always-hidden columns per sheet type (1-indexed) ----------------
-    # Columns with sheets='players' are always hidden on team/teams sheets
-    def _always_hidden_indices(cols):
-        return [i + 1 for i, (ck, cd, v, cx) in enumerate(cols)
-                if cd.get('sheets') == 'players']
+    # Columns without the appropriate entity formula are always hidden
+    # (e.g. jersey/hand on teams sheet, team column on team sheets)
+    def _always_hidden_indices(cols, entity_type):
+        fkey = f'{entity_type}_formula'
+        hidden = []
+        for i, (ck, cd, v, cx) in enumerate(cols):
+            # Column has no formula for this entity → always hidden
+            if not cd.get('is_stat', False) and cd.get(fkey) is None:
+                hidden.append(i + 1)
+        return hidden
 
     always_hidden_columns = {
-        'team_sheet':  _always_hidden_indices(team_columns),
-        'teams_sheet': _always_hidden_indices(teams_columns),
+        'team_sheet':  _always_hidden_indices(team_columns, 'player'),
+        'teams_sheet': _always_hidden_indices(teams_columns, 'team'),
         'nba_sheet':   [],  # nothing always-hidden on players sheet
     }
 
@@ -2643,6 +2743,7 @@ def get_config_for_export(mode: str = 'per_100') -> dict:
         },
         'column_ranges': column_ranges,
         'advanced_column_ranges': advanced_column_ranges,
+        'basic_column_ranges': basic_column_ranges,
         'percentile_column_ranges': percentile_column_ranges,
         'base_value_column_ranges': base_value_column_ranges,
         'subsection_boundaries': subsection_boundaries,

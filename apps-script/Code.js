@@ -244,29 +244,112 @@ function switchToPer100()  { triggerSync('per_100',  {priorityTeam: _getActiveTe
 function toggleAdvancedStats() {
   var ss     = SpreadsheetApp.getActiveSpreadsheet();
   var config = loadConfig();
-  var ranges = config.advanced_column_ranges || {};
+  var advRanges   = config.advanced_column_ranges || {};
+  var basicRanges = config.basic_column_ranges || {};
 
   // Detect current state from active sheet
   var active     = ss.getActiveSheet();
   var activeName = active.getName().toUpperCase();
   var activeType = _getSheetType(activeName);
   var activeKey  = _getRangeKey(activeType);
-  var detectR    = (ranges[activeKey] || []);
-  var newVisible = true;
+  var detectR    = (advRanges[activeKey] || []);
+  var newAdvancedVisible = true;
   if (detectR.length > 0 && detectR[0].start <= active.getMaxColumns()) {
-    try { newVisible = active.isColumnHiddenByUser(detectR[0].start); }
+    try { newAdvancedVisible = active.isColumnHiddenByUser(detectR[0].start); }
     catch (e) { Logger.log('toggleAdvancedStats detect error: ' + e); }
   }
 
   // Save state to DocumentProperties for DRY toggle management
   PropertiesService.getDocumentProperties().setProperty(
-    'SHOW_ADVANCED', newVisible ? 'true' : 'false'
+    'SHOW_ADVANCED', newAdvancedVisible ? 'true' : 'false'
   );
 
   // Apply column visibility + subsection borders (active sheet first)
   var boundaries = config.subsection_boundaries || {};
-  _applyColumnRangeListWithBorders(ranges, newVisible, boundaries);
-  ss.toast(newVisible ? 'Advanced stats shown' : 'Advanced stats hidden', 'View', 3);
+  var sheets = ss.getSheets();
+
+  function applyToSheet(sheet) {
+    var name      = sheet.getName().toUpperCase();
+    var sheetType = _getSheetType(name);
+    if (!sheetType) return;
+    var rangeKey = _getRangeKey(sheetType);
+    var maxCols  = sheet.getMaxColumns();
+
+    // Show/hide advanced columns
+    var advR = advRanges[rangeKey] || [];
+    _applyRangeVisibility(sheet, advR, maxCols, newAdvancedVisible);
+
+    // Hide/show basic columns (swap behavior)
+    var basR = basicRanges[rangeKey] || [];
+    _applyRangeVisibility(sheet, basR, maxCols, !newAdvancedVisible);
+
+    // Show/hide subsection header row
+    var subRow = config.subsection_row_index || 2;
+    try {
+      if (newAdvancedVisible) sheet.showRows(subRow, 1);
+      else                     sheet.hideRows(subRow, 1);
+    } catch (e) {
+      Logger.log('Subsection row toggle error on ' + name + ': ' + e);
+    }
+
+    // Subsection borders
+    var layout = config.layout || {};
+    var headerRows = layout.header_row_count || 4;
+    var maxRows = sheet.getMaxRows();
+    var borderCols = (boundaries[rangeKey] || []);
+    var statsRange = (config.stats_section_ranges || {})[rangeKey] || {};
+
+    // White borders on subsection + column name header rows — ONLY for stats section
+    if (newAdvancedVisible && statsRange.start && statsRange.end) {
+      try {
+        var statsColCount = statsRange.end - statsRange.start + 1;
+        // Apply white borders to subsection row AND column name row (rows 2-3)
+        var headerBorderRange = sheet.getRange(subRow, statsRange.start, headerRows - 1, statsColCount);
+        headerBorderRange.setBorder(true, true, true, true, true, true, '#FFFFFF',
+          SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+      } catch (e) {
+        Logger.log('Subsection stats border error on ' + name + ': ' + e);
+      }
+    }
+
+    // Add or remove subsection vertical borders
+    for (var b = 0; b < borderCols.length; b++) {
+      var col = borderCols[b];
+      if (col > maxCols) continue;
+      try {
+        if (newAdvancedVisible) {
+          // White SOLID_MEDIUM left border on header rows (subsection row through filter row)
+          var hdrBorderRange = sheet.getRange(subRow, col, headerRows - 1, 1);
+          hdrBorderRange.setBorder(null, true, null, null, null, null, '#FFFFFF',
+            SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+          // Black SOLID_MEDIUM left border on all data rows
+          var dataRange = sheet.getRange(headerRows + 1, col, maxRows - headerRows, 1);
+          dataRange.setBorder(null, true, null, null, null, null, '#000000',
+            SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+        } else {
+          // Remove borders from subheader through all data rows
+          var fullRange = sheet.getRange(subRow, col, maxRows - subRow + 1, 1);
+          fullRange.setBorder(null, false, null, null, null, null);
+        }
+      } catch (e) {
+        Logger.log('Border error on ' + name + ' col ' + col + ': ' + e);
+      }
+    }
+
+    // Re-hide always-hidden columns and respect current toggle states
+    _rehideAlwaysHidden(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType);
+  }
+
+  applyToSheet(active);
+  SpreadsheetApp.flush();
+
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].getSheetId() === active.getSheetId()) continue;
+    applyToSheet(sheets[i]);
+  }
+
+  ss.toast(newAdvancedVisible ? 'Advanced stats shown' : 'Basic stats shown', 'View', 3);
 }
 
 /**
@@ -310,13 +393,9 @@ function togglePercentiles() {
     _applyRangeVisibility(sheet, pctR, maxCols, showPercentiles);
     _applyRangeVisibility(sheet, valR, maxCols, !showPercentiles);
 
-    // Re-hide always-hidden columns and respect advanced toggle state
+    // Re-hide always-hidden columns and respect all toggle states
     _rehideAlwaysHidden(sheet, sheetType);
-    var showAdv = PropertiesService.getDocumentProperties().getProperty('SHOW_ADVANCED') === 'true';
-    if (!showAdv) {
-      var advR = (config.advanced_column_ranges || {})[rangeKey] || [];
-      _applyRangeVisibility(sheet, advR, maxCols, false);
-    }
+    _reapplyToggles(sheet, sheetType);
   }
 
   applyToSheet(active);
@@ -732,9 +811,10 @@ function _rehideAlwaysHidden(sheet, sheetType) {
 }
 
 /**
- * Re-apply current toggle states (percentiles, advanced) after any section toggle.
+ * Re-apply current toggle states (percentiles, advanced/basic) after any section toggle.
  * Ensures toggles are DRY — showing a section doesn't reveal columns that should
- * be hidden by another toggle (e.g. percentile columns when in values mode).
+ * be hidden by another toggle (e.g. percentile columns when in values mode,
+ * basic columns when advanced is shown).
  */
 function _reapplyToggles(sheet, sheetType) {
   var config   = loadConfig();
@@ -749,12 +829,12 @@ function _reapplyToggles(sheet, sheetType) {
   _applyRangeVisibility(sheet, pctR, maxCols, showPct);
   _applyRangeVisibility(sheet, valR, maxCols, !showPct);
 
-  // Re-hide advanced columns if advanced mode is off
+  // Re-apply advanced/basic swap based on SHOW_ADVANCED state
   var showAdv  = props.getProperty('SHOW_ADVANCED') === 'true';
-  if (!showAdv) {
-    var advR = (config.advanced_column_ranges || {})[rangeKey] || [];
-    _applyRangeVisibility(sheet, advR, maxCols, false);
-  }
+  var advR = (config.advanced_column_ranges || {})[rangeKey] || [];
+  var basR = (config.basic_column_ranges || {})[rangeKey] || [];
+  _applyRangeVisibility(sheet, advR, maxCols, showAdv);
+  _applyRangeVisibility(sheet, basR, maxCols, !showAdv);
 }
 
 /**
