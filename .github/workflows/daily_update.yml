@@ -23,7 +23,7 @@ jobs:
   etl:
     name: Daily ETL
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 300  # 5-hour hard ceiling; prevents runaway jobs
+    timeout-minutes: 600  # 10-hour hard ceiling; prevents runaway jobs
     
     steps:
     - name: Checkout repository
