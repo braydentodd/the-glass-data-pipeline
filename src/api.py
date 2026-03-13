@@ -86,6 +86,7 @@ def sync_historical_stats():
         show_advanced = data.get('show_advanced', False)  # Current advanced stats toggle state
         priority_team = data.get('priority_team')  # Optional: team to process first
         sync_section = data.get('sync_section')  # Optional: 'historical', 'postseason', or None for full sync (default: None)
+        data_only_sync = data.get('data_only', True)  # Default to data-only for mode/timeframe switches
         
         # Build environment variables for sync script
         env = os.environ.copy()
@@ -94,6 +95,7 @@ def sync_historical_stats():
         env['STATS_MODE'] = stats_mode
         env['SHOW_PERCENTILES'] = 'true' if show_percentiles else 'false'
         env['SHOW_ADVANCED'] = 'true' if show_advanced else 'false'
+        env['DATA_ONLY_SYNC'] = 'true' if data_only_sync else 'false'
         
         # Only set SYNC_SECTION if explicitly requested (for partial syncs)
         if sync_section:

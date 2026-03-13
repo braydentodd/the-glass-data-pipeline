@@ -65,11 +65,12 @@ def get_sheets_client():
     return gspread.authorize(creds)
 
 
-def _get_or_create_worksheet(spreadsheet, title: str, rows: int = 200, cols: int = 200):
+def _get_or_create_worksheet(spreadsheet, title: str, rows: int = 200, cols: int = 200, clear: bool = True):
     """Get existing worksheet or create a new one, clearing if it exists."""
     try:
         ws = spreadsheet.worksheet(title)
-        ws.clear()
+        if clear:
+            ws.clear()
         return ws
     except gspread.exceptions.WorksheetNotFound:
         return spreadsheet.add_worksheet(title=title, rows=rows, cols=cols)
@@ -84,7 +85,8 @@ def _apply_sheet_formatting(worksheet, columns_list, header_merges: list,
                             percentile_cells: list, n_player_rows: int,
                             sheet_type: str = 'team',
                             show_advanced: bool = False,
-                            show_percentiles: bool = False):
+                            show_percentiles: bool = False,
+                            data_only: bool = False):
     """
     Apply ALL Google Sheets formatting via batch API requests.
     Delegates entirely to lib/sheets.build_formatting_requests (config-driven).
@@ -95,6 +97,10 @@ def _apply_sheet_formatting(worksheet, columns_list, header_merges: list,
 
     For large sheets (500+ players), requests are chunked to stay under
     the Google Sheets API ~10 MB request size limit.
+
+    When data_only=True, skips structural formatting (fonts, borders, widths,
+    column visibility) and only applies banding, percentile shading, and
+    grid resize.  Used for fast mode/timeframe switches.
     """
     # --- Remove existing banded ranges (survive ws.clear()) --------------
     meta = worksheet.spreadsheet.fetch_sheet_metadata(
@@ -120,6 +126,7 @@ def _apply_sheet_formatting(worksheet, columns_list, header_merges: list,
         sheet_type=sheet_type,
         show_advanced=show_advanced,
         show_percentiles=show_percentiles,
+        data_only=data_only,
     )
     # Prepend deleteBanding so old banding is removed before new is added
     all_requests = delete_requests + requests
@@ -146,7 +153,9 @@ def sync_team_sheet(client, spreadsheet, team_abbr: str,
                     show_percentiles: bool = False,
                     show_advanced: bool = False,
                     historical_config: dict = None,
-                    postseason_config: dict = None):
+                    postseason_config: dict = None,
+                    data_only: bool = False,
+                    precomputed: dict = None):
     """
     Sync a single team's worksheet with merged row layout.
 
@@ -166,7 +175,7 @@ def sync_team_sheet(client, spreadsheet, team_abbr: str,
     fmt = SHEET_FORMATTING
     current_year = NBA_CONFIG['current_season_year']
     display_name = team_name or team_abbr
-    worksheet = _get_or_create_worksheet(spreadsheet, team_abbr)
+    worksheet = _get_or_create_worksheet(spreadsheet, team_abbr, clear=not data_only)
 
     conn = get_db_connection()
     try:
@@ -201,56 +210,63 @@ def sync_team_sheet(client, spreadsheet, team_abbr: str,
                         if td.get('team'):
                             td['team'][field] = avg_val
 
-        # ---- Percentile populations (league-wide) ----
-        all_players_curr = fetch_all_players(conn, 'current_stats')
-        all_players_hist = fetch_all_players(conn, 'historical_stats', historical_config)
-        all_players_post = fetch_all_players(conn, 'postseason_stats', postseason_config)
-        all_teams_curr = fetch_all_teams(conn, 'current_stats')
-        all_teams_hist = fetch_all_teams(conn, 'historical_stats', historical_config)
-        all_teams_post = fetch_all_teams(conn, 'postseason_stats', postseason_config)
+        # ---- Percentile populations (league-wide) — use precomputed if available ----
+        if precomputed:
+            pct_curr = precomputed['pct_curr']
+            pct_hist = precomputed['pct_hist']
+            pct_post = precomputed['pct_post']
+            pct_team_curr = precomputed['pct_team_curr']
+            pct_opp_curr = precomputed['pct_opp_curr']
+            pct_team_hist = precomputed['pct_team_hist']
+            pct_opp_hist = precomputed['pct_opp_hist']
+            pct_team_post = precomputed['pct_team_post']
+            pct_opp_post = precomputed['pct_opp_post']
+        else:
+            all_players_curr = fetch_all_players(conn, 'current_stats')
+            all_players_hist = fetch_all_players(conn, 'historical_stats', historical_config)
+            all_players_post = fetch_all_players(conn, 'postseason_stats', postseason_config)
+            all_teams_curr = fetch_all_teams(conn, 'current_stats')
+            all_teams_hist = fetch_all_teams(conn, 'historical_stats', historical_config)
+            all_teams_post = fetch_all_teams(conn, 'postseason_stats', postseason_config)
 
-        pct_curr_p = calculate_all_percentiles(all_players_curr, 'player', mode)
-        pct_hist_p = calculate_all_percentiles(all_players_hist, 'player', mode)
-        pct_post_p = calculate_all_percentiles(all_players_post, 'player', mode)
-        pct_team_curr = calculate_all_percentiles(all_teams_curr['teams'], 'team', mode)
-        pct_opp_curr = calculate_all_percentiles(all_teams_curr['opponents'], 'opponents', mode)
-        pct_team_hist = calculate_all_percentiles(all_teams_hist['teams'], 'team', mode)
-        pct_opp_hist = calculate_all_percentiles(all_teams_hist['opponents'], 'opponents', mode)
-        pct_team_post = calculate_all_percentiles(all_teams_post['teams'], 'team', mode)
-        pct_opp_post = calculate_all_percentiles(all_teams_post['opponents'], 'opponents', mode)
+            pct_curr = calculate_all_percentiles(all_players_curr, 'player', mode)
+            pct_hist = calculate_all_percentiles(all_players_hist, 'player', mode)
+            pct_post = calculate_all_percentiles(all_players_post, 'player', mode)
+            pct_team_curr = calculate_all_percentiles(all_teams_curr['teams'], 'team', mode)
+            pct_opp_curr = calculate_all_percentiles(all_teams_curr['opponents'], 'opponents', mode)
+            pct_team_hist = calculate_all_percentiles(all_teams_hist['teams'], 'team', mode)
+            pct_opp_hist = calculate_all_percentiles(all_teams_hist['opponents'], 'opponents', mode)
+            pct_team_post = calculate_all_percentiles(all_teams_post['teams'], 'team', mode)
+            pct_opp_post = calculate_all_percentiles(all_teams_post['opponents'], 'opponents', mode)
 
-        # ---- Enrich all teams with minute-weighted player info averages ----
-        # Needed so team-level percentile populations are correct for info
-        # columns (experience, age, height, weight, wingspan).
-        # Without this, team populations lack these fields → all = 0 → 100%ile.
-        from collections import defaultdict
-        player_groups_by_team = defaultdict(list)
-        for p in all_players_curr:
-            ta = p.get('team_abbr')
-            if ta:
-                player_groups_by_team[ta].append(p)
+            # ---- Enrich all teams with minute-weighted player info averages ----
+            from collections import defaultdict
+            player_groups_by_team = defaultdict(list)
+            for p in all_players_curr:
+                ta = p.get('team_abbr')
+                if ta:
+                    player_groups_by_team[ta].append(p)
 
-        for team_d in all_teams_curr['teams']:
-            ta = team_d.get('team_abbr')
-            if not ta:
-                continue
-            tp = player_groups_by_team.get(ta, [])
-            for field in avg_fields:
-                wsum, wweight = 0.0, 0.0
-                for p in tp:
-                    val = p.get(field)
-                    if val is None:
-                        continue
-                    mins = (p.get('minutes_x10', 0) or 0) / 10.0
-                    if mins <= 0:
-                        continue
-                    wsum += val * mins
-                    wweight += mins
-                if wweight > 0:
-                    team_d[field] = round(wsum / wweight, 1)
+            for team_d in all_teams_curr['teams']:
+                ta = team_d.get('team_abbr')
+                if not ta:
+                    continue
+                tp = player_groups_by_team.get(ta, [])
+                for field in avg_fields:
+                    wsum, wweight = 0.0, 0.0
+                    for p in tp:
+                        val = p.get(field)
+                        if val is None:
+                            continue
+                        mins = (p.get('minutes_x10', 0) or 0) / 10.0
+                        if mins <= 0:
+                            continue
+                        wsum += val * mins
+                        wweight += mins
+                    if wweight > 0:
+                        team_d[field] = round(wsum / wweight, 1)
 
-        # Recalculate team percentiles with enriched info data
-        pct_team_curr = calculate_all_percentiles(all_teams_curr['teams'], 'team', mode)
+            pct_team_curr = calculate_all_percentiles(all_teams_curr['teams'], 'team', mode)
 
         # ---- Column structure ----
         columns = build_sheet_columns(entity='player', stat_mode='both',
@@ -295,9 +311,9 @@ def sync_team_sheet(client, spreadsheet, team_abbr: str,
                 current_data=curr_by_id.get(pid),
                 historical_data=hist_by_id.get(pid),
                 postseason_data=post_by_id.get(pid),
-                pct_curr=pct_curr_p,
-                pct_hist=pct_hist_p,
-                pct_post=pct_post_p,
+                pct_curr=pct_curr,
+                pct_hist=pct_hist,
+                pct_post=pct_post,
                 entity_type='player',
                 mode=mode,
             )
@@ -374,6 +390,7 @@ def sync_team_sheet(client, spreadsheet, team_abbr: str,
             sheet_type='team',
             show_advanced=show_advanced,
             show_percentiles=show_percentiles,
+            data_only=data_only,
         )
 
         logger.info(
@@ -393,7 +410,8 @@ def sync_players_sheet(client, spreadsheet, mode: str = 'per_100',
                        show_percentiles: bool = False,
                        show_advanced: bool = False,
                        historical_config: dict = None,
-                       postseason_config: dict = None):
+                       postseason_config: dict = None,
+                       data_only: bool = False):
     """
     Sync the league-wide Players sheet.
 
@@ -406,7 +424,7 @@ def sync_players_sheet(client, spreadsheet, mode: str = 'per_100',
     logger.info('  Syncing Players sheet...')
     fmt = SHEET_FORMATTING
     current_year = NBA_CONFIG['current_season_year']
-    worksheet = _get_or_create_worksheet(spreadsheet, 'Players')
+    worksheet = _get_or_create_worksheet(spreadsheet, 'Players', clear=not data_only)
 
     conn = get_db_connection()
     try:
@@ -415,7 +433,7 @@ def sync_players_sheet(client, spreadsheet, mode: str = 'per_100',
         all_players_hist = fetch_all_players(conn, 'historical_stats', historical_config)
         all_players_post = fetch_all_players(conn, 'postseason_stats', postseason_config)
 
-        # ---- Percentile populations ----
+        # ---- Percentile populations (single-mode) ----
         pct_curr = calculate_all_percentiles(all_players_curr, 'player', mode)
         pct_hist = calculate_all_percentiles(all_players_hist, 'player', mode)
         pct_post = calculate_all_percentiles(all_players_post, 'player', mode)
@@ -482,10 +500,13 @@ def sync_players_sheet(client, spreadsheet, mode: str = 'per_100',
         merged_pops = {}
         for k, v in pct_curr.items():
             merged_pops[f'current_stats:{k}'] = v
+            merged_pops[k] = v          # also bare key for non-stats-section lookup
         for k, v in pct_hist.items():
             merged_pops[f'historical_stats:{k}'] = v
+            merged_pops[k] = v
         for k, v in pct_post.items():
             merged_pops[f'postseason_stats:{k}'] = v
+            merged_pops[k] = v
         summary_rows, summary_pct = build_summary_rows(columns, merged_pops, mode)
         summary_start = fmt['data_start_row'] + n_player_rows
         for cell in summary_pct:
@@ -508,13 +529,14 @@ def sync_players_sheet(client, spreadsheet, mode: str = 'per_100',
         _apply_sheet_formatting(
             worksheet, columns,
             header_merges=headers['merges'],
-            n_data_rows=n_player_rows,
+            n_data_rows=len(data_rows),
             team_name='Players',
             percentile_cells=all_percentile_cells,
             n_player_rows=n_player_rows,
             sheet_type='players',
             show_advanced=show_advanced,
             show_percentiles=show_percentiles,
+            data_only=data_only,
         )
 
         # ---- Move Players sheet to first position ----
@@ -547,7 +569,8 @@ def sync_teams_sheet(client, spreadsheet, mode: str = 'per_100',
                      show_percentiles: bool = False,
                      show_advanced: bool = False,
                      historical_config: dict = None,
-                     postseason_config: dict = None):
+                     postseason_config: dict = None,
+                     data_only: bool = False):
     """
     Sync the league-wide Teams sheet.
 
@@ -561,7 +584,7 @@ def sync_teams_sheet(client, spreadsheet, mode: str = 'per_100',
     logger.info('  Syncing Teams sheet...')
     fmt = SHEET_FORMATTING
     current_year = NBA_CONFIG['current_season_year']
-    worksheet = _get_or_create_worksheet(spreadsheet, 'Teams')
+    worksheet = _get_or_create_worksheet(spreadsheet, 'Teams', clear=not data_only)
 
     conn = get_db_connection()
     try:
@@ -623,7 +646,7 @@ def sync_teams_sheet(client, spreadsheet, mode: str = 'per_100',
         pct_team_hist = calculate_all_percentiles(all_teams_hist['teams'], 'team', mode)
         pct_team_post = calculate_all_percentiles(all_teams_post['teams'], 'team', mode)
 
-        # ---- Opponent percentile populations (for percentile coloring) ----
+        # ---- Opponent percentile populations ----
         opp_percentiles = {}
         # We need columns list first; build it early (also used below)
         columns = build_sheet_columns(entity='team', stat_mode='both',
@@ -705,10 +728,13 @@ def sync_teams_sheet(client, spreadsheet, mode: str = 'per_100',
         merged_pops = {}
         for k, v in pct_team_curr.items():
             merged_pops[f'current_stats:{k}'] = v
+            merged_pops[k] = v
         for k, v in pct_team_hist.items():
             merged_pops[f'historical_stats:{k}'] = v
+            merged_pops[k] = v
         for k, v in pct_team_post.items():
             merged_pops[f'postseason_stats:{k}'] = v
+            merged_pops[k] = v
         summary_rows, summary_pct = build_summary_rows(
             columns, merged_pops, mode, opp_percentiles=opp_percentiles
         )
@@ -733,13 +759,14 @@ def sync_teams_sheet(client, spreadsheet, mode: str = 'per_100',
         _apply_sheet_formatting(
             worksheet, columns,
             header_merges=headers['merges'],
-            n_data_rows=n_team_rows,
+            n_data_rows=len(data_rows),
             team_name='Teams',
             percentile_cells=all_percentile_cells,
             n_player_rows=n_team_rows,
             sheet_type='teams',
             show_advanced=show_advanced,
             show_percentiles=show_percentiles,
+            data_only=data_only,
         )
 
         # ---- Move Teams sheet to second position (after Players) ----
@@ -771,10 +798,10 @@ def sync_teams_sheet(client, spreadsheet, mode: str = 'per_100',
 def sync_all_teams(mode: str = 'per_100', show_percentiles: bool = False,
                    show_advanced: bool = False,
                    historical_config: dict = None, postseason_config: dict = None,
-                   priority_team: str = None):
+                   priority_team: str = None, data_only: bool = False):
     """Sync all sheets. priority_team is synced first, then other teams, then Players/Teams."""
-    logger.info('Starting full league sync...')
-    delay = SHEET_FORMATTING.get('sync_delay_seconds', 3)
+    logger.info('Starting %s sync...', 'data-only' if data_only else 'full')
+    delay = 0.5 if data_only else SHEET_FORMATTING.get('sync_delay_seconds', 3)
 
     client = get_sheets_client()
     spreadsheet = client.open_by_key(GOOGLE_SHEETS_CONFIG['spreadsheet_id'])
@@ -782,7 +809,73 @@ def sync_all_teams(mode: str = 'per_100', show_percentiles: bool = False,
     sync_kwargs = dict(mode=mode, show_percentiles=show_percentiles,
                        show_advanced=show_advanced,
                        historical_config=historical_config,
-                       postseason_config=postseason_config)
+                       postseason_config=postseason_config,
+                       data_only=data_only)
+
+    # ---- Pre-compute league-wide percentile populations ONCE ----
+    # Previously computed per-team (30×), this saves ~180 DB queries
+    # and ~270 percentile calculations.
+    logger.info('  Pre-computing league-wide percentile populations...')
+    conn = get_db_connection()
+    try:
+        from collections import defaultdict
+        all_players_curr = fetch_all_players(conn, 'current_stats')
+        all_players_hist = fetch_all_players(conn, 'historical_stats', historical_config)
+        all_players_post = fetch_all_players(conn, 'postseason_stats', postseason_config)
+        all_teams_curr = fetch_all_teams(conn, 'current_stats')
+        all_teams_hist = fetch_all_teams(conn, 'historical_stats', historical_config)
+        all_teams_post = fetch_all_teams(conn, 'postseason_stats', postseason_config)
+
+        pct_curr = calculate_all_percentiles(all_players_curr, 'player', mode)
+        pct_hist = calculate_all_percentiles(all_players_hist, 'player', mode)
+        pct_post = calculate_all_percentiles(all_players_post, 'player', mode)
+        pct_team_curr = calculate_all_percentiles(all_teams_curr['teams'], 'team', mode)
+        pct_opp_curr = calculate_all_percentiles(all_teams_curr['opponents'], 'opponents', mode)
+        pct_team_hist = calculate_all_percentiles(all_teams_hist['teams'], 'team', mode)
+        pct_opp_hist = calculate_all_percentiles(all_teams_hist['opponents'], 'opponents', mode)
+        pct_team_post = calculate_all_percentiles(all_teams_post['teams'], 'team', mode)
+        pct_opp_post = calculate_all_percentiles(all_teams_post['opponents'], 'opponents', mode)
+
+        # Enrich all teams with minute-weighted player info averages
+        avg_fields = ['years_experience', 'age', 'height_inches', 'weight_lbs', 'wingspan_inches']
+        player_groups = defaultdict(list)
+        for p in all_players_curr:
+            ta = p.get('team_abbr')
+            if ta:
+                player_groups[ta].append(p)
+        for team_d in all_teams_curr['teams']:
+            ta = team_d.get('team_abbr')
+            if not ta:
+                continue
+            for field in avg_fields:
+                wsum, wweight = 0.0, 0.0
+                for p in player_groups.get(ta, []):
+                    val = p.get(field)
+                    if val is None:
+                        continue
+                    mins = (p.get('minutes_x10', 0) or 0) / 10.0
+                    if mins <= 0:
+                        continue
+                    wsum += val * mins
+                    wweight += mins
+                if wweight > 0:
+                    team_d[field] = round(wsum / wweight, 1)
+        pct_team_curr = calculate_all_percentiles(all_teams_curr['teams'], 'team', mode)
+
+        precomputed = {
+            'pct_curr': pct_curr,
+            'pct_hist': pct_hist,
+            'pct_post': pct_post,
+            'pct_team_curr': pct_team_curr,
+            'pct_opp_curr': pct_opp_curr,
+            'pct_team_hist': pct_team_hist,
+            'pct_opp_hist': pct_opp_hist,
+            'pct_team_post': pct_team_post,
+            'pct_opp_post': pct_opp_post,
+        }
+        logger.info('  Percentile populations ready')
+    finally:
+        conn.close()
 
     # ---- Sync individual team sheets (priority first) ----
     teams = get_teams_from_db()           # {team_id: (abbr, name)}
@@ -799,6 +892,7 @@ def sync_all_teams(mode: str = 'per_100', show_percentiles: bool = False,
             sync_team_sheet(
                 client, spreadsheet, abbr,
                 team_name=team_names.get(abbr, abbr),
+                precomputed=precomputed,
                 **sync_kwargs,
             )
         except Exception as exc:
@@ -842,6 +936,8 @@ def main():
                         help='Past seasons for historical stats (default: 3)')
     parser.add_argument('--post-years', type=int, default=None,
                         help='Past seasons for postseason stats (default: 3)')
+    parser.add_argument('--data-only', action='store_true',
+                        help='Fast sync: skip structural formatting, only update data + colors')
     args = parser.parse_args()
 
     # Environment variables (set by API subprocess) override CLI defaults.
@@ -850,6 +946,7 @@ def main():
     show_percentiles = args.percentiles or os.environ.get('SHOW_PERCENTILES') == 'true'
     show_advanced = os.environ.get('SHOW_ADVANCED') == 'true'
     priority_team = args.team or os.environ.get('PRIORITY_TEAM_ABBR')
+    data_only = args.data_only or os.environ.get('DATA_ONLY_SYNC') == 'true'
 
     # Historical timeframe — env vars from API or CLI defaults
     hist_mode = os.environ.get('HISTORICAL_MODE', 'years')
@@ -886,6 +983,7 @@ def main():
         historical_config=historical_config,
         postseason_config=postseason_config,
         priority_team=priority_team,
+        data_only=data_only,
     )
 
 

@@ -37,4 +37,4 @@ else
     echo "Syncing all team sheets..."
 fi
 
-PYTHONPATH=. python src/sheets.py $ARGS 2>&1
+python3 -m src.sheets $ARGS 2>&1

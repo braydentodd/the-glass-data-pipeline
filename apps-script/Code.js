@@ -7,7 +7,7 @@
  * Responsibilities:
  *   - Load config from /api/config (single source of truth)
  *   - Menu creation and user interactions
- *   - Trigger Python-side syncs via the API
+ *   - Trigger Python-side syncs via the API (including stat mode switching)
  *   - Write-back wingspan / notes edits to the DB via PATCH
  *   - Column visibility toggles (sections, advanced stats, percentiles)
  *
@@ -80,19 +80,33 @@ function getColors() {
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Display Settings')
-    .addItem('Totals',              'switchToTotals')
-    .addItem('Per Game',            'switchToPerGame')
-    .addItem('Per 36 Minutes',      'switchToPer36')
-    .addItem('Per 100 Possessions', 'switchToPer100')
+    .addSubMenu(ui.createMenu('Stat Mode')
+      .addItem('Per 100 Possessions', 'switchToPer100')
+      .addItem('Per Game',            'switchToPerGame')
+      .addItem('Per 36 Minutes',      'switchToPer36')
+      .addItem('Totals',              'switchToTotals'))
+    .addSubMenu(ui.createMenu('Advanced Stats')
+      .addItem('Show', 'showAdvancedStats')
+      .addItem('Hide', 'hideAdvancedStats'))
+    .addSubMenu(ui.createMenu('Percentiles')
+      .addItem('Show', 'showPercentiles')
+      .addItem('Hide', 'hidePercentiles'))
     .addSeparator()
-    .addItem('Toggle Advanced Stats', 'toggleAdvancedStats')
-    .addItem('Toggle Percentiles',    'togglePercentiles')
-    .addSeparator()
-    .addItem('Toggle Player Info',      'togglePlayerInfo')
-    .addItem('Toggle Analysis',         'toggleAnalysis')
-    .addItem('Toggle Current Stats',    'toggleCurrentStats')
-    .addItem('Toggle Historical Stats', 'toggleHistoricalStats')
-    .addItem('Toggle Postseason Stats', 'togglePostseasonStats')
+    .addSubMenu(ui.createMenu('Player Info')
+      .addItem('Show', 'showPlayerInfo')
+      .addItem('Hide', 'hidePlayerInfo'))
+    .addSubMenu(ui.createMenu('Analysis')
+      .addItem('Show', 'showAnalysis')
+      .addItem('Hide', 'hideAnalysis'))
+    .addSubMenu(ui.createMenu('Current Stats')
+      .addItem('Show', 'showCurrentStats')
+      .addItem('Hide', 'hideCurrentStats'))
+    .addSubMenu(ui.createMenu('Historical Stats')
+      .addItem('Show', 'showHistoricalStats')
+      .addItem('Hide', 'hideHistoricalStats'))
+    .addSubMenu(ui.createMenu('Postseason Stats')
+      .addItem('Show', 'showPostseasonStats')
+      .addItem('Hide', 'hidePostseasonStats'))
     .addSeparator()
     .addItem('Historical Timeframe', 'showHistoricalStatsDialog')
     .addToUi();
@@ -227,220 +241,371 @@ function onEditInstallable(e) {
 // MODE SWITCHING
 // ============================================================
 
-function switchToTotals()  { triggerSync('totals',   {priorityTeam: _getActiveTeamAbbr()}); }
-function switchToPerGame() { triggerSync('per_game', {priorityTeam: _getActiveTeamAbbr()}); }
-function switchToPer36()   { triggerSync('per_36',   {priorityTeam: _getActiveTeamAbbr()}); }
-function switchToPer100()  { triggerSync('per_100',  {priorityTeam: _getActiveTeamAbbr()}); }
+function switchToTotals()  { _switchStatMode('totals'); }
+function switchToPerGame() { _switchStatMode('per_game'); }
+function switchToPer36()   { _switchStatMode('per_36'); }
+function switchToPer100()  { _switchStatMode('per_100'); }
+
+/**
+ * Switch stat mode by triggering a re-sync from the Python backend.
+ * The backend rebuilds all sheets with the new mode's calculations.
+ * Also updates section header text for immediate visual feedback.
+ */
+function _switchStatMode(newMode) {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var config = loadConfig();
+  var props  = PropertiesService.getDocumentProperties();
+
+  var currentMode = props.getProperty('STATS_MODE') || config.default_stat_mode || 'per_100';
+  if (newMode === currentMode) {
+    ss.toast('Already in ' + newMode + ' mode', 'Mode', 2);
+    return;
+  }
+
+  // Update section headers immediately for visual feedback
+  var sheets = ss.getSheets();
+  for (var i = 0; i < sheets.length; i++) {
+    var name = sheets[i].getName().toUpperCase();
+    if (_getSheetType(name)) {
+      _updateSectionHeaders(sheets[i], newMode);
+    }
+  }
+  SpreadsheetApp.flush();
+
+  // Trigger backend re-sync with the new mode
+  triggerSync(newMode, { priorityTeam: _getActiveTeamAbbr() });
+}
+
+/**
+ * Update section header text (row 1) to reflect the current stat mode.
+ * Replaces mode labels in stats section headers.
+ */
+function _updateSectionHeaders(sheet, newMode) {
+  var labels = {
+    'per_100': 'per 100 Poss',
+    'per_game': 'per Game',
+    'per_36': 'per 36 Mins',
+    'totals': 'Totals',
+  };
+  var allLabels = Object.values(labels);
+  var newLabel = labels[newMode] || '';
+
+  try {
+    var lastCol = sheet.getMaxColumns();
+    if (lastCol < 1) return;
+    var values = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    // Write only the cells that change — setValues on the full range would
+    // clear cell formatting (including borders) on every cell it touches.
+    for (var i = 0; i < values.length; i++) {
+      var text = String(values[i]);
+      if (!text) continue;
+      for (var j = 0; j < allLabels.length; j++) {
+        if (text.indexOf(allLabels[j]) !== -1) {
+          sheet.getRange(1, i + 1).setValue(text.replace(allLabels[j], newLabel));
+          break;
+        }
+      }
+    }
+  } catch (e) {
+    Logger.log('_updateSectionHeaders error: ' + e);
+  }
+}
 
 // ============================================================
 // ADVANCED STATS & PERCENTILES TOGGLE
 // ============================================================
 
 /**
- * Toggle advanced stat columns across all sheets.
- * Active sheet is processed first for immediate visual feedback.
- * Manages subsection borders: shown with advanced, hidden with basic.
+ * Show/Hide advanced stat columns across all sheets.
+ * Uses column_metadata for precise control.
+ * Advanced toggle determines whether percentiles or values are shown (never both).
  */
+function showAdvancedStats() { _setAdvancedStats(true); }
+function hideAdvancedStats() { _setAdvancedStats(false); }
+
+/** Keep legacy toggle for backward compatibility */
 function toggleAdvancedStats() {
-  var ss     = SpreadsheetApp.getActiveSpreadsheet();
-  var config = loadConfig();
-  var advRanges   = config.advanced_column_ranges || {};
-  var basicRanges = config.basic_column_ranges || {};
-
-  // Detect current state from active sheet
-  var active     = ss.getActiveSheet();
-  var activeName = active.getName().toUpperCase();
-  var activeType = _getSheetType(activeName);
-  var activeKey  = _getRangeKey(activeType);
-  var detectR    = (advRanges[activeKey] || []);
-  var newAdvancedVisible = true;
-  if (detectR.length > 0 && detectR[0].start <= active.getMaxColumns()) {
-    try { newAdvancedVisible = active.isColumnHiddenByUser(detectR[0].start); }
-    catch (e) { Logger.log('toggleAdvancedStats detect error: ' + e); }
-  }
-
-  // Save state to DocumentProperties for DRY toggle management
-  PropertiesService.getDocumentProperties().setProperty(
-    'SHOW_ADVANCED', newAdvancedVisible ? 'true' : 'false'
-  );
-
-  // Apply column visibility + subsection borders (active sheet first)
-  var boundaries = config.subsection_boundaries || {};
-  var sheets = ss.getSheets();
-
-  function applyToSheet(sheet) {
-    var name      = sheet.getName().toUpperCase();
-    var sheetType = _getSheetType(name);
-    if (!sheetType) return;
-    var rangeKey = _getRangeKey(sheetType);
-    var maxCols  = sheet.getMaxColumns();
-
-    // Show/hide advanced columns
-    var advR = advRanges[rangeKey] || [];
-    _applyRangeVisibility(sheet, advR, maxCols, newAdvancedVisible);
-
-    // Hide/show basic columns (swap behavior)
-    var basR = basicRanges[rangeKey] || [];
-    _applyRangeVisibility(sheet, basR, maxCols, !newAdvancedVisible);
-
-    // Show/hide subsection header row
-    var subRow = config.subsection_row_index || 2;
-    try {
-      if (newAdvancedVisible) sheet.showRows(subRow, 1);
-      else                     sheet.hideRows(subRow, 1);
-    } catch (e) {
-      Logger.log('Subsection row toggle error on ' + name + ': ' + e);
-    }
-
-    // Subsection borders
-    var layout = config.layout || {};
-    var headerRows = layout.header_row_count || 4;
-    var maxRows = sheet.getMaxRows();
-    var borderCols = (boundaries[rangeKey] || []);
-    var statsRange = (config.stats_section_ranges || {})[rangeKey] || {};
-
-    // White borders on subsection + column name header rows — ONLY for stats section
-    if (newAdvancedVisible && statsRange.start && statsRange.end) {
-      try {
-        var statsColCount = statsRange.end - statsRange.start + 1;
-        // Apply white borders to subsection row AND column name row (rows 2-3)
-        var headerBorderRange = sheet.getRange(subRow, statsRange.start, headerRows - 1, statsColCount);
-        headerBorderRange.setBorder(true, true, true, true, true, true, '#FFFFFF',
-          SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-      } catch (e) {
-        Logger.log('Subsection stats border error on ' + name + ': ' + e);
-      }
-    }
-
-    // Add or remove subsection vertical borders
-    for (var b = 0; b < borderCols.length; b++) {
-      var col = borderCols[b];
-      if (col > maxCols) continue;
-      try {
-        if (newAdvancedVisible) {
-          // White SOLID_MEDIUM left border on header rows (subsection row through filter row)
-          var hdrBorderRange = sheet.getRange(subRow, col, headerRows - 1, 1);
-          hdrBorderRange.setBorder(null, true, null, null, null, null, '#FFFFFF',
-            SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-          // Black SOLID_MEDIUM left border on all data rows
-          var dataRange = sheet.getRange(headerRows + 1, col, maxRows - headerRows, 1);
-          dataRange.setBorder(null, true, null, null, null, null, '#000000',
-            SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-        } else {
-          // Remove borders from subheader through all data rows
-          var fullRange = sheet.getRange(subRow, col, maxRows - subRow + 1, 1);
-          fullRange.setBorder(null, false, null, null, null, null);
-        }
-      } catch (e) {
-        Logger.log('Border error on ' + name + ' col ' + col + ': ' + e);
-      }
-    }
-
-    // Re-hide always-hidden columns and respect current toggle states
-    _rehideAlwaysHidden(sheet, sheetType);
-    _reapplyToggles(sheet, sheetType);
-  }
-
-  applyToSheet(active);
-  SpreadsheetApp.flush();
-
-  for (var i = 0; i < sheets.length; i++) {
-    if (sheets[i].getSheetId() === active.getSheetId()) continue;
-    applyToSheet(sheets[i]);
-  }
-
-  ss.toast(newAdvancedVisible ? 'Advanced stats shown' : 'Basic stats shown', 'View', 3);
+  var props = PropertiesService.getDocumentProperties();
+  var current = props.getProperty('SHOW_ADVANCED') === 'true';
+  _setAdvancedStats(!current);
 }
 
-/**
- * Toggle percentile columns across all sheets.
- * Swaps between value view and percentile view:
- *   - Percentile ON  → show percentile columns, hide base value columns
- *   - Percentile OFF → show base value columns, hide percentile columns
- * Active sheet is processed first for immediate visual feedback.
- */
-function togglePercentiles() {
-  var ss     = SpreadsheetApp.getActiveSpreadsheet();
-  var config = loadConfig();
-
-  var pctRanges = config.percentile_column_ranges || {};
-  var valRanges = config.base_value_column_ranges || {};
-
-  // Detect: are percentiles currently visible?
-  var active     = ss.getActiveSheet();
-  var activeName = active.getName().toUpperCase();
-  var activeType = _getSheetType(activeName);
-  var activeKey  = _getRangeKey(activeType);
-  var detectR    = (pctRanges[activeKey] || []);
-  var percentilesCurrentlyVisible = false;
-  if (detectR.length > 0 && detectR[0].start <= active.getMaxColumns()) {
-    try { percentilesCurrentlyVisible = !active.isColumnHiddenByUser(detectR[0].start); }
-    catch (e) { Logger.log('togglePercentiles detect error: ' + e); }
-  }
-
-  var showPercentiles = !percentilesCurrentlyVisible;
-  var sheets = ss.getSheets();
-
-  function applyToSheet(sheet) {
-    var name      = sheet.getName().toUpperCase();
-    var sheetType = _getSheetType(name);
-    if (!sheetType) return;
-    var rangeKey = _getRangeKey(sheetType);
-    var pctR = pctRanges[rangeKey] || [];
-    var valR = valRanges[rangeKey] || [];
-
-    var maxCols = sheet.getMaxColumns();
-    _applyRangeVisibility(sheet, pctR, maxCols, showPercentiles);
-    _applyRangeVisibility(sheet, valR, maxCols, !showPercentiles);
-
-    // Re-hide always-hidden columns and respect all toggle states
-    _rehideAlwaysHidden(sheet, sheetType);
-    _reapplyToggles(sheet, sheetType);
-  }
-
-  applyToSheet(active);
-  SpreadsheetApp.flush();
-
-  for (var i = 0; i < sheets.length; i++) {
-    if (sheets[i].getSheetId() === active.getSheetId()) continue;
-    applyToSheet(sheets[i]);
-  }
-
-  PropertiesService.getDocumentProperties().setProperty(
-    'SHOW_PERCENTILES', showPercentiles ? 'true' : 'false'
-  );
-  ss.toast(showPercentiles ? 'Percentiles shown' : 'Values shown', 'View', 3);
-}
+// ============================================================
+// DRY HELPERS — shared by all toggle functions
+// ============================================================
 
 /**
- * Apply show/hide to a list of column ranges across all sheets.
- * Active sheet is processed first for immediate visual feedback.
+ * Apply a function to every managed sheet, active sheet first for responsiveness.
+ *
+ * @param {function(Sheet, string)} fn  - Receives (sheet, sheetType)
+ * @param {string}  [toastMsg]         - Optional toast when done
  */
-function _applyColumnRangeList(allRanges, visible) {
+function _applyToAllSheets(fn, toastMsg) {
   var ss     = SpreadsheetApp.getActiveSpreadsheet();
   var active = ss.getActiveSheet();
   var sheets = ss.getSheets();
 
-  function applyToSheet(sheet) {
-    var name      = sheet.getName().toUpperCase();
-    var sheetType = _getSheetType(name);
-    if (!sheetType) return;
-    var rangeKey  = _getRangeKey(sheetType);
-    var rangeList = allRanges[rangeKey] || [];
-    _applyRangeVisibility(sheet, rangeList, sheet.getMaxColumns(), visible);
-  }
-
-  applyToSheet(active);
+  var activeName = active.getName().toUpperCase();
+  var activeType = _getSheetType(activeName);
+  if (activeType) fn(active, activeType);
   SpreadsheetApp.flush();
 
   for (var i = 0; i < sheets.length; i++) {
     if (sheets[i].getSheetId() === active.getSheetId()) continue;
-    applyToSheet(sheets[i]);
+    var name = sheets[i].getName().toUpperCase();
+    var type = _getSheetType(name);
+    if (type) fn(sheets[i], type);
+  }
+  if (toastMsg) ss.toast(toastMsg, 'View', 3);
+}
+
+/**
+ * Batch show/hide columns from a sorted list of 1-indexed column numbers.
+ * Groups contiguous columns into single showColumns/hideColumns calls
+ * to minimize API round-trips (critical for staying under the 6-min limit).
+ */
+function _batchColumns(sheet, cols, show) {
+  if (!cols.length) return;
+  cols.sort(function(a, b) { return a - b; });
+  var start = cols[0];
+  var count = 1;
+  for (var i = 1; i < cols.length; i++) {
+    if (cols[i] === start + count) {
+      count++;
+    } else {
+      try {
+        if (show) sheet.showColumns(start, count);
+        else      sheet.hideColumns(start, count);
+      } catch (e) { Logger.log('_batchColumns error: ' + e); }
+      start = cols[i];
+      count = 1;
+    }
+  }
+  try {
+    if (show) sheet.showColumns(start, count);
+    else      sheet.hideColumns(start, count);
+  } catch (e) { Logger.log('_batchColumns error: ' + e); }
+}
+
+/**
+ * Detect the current percentile/advanced state from the actual sheet.
+ * Checks whether a known percentile column is visible (for pct state)
+ * and whether the subsection row is visible (for advanced state).
+ * This is more reliable than reading document properties, which can
+ * become stale after a manual Python sync (./sync_sheets.sh).
+ */
+function _detectToggleState(sheet, sheetType) {
+  var config   = loadConfig();
+  var rangeKey = _getRangeKey(sheetType);
+  var colMeta  = (config.column_metadata || {})[rangeKey] || [];
+
+  // Detect percentile state: find the first stats pct column and check visibility
+  var showPct = false;
+  for (var i = 0; i < colMeta.length; i++) {
+    if (colMeta[i].stats && colMeta[i].pct) {
+      try { showPct = !sheet.isColumnHiddenByUser(colMeta[i].col); }
+      catch (e) { /* fall through */ }
+      break;
+    }
+  }
+
+  // Detect advanced state: subsection row is visible iff advanced is on
+  var showAdv = false;
+  var subRow  = config.subsection_row_index || 2;
+  try { showAdv = !sheet.isRowHiddenByUser(subRow); }
+  catch (e) { /* fall through */ }
+
+  return { showPct: showPct, showAdv: showAdv };
+}
+
+/**
+ * Apply ALL vertical borders (both section and subsection) on a single sheet.
+ * Config-driven: reads section_boundaries and subsection_boundaries from the API.
+ *
+ * Section borders:     Always present. Span row 1 through maxRows.
+ *                      White in headers, black in data.
+ * Subsection borders:  Only when showAdv=true. Span from subsection row through maxRows.
+ *                      White in headers, black in data.
+ *
+ * When showPct=true AND a boundary has hp=true (has_percentile), the base
+ * column is hidden so the border shifts +1 to the pct column.  Stale borders
+ * on the "other" column are cleared to avoid ghosts after toggling.
+ *
+ * @param {Sheet}   sheet
+ * @param {string}  sheetType
+ * @param {boolean} showAdv   - Whether advanced/subsection borders are visible
+ * @param {boolean} showPct   - Whether percentile columns are shown (shifts hp borders)
+ */
+function _applyVerticalBorders(sheet, sheetType, showAdv, showPct) {
+  var config     = loadConfig();
+  var rangeKey   = _getRangeKey(sheetType);
+  var layout     = config.layout || {};
+  var headerRows = layout.header_row_count || 4;
+  var subRow     = config.subsection_row_index || 2;  // 1-indexed
+  var maxRows    = sheet.getMaxRows();
+  var maxCols    = sheet.getMaxColumns();
+
+  /**
+   * Core border setter for a single boundary.
+   * @param {number}  baseCol    - 1-indexed base column of the boundary
+   * @param {boolean} hasPercentile - Whether this boundary has a pct column at +1
+   * @param {number}  startRow   - 1-indexed first row of the border
+   * @param {boolean} shouldShow - Whether to apply or remove the border
+   */
+  function _setBoundaryBorder(baseCol, hasPercentile, startRow, shouldShow) {
+    var col = (showPct && hasPercentile) ? baseCol + 1 : baseCol;
+    if (col > maxCols) return;
+    try {
+      if (shouldShow) {
+        // White left border on header rows (startRow through headerRows)
+        if (startRow <= headerRows) {
+          sheet.getRange(startRow, col, headerRows - startRow + 1, 1)
+               .setBorder(null, true, null, null, null, null,
+                          '#FFFFFF', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+        }
+        // Black left border on data rows below headers
+        if (maxRows > headerRows) {
+          sheet.getRange(headerRows + 1, col, maxRows - headerRows, 1)
+               .setBorder(null, true, null, null, null, null,
+                          '#000000', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+        }
+        // Clear stale border from the OTHER column (previous toggle state)
+        if (hasPercentile) {
+          var otherCol = showPct ? baseCol : baseCol + 1;
+          if (otherCol > 0 && otherCol <= maxCols) {
+            sheet.getRange(startRow, otherCol, maxRows - startRow + 1, 1)
+                 .setBorder(null, false, null, null, null, null);
+          }
+        }
+      } else {
+        // Remove border from BOTH base and pct columns
+        sheet.getRange(startRow, baseCol, maxRows - startRow + 1, 1)
+             .setBorder(null, false, null, null, null, null);
+        if (hasPercentile && baseCol + 1 <= maxCols) {
+          sheet.getRange(startRow, baseCol + 1, maxRows - startRow + 1, 1)
+               .setBorder(null, false, null, null, null, null);
+        }
+      }
+    } catch (e) {
+      Logger.log('Border error col ' + col + ': ' + e);
+    }
+  }
+
+  // --- Section borders: always present, full height (row 1 through maxRows) ---
+  var secBounds = (config.section_boundaries || {})[rangeKey] || [];
+  for (var s = 0; s < secBounds.length; s++) {
+    var sec = secBounds[s];
+    _setBoundaryBorder(sec.col, sec.hp, 1, true);  // always on, starts at row 1
+  }
+
+  // --- Subsection borders: only when advanced is visible, starts at subRow ---
+  var subBounds = (config.subsection_boundaries || {})[rangeKey] || [];
+  for (var b = 0; b < subBounds.length; b++) {
+    var sub = subBounds[b];
+    _setBoundaryBorder(sub.col, sub.hp, subRow, showAdv);
+  }
+}
+
+function _setAdvancedStats(newAdvancedVisible) {
+  var config = loadConfig();
+  var props  = PropertiesService.getDocumentProperties();
+  props.setProperty('SHOW_ADVANCED', newAdvancedVisible ? 'true' : 'false');
+
+  var subRow = config.subsection_row_index || 2;  // 1-indexed
+
+  // Detect actual percentile state from the active sheet and sync property
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var active = ss.getActiveSheet();
+  var activeType = _getSheetType(active.getName().toUpperCase());
+  if (activeType) {
+    var detected = _detectToggleState(active, activeType);
+    props.setProperty('SHOW_PERCENTILES', detected.showPct ? 'true' : 'false');
+  }
+
+  _applyToAllSheets(function(sheet, sheetType) {
+    var rangeKey = _getRangeKey(sheetType);
+
+    // Show/hide subsection header row
+    try {
+      if (newAdvancedVisible) sheet.showRows(subRow, 1);
+      else                     sheet.hideRows(subRow, 1);
+    } catch (e) { Logger.log('Subsection row toggle error: ' + e); }
+
+    // Re-apply column visibility (adv/basic + pct swap) — batched
+    _rehideAlwaysHidden(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType);
+
+    // Vertical borders — uses shared helper that handles section + subsection + pct offset
+    var curPct = props.getProperty('SHOW_PERCENTILES') === 'true';
+    _applyVerticalBorders(sheet, sheetType, newAdvancedVisible, curPct);
+  }, newAdvancedVisible ? 'Advanced stats shown' : 'Basic stats shown');
+}
+
+/**
+ * Show/Hide percentile columns across all sheets.
+ * Applies to ALL columns regardless of advanced/basic mode.
+ * When shown, base value columns are hidden; when hidden, percentile columns hidden.
+ * Also updates section headers: "Stats" ↔ "Percentiles"
+ */
+function showPercentiles() { _setPercentiles(true); }
+function hidePercentiles() { _setPercentiles(false); }
+
+/** Keep legacy toggle for backward compatibility */
+function togglePercentiles() {
+  var props = PropertiesService.getDocumentProperties();
+  var current = props.getProperty('SHOW_PERCENTILES') === 'true';
+  _setPercentiles(!current);
+}
+
+function _setPercentiles(showPct) {
+  var props = PropertiesService.getDocumentProperties();
+  props.setProperty('SHOW_PERCENTILES', showPct ? 'true' : 'false');
+
+  // Detect actual advanced state from the active sheet and sync property
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var active = ss.getActiveSheet();
+  var activeType = _getSheetType(active.getName().toUpperCase());
+  if (activeType) {
+    var detected = _detectToggleState(active, activeType);
+    props.setProperty('SHOW_ADVANCED', detected.showAdv ? 'true' : 'false');
+  }
+
+  _applyToAllSheets(function(sheet, sheetType) {
+    _rehideAlwaysHidden(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType);
+    _updateSectionHeadersForPercentiles(sheet, showPct);
+    // Re-apply all vertical borders: in pct mode boundaries shift to pct column (+1)
+    var curAdv = props.getProperty('SHOW_ADVANCED') === 'true';
+    _applyVerticalBorders(sheet, sheetType, curAdv, showPct);
+  }, showPct ? 'Percentiles shown' : 'Values shown');
+}
+
+/**
+ * Update section headers to say "Percentiles" or "Stats" based on toggle.
+ */
+function _updateSectionHeadersForPercentiles(sheet, showPct) {
+  try {
+    var lastCol = sheet.getMaxColumns();
+    if (lastCol < 1) return;
+    var values = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    // Write only the cells that change — setValues on the full range would
+    // clear cell formatting (including borders) on every cell it touches.
+    for (var i = 0; i < values.length; i++) {
+      var text = String(values[i]);
+      if (!text) continue;
+      if (showPct && text.indexOf(' Stats ') !== -1) {
+        sheet.getRange(1, i + 1).setValue(text.replace(' Stats ', ' Percentiles '));
+      } else if (!showPct && text.indexOf(' Percentiles ') !== -1) {
+        sheet.getRange(1, i + 1).setValue(text.replace(' Percentiles ', ' Stats '));
+      }
+    }
+  } catch (e) {
+    Logger.log('_updateSectionHeadersForPercentiles error: ' + e);
   }
 }
 
 // ============================================================
-// TOGGLE HELPERS
+// HISTORICAL / POSTSEASON TIMEFRAME DIALOG
 // ============================================================
 
 /**
@@ -493,100 +658,6 @@ function _applyRangeVisibility(sheet, rangeList, maxCols, visible) {
   }
 }
 
-/**
- * Apply column visibility + subsection border management.
- * Used by toggleAdvancedStats to add/remove subsection borders,
- * show/hide the subsection header row, and apply white borders
- * on subheader cells.
- * Active sheet processed first for immediate feedback.
- *
- * @param {Object} allRanges  - advanced_column_ranges from config (keyed by range key)
- * @param {boolean} visible   - whether to show (true) or hide (false)
- * @param {Object} boundaries - subsection_boundaries from config (keyed by range key)
- */
-function _applyColumnRangeListWithBorders(allRanges, visible, boundaries) {
-  var ss       = SpreadsheetApp.getActiveSpreadsheet();
-  var config   = loadConfig();
-  var layout   = config.layout || {};
-  var subRow   = config.subsection_row_index || 2;  // 1-indexed
-  var colNameRow = subRow + 1;  // Column name header row
-  var statsSectionRanges = config.stats_section_ranges || {};
-  var active   = ss.getActiveSheet();
-  var sheets   = ss.getSheets();
-
-  function applyToSheet(sheet) {
-    var name      = sheet.getName().toUpperCase();
-    var sheetType = _getSheetType(name);
-    if (!sheetType) return;
-    var rangeKey  = _getRangeKey(sheetType);
-    var rangeList = allRanges[rangeKey] || [];
-    var borderCols = (boundaries[rangeKey] || []);
-    var statsRange = statsSectionRanges[rangeKey] || {};
-
-    var maxCols = sheet.getMaxColumns();
-    var maxRows = sheet.getMaxRows();
-    _applyRangeVisibility(sheet, rangeList, maxCols, visible);
-
-    // Show/hide subsection header row
-    try {
-      if (visible) sheet.showRows(subRow, 1);
-      else         sheet.hideRows(subRow, 1);
-    } catch (e) {
-      Logger.log('Subsection row toggle error on ' + name + ': ' + e);
-    }
-
-    // White borders on subsection header row — ONLY for stats section columns
-    // (entities, player_info, analysis sections should NOT have borders)
-    if (visible && statsRange.start && statsRange.end) {
-      try {
-        var statsColCount = statsRange.end - statsRange.start + 1;
-        var subStatsRange = sheet.getRange(subRow, statsRange.start, 1, statsColCount);
-        subStatsRange.setBorder(true, true, true, true, true, true, '#FFFFFF',
-          SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-      } catch (e) {
-        Logger.log('Subsection stats border error on ' + name + ': ' + e);
-      }
-    }
-
-    // Add or remove subsection borders: full header (subheader + col names) + all data rows
-    var headerRows = layout.header_row_count || 4;
-    for (var b = 0; b < borderCols.length; b++) {
-      var col = borderCols[b];
-      if (col > maxCols) continue;
-      try {
-        if (visible) {
-          // White SOLID_MEDIUM left border on header rows (subheader + column name rows)
-          var headerBorderRange = sheet.getRange(subRow, col, colNameRow - subRow + 1, 1);
-          headerBorderRange.setBorder(null, true, null, null, null, null, '#FFFFFF',
-            SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-          // Black SOLID_MEDIUM left border on all data rows (including team/opp/summary)
-          var dataRange = sheet.getRange(headerRows + 1, col, maxRows - headerRows, 1);
-          dataRange.setBorder(null, true, null, null, null, null, '#000000',
-            SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-        } else {
-          // Remove borders from subheader through all data rows
-          var fullRange = sheet.getRange(subRow, col, maxRows - subRow + 1, 1);
-          fullRange.setBorder(null, false, null, null, null, null);
-        }
-      } catch (e) {
-        Logger.log('Border error on ' + name + ' col ' + col + ': ' + e);
-      }
-    }
-
-    // Re-hide always-hidden columns and respect current toggle states
-    _rehideAlwaysHidden(sheet, sheetType);
-    _reapplyToggles(sheet, sheetType);
-  }
-
-  applyToSheet(active);
-  SpreadsheetApp.flush();
-
-  for (var i = 0; i < sheets.length; i++) {
-    if (sheets[i].getSheetId() === active.getSheetId()) continue;
-    applyToSheet(sheets[i]);
-  }
-}
-
 // ============================================================
 // HISTORICAL / POSTSEASON TIMEFRAME DIALOG
 // ============================================================
@@ -627,7 +698,7 @@ function saveHistoricalStatsConfig(input, includeCurrentYear) {
   if (result.mode === 'years')        props.setProperty('HIST_YEARS', String(result.years));
   if (result.mode === 'since_season') props.setProperty('HIST_SEASON', result.season);
 
-  triggerSync(null);
+  triggerSync(null, { priorityTeam: _getActiveTeamAbbr() });
   return { success: true };
 }
 
@@ -642,7 +713,36 @@ function triggerSync(mode, options) {
   var props   = PropertiesService.getDocumentProperties();
 
   if (mode) props.setProperty('STATS_MODE', mode);
-  var statsMode = mode || props.getProperty('STATS_MODE') || 'per_100';
+  var statsMode = mode || props.getProperty('STATS_MODE');
+
+  // If STATS_MODE property was never set (initial sync via CLI), detect from headers
+  if (!statsMode) {
+    var labels = {
+      'per 100 Poss': 'per_100',
+      'per Game':     'per_game',
+      'per 36 Mins':  'per_36',
+      'Totals':       'totals',
+    };
+    try {
+      var active = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+      var lastCol = active.getMaxColumns();
+      if (lastCol > 0) {
+        var headerVals = active.getRange(1, 1, 1, lastCol).getValues()[0];
+        for (var hi = 0; hi < headerVals.length; hi++) {
+          var headerText = String(headerVals[hi]);
+          for (var lbl in labels) {
+            if (headerText.indexOf(lbl) !== -1) {
+              statsMode = labels[lbl];
+              props.setProperty('STATS_MODE', statsMode);
+              break;
+            }
+          }
+          if (statsMode) break;
+        }
+      }
+    } catch (e) { Logger.log('Stats mode detection error: ' + e); }
+    if (!statsMode) statsMode = 'per_100';  // ultimate fallback
+  }
 
   var showPercentiles = (options.showPercentiles !== undefined)
     ? options.showPercentiles
@@ -673,6 +773,7 @@ function triggerSync(mode, options) {
     show_percentiles: showPercentiles,
     show_advanced:    showAdvanced,
     priority_team:    options.priorityTeam || null,
+    data_only:        true,  // mode/timeframe switches use fast sync (skip structural formatting)
   };
   if (histSeason) payload.seasons = [histSeason];
 
@@ -801,20 +902,27 @@ function _rehideAlwaysHidden(sheet, sheetType) {
   var rangeKey   = _getRangeKey(sheetType);
   var hiddenCols = (config.always_hidden_columns || {})[rangeKey] || [];
   var maxCols    = sheet.getMaxColumns();
+  var toHide = [];
   for (var h = 0; h < hiddenCols.length; h++) {
-    var col = hiddenCols[h];
-    if (col <= maxCols) {
-      try { sheet.hideColumns(col, 1); }
-      catch (e) { Logger.log('_rehideAlwaysHidden error: ' + e); }
-    }
+    if (hiddenCols[h] <= maxCols) toHide.push(hiddenCols[h]);
   }
+  _batchColumns(sheet, toHide, false);
 }
 
 /**
- * Re-apply current toggle states (percentiles, advanced/basic) after any section toggle.
+ * Re-apply current toggle states (percentiles, advanced/basic) after any toggle.
  * Ensures toggles are DRY — showing a section doesn't reveal columns that should
  * be hidden by another toggle (e.g. percentile columns when in values mode,
  * basic columns when advanced is shown).
+ *
+ * Single-mode architecture: only one set of stat columns exists per sheet,
+ * so no mode-based column hiding is needed.
+ *
+ * Uses column_metadata for per-column precision when available,
+ * falling back to range-based approach otherwise.
+ *
+ * @param {Sheet}  sheet
+ * @param {string} sheetType
  */
 function _reapplyToggles(sheet, sheetType) {
   var config   = loadConfig();
@@ -822,45 +930,106 @@ function _reapplyToggles(sheet, sheetType) {
   var rangeKey = _getRangeKey(sheetType);
   var maxCols  = sheet.getMaxColumns();
 
-  // Re-hide percentile or base-value columns based on current SHOW_PERCENTILES state
-  var showPct  = props.getProperty('SHOW_PERCENTILES') === 'true';
-  var pctR     = (config.percentile_column_ranges || {})[rangeKey] || [];
-  var valR     = (config.base_value_column_ranges || {})[rangeKey] || [];
-  _applyRangeVisibility(sheet, pctR, maxCols, showPct);
-  _applyRangeVisibility(sheet, valR, maxCols, !showPct);
+  var showPct = props.getProperty('SHOW_PERCENTILES') === 'true';
+  var showAdv = props.getProperty('SHOW_ADVANCED') === 'true';
 
-  // Re-apply advanced/basic swap based on SHOW_ADVANCED state
-  var showAdv  = props.getProperty('SHOW_ADVANCED') === 'true';
+  // --- column_metadata path (per-column flags, batched) ---
+  var colMeta = (config.column_metadata || {})[rangeKey];
+  if (colMeta && colMeta.length > 0) {
+    var showList = [];
+    var hideList = [];
+
+    // Map section context names → SECTION_VIS_ property keys so that the
+    // isStats branch can honour section-level hide state (current/historical/postseason).
+    var _secVisMap = {
+      'current_stats':    'SECTION_VIS_CURRENT',
+      'historical_stats': 'SECTION_VIS_HISTORICAL',
+      'postseason_stats': 'SECTION_VIS_POSTSEASON',
+      'analysis':         'SECTION_VIS_NOTES',
+      'player_info':      'SECTION_VIS_PLAYER_INFO',
+    };
+
+    for (var i = 0; i < colMeta.length; i++) {
+      var meta = colMeta[i];
+      var colIdx = meta.col;
+      if (colIdx > maxCols) continue;
+
+      var isPct      = meta.pct || false;
+      var isAdvanced = meta.adv || false;
+      var isBasic    = meta.bas || false;
+      var isStats    = meta.stats || false;
+      var hasPercentile = meta.hp || false;
+      var secName    = meta.sec || '';
+
+      var shouldShow = true;
+
+      if (isStats) {
+        // Respect section-level visibility: if the section is hidden, hide this column too
+        var secVisKey = _secVisMap[secName];
+        if (secVisKey && props.getProperty(secVisKey) === 'false') {
+          shouldShow = false;
+        } else {
+          if (isAdvanced && !showAdv) shouldShow = false;
+          if (isBasic && showAdv)     shouldShow = false;
+          if (shouldShow && isPct && !showPct) shouldShow = false;
+          if (shouldShow && !isPct && hasPercentile && showPct) shouldShow = false;
+        }
+      } else if (isPct) {
+        if (!showPct) {
+          shouldShow = false;
+        } else if (secName && props.getProperty('SECTION_VIS_' + secName.toUpperCase()) === 'false') {
+          shouldShow = false;
+        }
+      } else if (hasPercentile) {
+        var secHidden = secName && props.getProperty('SECTION_VIS_' + secName.toUpperCase()) === 'false';
+        if (secHidden) continue;
+        if (showPct) shouldShow = false;
+      } else {
+        continue;
+      }
+
+      if (shouldShow) showList.push(colIdx);
+      else            hideList.push(colIdx);
+    }
+
+    _batchColumns(sheet, showList, true);
+    _batchColumns(sheet, hideList, false);
+    return;
+  }
+
+  // --- Legacy fallback: range-based approach ---
   var advR = (config.advanced_column_ranges || {})[rangeKey] || [];
   var basR = (config.basic_column_ranges || {})[rangeKey] || [];
   _applyRangeVisibility(sheet, advR, maxCols, showAdv);
   _applyRangeVisibility(sheet, basR, maxCols, !showAdv);
+
+  var pctR = (config.percentile_column_ranges || {})[rangeKey] || [];
+  var valR = (config.base_value_column_ranges || {})[rangeKey] || [];
+  _applyRangeVisibility(sheet, pctR, maxCols, showPct);
+  _applyRangeVisibility(sheet, valR, maxCols, !showPct);
+
+  // Re-enforce adv/basic after pct/val swap (ranges overlap)
+  if (showAdv) _applyRangeVisibility(sheet, basR, maxCols, false);
+  else         _applyRangeVisibility(sheet, advR, maxCols, false);
 }
 
 /**
- * Generic column-section visibility toggle.
- * Detects current visibility state from the active sheet.
- * After showing, re-hides always-hidden columns (e.g. team column on team sheets).
+ * Generic column-section visibility control.
+ * @param {string}  sectionKey    - Config key for the section
+ * @param {boolean} makeVisible   - true to show, false to hide
+ * @param {string}  label         - Toast message
  */
-function _toggleSection(sectionKey, labelOn, labelOff) {
+function _setSectionVisibility(sectionKey, makeVisible, label) {
   var ss           = SpreadsheetApp.getActiveSpreadsheet();
   var config       = loadConfig();
   var columnRanges = config.column_ranges || {};
-
-  // Detect current state from active sheet
-  var activeSheet = ss.getActiveSheet();
-  var activeName  = activeSheet.getName().toUpperCase();
-  var activeType  = _getSheetType(activeName);
-  var activeKey   = _getRangeKey(activeType);
-  var detectRange = (columnRanges[activeKey] || {})[sectionKey] || null;
-  var newVisible  = true;
-  if (detectRange && detectRange.start <= activeSheet.getMaxColumns()) {
-    try { newVisible = activeSheet.isColumnHiddenByUser(detectRange.start); }
-    catch (e) { Logger.log('_toggleSection detect error: ' + e); }
-  }
-
+  var activeSheet  = ss.getActiveSheet();
   var sheets       = ss.getSheets();
   var updatedCount = 0;
+
+  // Persist state so _reapplyToggles can respect section visibility
+  var props = PropertiesService.getDocumentProperties();
+  props.setProperty('SECTION_VIS_' + sectionKey.toUpperCase(), makeVisible ? 'true' : 'false');
 
   function applyToSheet(sheet) {
     var name      = sheet.getName().toUpperCase();
@@ -873,14 +1042,13 @@ function _toggleSection(sectionKey, labelOn, labelOff) {
     if (ranges.start > maxCols) return;
     var count = Math.min(ranges.count, maxCols - ranges.start + 1);
     try {
-      if (newVisible) sheet.showColumns(ranges.start, count);
-      else            sheet.hideColumns(ranges.start, count);
+      if (makeVisible) sheet.showColumns(ranges.start, count);
+      else             sheet.hideColumns(ranges.start, count);
       updatedCount++;
     } catch (e) {
-      Logger.log('_toggleSection error on ' + sheet.getName() + ': ' + e);
+      Logger.log('_setSectionVisibility error on ' + sheet.getName() + ': ' + e);
     }
-    // Re-hide always-hidden columns and respect current toggle states
-    if (newVisible) {
+    if (makeVisible) {
       _rehideAlwaysHidden(sheet, sheetType);
       _reapplyToggles(sheet, sheetType);
     }
@@ -894,13 +1062,40 @@ function _toggleSection(sectionKey, labelOn, labelOff) {
     applyToSheet(sheets[i]);
   }
 
-  ss.toast(
-    newVisible ? (labelOn  + ' (' + updatedCount + ' sheets)')
-               : (labelOff + ' (' + updatedCount + ' sheets)'),
-    'Section Visibility', 3
-  );
+  ss.toast(label + ' (' + updatedCount + ' sheets)', 'Section Visibility', 3);
 }
 
+/** Keep legacy toggles for backward compat */
+function _toggleSection(sectionKey, labelOn, labelOff) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var config = loadConfig();
+  var columnRanges = config.column_ranges || {};
+  var activeSheet = ss.getActiveSheet();
+  var activeName  = activeSheet.getName().toUpperCase();
+  var activeType  = _getSheetType(activeName);
+  var activeKey   = _getRangeKey(activeType);
+  var detectRange = (columnRanges[activeKey] || {})[sectionKey] || null;
+  var newVisible  = true;
+  if (detectRange && detectRange.start <= activeSheet.getMaxColumns()) {
+    try { newVisible = activeSheet.isColumnHiddenByUser(detectRange.start); }
+    catch (e) { Logger.log('_toggleSection detect error: ' + e); }
+  }
+  _setSectionVisibility(sectionKey, newVisible, newVisible ? labelOn : labelOff);
+}
+
+// Explicit show/hide for each section
+function showCurrentStats()    { _setSectionVisibility('current',     true,  'Current stats shown');    }
+function hideCurrentStats()    { _setSectionVisibility('current',     false, 'Current stats hidden');   }
+function showHistoricalStats() { _setSectionVisibility('historical',  true,  'Historical stats shown'); }
+function hideHistoricalStats() { _setSectionVisibility('historical',  false, 'Historical stats hidden');}
+function showPostseasonStats() { _setSectionVisibility('postseason',  true,  'Postseason stats shown'); }
+function hidePostseasonStats() { _setSectionVisibility('postseason',  false, 'Postseason stats hidden');}
+function showPlayerInfo()      { _setSectionVisibility('player_info', true,  'Player info shown');      }
+function hidePlayerInfo()      { _setSectionVisibility('player_info', false, 'Player info hidden');     }
+function showAnalysis()        { _setSectionVisibility('notes',       true,  'Analysis shown');         }
+function hideAnalysis()        { _setSectionVisibility('notes',       false, 'Analysis hidden');        }
+
+// Legacy toggle wrappers
 function toggleCurrentStats()    { _toggleSection('current',     'Current stats shown',    'Current stats hidden');    }
 function toggleHistoricalStats() { _toggleSection('historical',  'Historical stats shown', 'Historical stats hidden'); }
 function togglePostseasonStats() { _toggleSection('postseason',  'Postseason stats shown', 'Postseason stats hidden'); }

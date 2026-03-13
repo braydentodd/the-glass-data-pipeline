@@ -56,6 +56,15 @@ STAT_CONSTANTS = {
 }
 
 # ============================================================================
+# STAT MODE CONFIGURATION
+# ============================================================================
+
+# All stat modes that are pre-built into every sheet.
+# Mode switching is instant via column visibility toggles (no re-sync needed).
+STAT_MODES = ['per_100', 'per_game', 'per_36', 'totals']
+DEFAULT_STAT_MODE = 'per_100'
+
+# ============================================================================
 # SECTION AND SUBSECTION DEFINITIONS
 # ============================================================================
 
@@ -157,7 +166,7 @@ SHEET_FORMATTING = {
     # Font sizes
     'section_header_size': 12,
     'team_name_size': 15,          # Team name merged into section header row
-    'subsection_header_size': 12,
+    'subsection_header_size': 11,
     'column_header_size': 10,
     'data_size': 10,
 
@@ -241,7 +250,7 @@ SHEETS_COLUMNS = {
     
     'team': {
         'stat_category': 'none',
-        'display_name': 'Team',
+        'display_name': 'Tm',
         'description': 'Team abbreviation',
         'section': ['player_info'],
         'subsection': None,
@@ -266,7 +275,7 @@ SHEETS_COLUMNS = {
         'description': 'Jersey number',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
         'is_stat': False,
@@ -299,7 +308,7 @@ SHEETS_COLUMNS = {
         'player_formula': 'years_experience',
         'team_formula': 'years_experience',
         'opponents_formula': None,
-        'minimum_width': 'auto',
+        'minimum_width': 32,
     },
     
     'age': {
@@ -922,6 +931,26 @@ SHEETS_COLUMNS = {
         'minimum_width': 'auto',
     },
     
+    'dunks': {
+        'stat_category': 'tracking',
+        'display_name': 'Dnk',
+        'description': 'Dunks',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'scoring',
+        'stat_mode': 'advanced',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'scale_with_mode': True,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'dunks',
+        'team_formula': 'dunks',
+        'opponents_formula': None,
+        'minimum_width': 'auto',
+    },
+    
     'assists': {
         'stat_category': 'basic',
         'display_name': 'AST',
@@ -933,22 +962,12 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'scale_with_mode': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
-        'mode_overrides': {
-            'totals': {
-                'display_name': 'AST',
-                'format': 'number',
-                'decimal_places': 1,
-                'player_formula': 'assists',
-                'team_formula': 'assists',
-                'opponents_formula': 'opp_assists',
-            },
-        },
-        'player_formula': '(assists / possessions) * 100',
-        'team_formula': '(assists / possessions) * 100',
-        'opponents_formula': '(opp_assists / possessions) * 100',
+        'player_formula': 'assists',
+        'team_formula': 'assists',
+        'opponents_formula': 'opp_assists',
         'minimum_width': 30,
     },
     
@@ -1072,10 +1091,70 @@ SHEETS_COLUMNS = {
         'minimum_width': 'auto',
     },
     
-    'turnover_pct': {
+    'pct_touches_shots': {
+        'stat_category': 'tracking',
+        'display_name': '%TS',
+        'description': 'Percentage of touches that result in a shot (tracking)',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'ball_management',
+        'stat_mode': 'advanced',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'scale_with_mode': False,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': '(2fga + 3fga + (0.44 * fta)) / touches',
+        'team_formula': '(2fga + 3fga + (0.44 * fta)) / touches',
+        'opponents_formula': None,
+        'minimum_width': 'auto',
+    },
+    
+    'pct_touches_passes': {
+        'stat_category': 'tracking',
+        'display_name': '%TP',
+        'description': 'Percentage of touches that result in a pass (tracking)',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'ball_management',
+        'stat_mode': 'advanced',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'scale_with_mode': False,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'passes / touches',
+        'team_formula': 'passes / touches',
+        'opponents_formula': None,
+        'minimum_width': 'auto',
+    },
+    
+    'pct_touches_turnovers': {
+        'stat_category': 'tracking',
+        'display_name': '%TT',
+        'description': 'Percentage of touches that result in a turnover (tracking)',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'ball_management',
+        'stat_mode': 'advanced',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'scale_with_mode': False,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'turnovers / touches',
+        'team_formula': 'turnovers / touches',
+        'opponents_formula': None,
+        'minimum_width': 'auto',
+    },
+    
+    'turnovers': {
         'stat_category': 'basic',
-        'display_name': 'TOV%',
-        'description': 'Turnovers per possession (%)',
+        'display_name': 'TOV',
+        'description': 'Turnovers',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
         'stat_mode': 'both',
@@ -1083,22 +1162,12 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
-        'scale_with_mode': False,
-        'format': 'percentage',
+        'scale_with_mode': True,
+        'format': 'number',
         'decimal_places': 1,
-        'mode_overrides': {
-            'totals': {
-                'display_name': 'TOV',
-                'format': 'number',
-                'decimal_places': 1,
-                'player_formula': 'turnovers',
-                'team_formula': 'turnovers',
-                'opponents_formula': 'opp_turnovers',
-            },
-        },
-        'player_formula': '(turnovers / possessions) * 100',
-        'team_formula': '(turnovers / possessions) * 100',
-        'opponents_formula': '(opp_turnovers / possessions) * 100',
+        'player_formula': 'turnovers',
+        'team_formula': 'turnovers',
+        'opponents_formula': 'opp_turnovers',
         'minimum_width': 'auto',
     },
     
@@ -1242,46 +1311,6 @@ SHEETS_COLUMNS = {
         'minimum_width': 'auto',
     },
     
-    'off_distance': {
-        'stat_category': 'tracking',
-        'display_name': 'ODST',
-        'description': 'Offensive distance traveled in miles (tracking)',
-        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'movement',
-        'stat_mode': 'advanced',
-        'has_percentile': True,
-        'is_stat': True,
-        'editable': False,
-        'reverse_percentile': False,
-        'scale_with_mode': True,
-        'format': 'number',
-        'decimal_places': 1,
-        'player_formula': 'o_dist_x10 / 10',
-        'team_formula': None,
-        'opponents_formula': None,
-        'minimum_width': 31,
-    },
-    
-    'def_distance': {
-        'stat_category': 'tracking',
-        'display_name': 'DDST',
-        'description': 'Defensive distance traveled in miles (tracking)',
-        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'movement',
-        'stat_mode': 'advanced',
-        'has_percentile': True,
-        'is_stat': True,
-        'editable': False,
-        'reverse_percentile': False,
-        'scale_with_mode': True,
-        'format': 'number',
-        'decimal_places': 1,
-        'player_formula': 'd_dist_x10 / 10',
-        'team_formula': None,
-        'opponents_formula': None,
-        'minimum_width': 'auto',
-    },
-    
     'def_close_2fga': {
         'stat_category': 'tracking',
         'display_name': 'DC2A',
@@ -1416,8 +1445,8 @@ SHEETS_COLUMNS = {
         'scale_with_mode': False,
         'format': 'percentage',
         'decimal_places': 1,
-        'player_formula': 'real_d_fg_pct_x1000 / 1000',
-        'team_formula': 'real_d_fg_pct_x1000 / 1000',
+        'player_formula': 'real_d_fg_pct_x1000 / 10',
+        'team_formula': 'real_d_fg_pct_x1000 / 10',
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
@@ -1458,7 +1487,7 @@ SHEETS_COLUMNS = {
         'decimal_places': 1,
         'player_formula': 'contests',
         'team_formula': 'contests',
-        'opponents_formula': 'opp_contests',
+        'opponents_formula': None,
         'minimum_width': 'auto',
     },
     
@@ -1473,21 +1502,11 @@ SHEETS_COLUMNS = {
         'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
-        'scale_with_mode': False,
+        'scale_with_mode': True,
         'format': 'number',
         'decimal_places': 1,
-        'mode_overrides': {
-            'totals': {
-                'display_name': 'TOVF',
-                'format': 'number',
-                'decimal_places': 1,
-                'player_formula': 'steals + charges_drawn',
-                'team_formula': 'steals + charges',
-                'opponents_formula': None,
-            },
-        },
-        'player_formula': '((steals + charges_drawn) / possessions) * 100',
-        'team_formula': '((steals + charges_drawn) / possessions) * 100',
+        'player_formula': 'steals + charges_drawn',
+        'team_formula': 'steals + charges_drawn',
         'opponents_formula': None,
         'minimum_width': 'auto',
     },
@@ -1508,7 +1527,7 @@ SHEETS_COLUMNS = {
         'decimal_places': 1,
         'player_formula': 'deflections',
         'team_formula': 'deflections',
-        'opponents_formula': 'opp_deflections',
+        'opponents_formula': None,
         'minimum_width': 'auto',
     },
     
@@ -1529,6 +1548,46 @@ SHEETS_COLUMNS = {
         'player_formula': 'fouls',
         'team_formula': 'fouls',
         'opponents_formula': 'opp_fouls',
+        'minimum_width': 'auto',
+    },
+    
+        'off_distance': {
+        'stat_category': 'tracking',
+        'display_name': 'ODST',
+        'description': 'Offensive distance traveled in miles (tracking)',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'movement',
+        'stat_mode': 'advanced',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'scale_with_mode': True,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'o_dist_x10 / 10',
+        'team_formula': None,
+        'opponents_formula': None,
+        'minimum_width': 31,
+    },
+    
+    'def_distance': {
+        'stat_category': 'tracking',
+        'display_name': 'DDST',
+        'description': 'Defensive distance traveled in miles (tracking)',
+        'section': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'subsection': 'movement',
+        'stat_mode': 'advanced',
+        'has_percentile': True,
+        'is_stat': True,
+        'editable': False,
+        'reverse_percentile': False,
+        'scale_with_mode': True,
+        'format': 'number',
+        'decimal_places': 1,
+        'player_formula': 'd_dist_x10 / 10',
+        'team_formula': None,
+        'opponents_formula': None,
         'minimum_width': 'auto',
     },
     

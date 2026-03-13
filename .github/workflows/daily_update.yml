@@ -23,6 +23,7 @@ jobs:
   etl:
     name: Daily ETL
     runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 300  # 5-hour hard ceiling; prevents runaway jobs
     
     steps:
     - name: Checkout repository
@@ -36,6 +37,7 @@ jobs:
         pip install -r requirements.txt
     
     - name: Run daily ETL with auto-restart
+      continue-on-error: true  # Always run Sync step even if ETL hits max restarts
       env:
         DB_HOST: ${{ secrets.DB_HOST }}
         DB_PORT: ${{ secrets.DB_PORT }}
@@ -48,7 +50,7 @@ jobs:
       run: |
         source venv/bin/activate
         chmod +x run_etl.sh
-        ./run_etl.sh 20  # Max 20 restarts
+        ./run_etl.sh 999  # Effectively unlimited; endpoint_tracker handles resume
     
     - name: Sync Google Sheets
       env:
