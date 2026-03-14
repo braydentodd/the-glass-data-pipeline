@@ -2841,8 +2841,8 @@ def execute_transformation_pipeline(
     operations = pipeline_config['operations']
     endpoint_params = pipeline_config.get('endpoint_params', {})
     
-    # Check if any operations require API data (skip fetch for db-only operations)
-    needs_api = any(op.get('type') != 'db_copy' for op in operations)
+    # Check if any operations require API data (skip fetch for db-only or self-fetching operations)
+    needs_api = any(op.get('type') not in ('db_copy', 'multi_league_extract') for op in operations)
     
     # Step 1: Get raw API data based on execution tier (skip if not needed)
     api_results = None
@@ -2878,6 +2878,10 @@ def execute_transformation_pipeline(
             data = _operation_divide(data, operation)
         elif op_type == 'weighted_avg':
             data = _operation_weighted_avg(data, operation)
+        elif op_type == 'multi_league_extract':
+            data = _operation_multi_league_extract(
+                ctx, operation, pipeline_config, season, season_type_name, entity
+            )
         elif op_type == 'db_copy':
             data = _operation_db_copy(operation, season, entity, season_type)
         else:
@@ -3435,6 +3439,108 @@ def _operation_subtract(api_results: Any, op_config: Dict[str, Any],
             result[entity_id] = a - b
         
         return result
+
+
+def _operation_multi_league_extract(
+    ctx: Any,
+    op_config: Dict[str, Any],
+    pipeline_config: Dict[str, Any],
+    season: str,
+    season_type_name: str,
+    entity: str
+) -> Dict[int, Any]:
+    """
+    Fetch data from multiple league-wide API calls with different params and sum results.
+    
+    Replaces per-player/per-team calls with efficient league-wide calls.
+    Each entry in 'calls' makes a separate API request, and results are summed per entity.
+    Responses are cached so columns sharing the same endpoint+call_params reuse data.
+    
+    Config: {
+        'type': 'multi_league_extract',
+        'endpoint': 'leaguedashplayerptshot',  # Optional, defaults to pipeline endpoint
+        'field': 'FG2M',
+        'result_set': 'LeagueDashPTShots',
+        'calls': [
+            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
+            {'close_def_dist_range_nullable': '2-4 Feet - Tight'}
+        ]
+    }
+    """
+    import time
+    
+    endpoint_name = op_config.get('endpoint', pipeline_config['endpoint'])
+    field_name = op_config['field']
+    result_set_name = op_config['result_set']
+    calls = op_config['calls']
+    
+    entity_id_field = get_entity_id_field(entity)
+    data = {}
+    
+    # Ensure cache exists on ctx
+    if not hasattr(ctx, 'api_result_cache'):
+        ctx.api_result_cache = {}
+    
+    for call_params in calls:
+        # Check cache first
+        cache_key = (endpoint_name, season, season_type_name, frozenset(call_params.items()))
+        
+        if cache_key in ctx.api_result_cache:
+            result = ctx.api_result_cache[cache_key]
+        else:
+            # Rate limit between calls
+            if data:  # Not the first call
+                time.sleep(1.2)
+            
+            result = _fetch_api_data_league(
+                ctx, endpoint_name, season, season_type_name, entity,
+                custom_params=call_params
+            )
+            ctx.api_result_cache[cache_key] = result
+        
+        # Parse result
+        if hasattr(result, 'get_dict'):
+            result_dict = result.get_dict()
+        else:
+            result_dict = result
+        
+        # Find the target result set
+        target_set = None
+        for rs in result_dict['resultSets']:
+            if rs['name'] == result_set_name:
+                target_set = rs
+                break
+        
+        if target_set is None:
+            available = [rs['name'] for rs in result_dict['resultSets']]
+            logger.warning(
+                f"multi_league_extract: result set '{result_set_name}' not found. "
+                f"Available: {available}. Params: {call_params}"
+            )
+            continue
+        
+        headers = target_set['headers']
+        rows = target_set['rowSet']
+        
+        if entity_id_field not in headers:
+            logger.warning(f"multi_league_extract: '{entity_id_field}' not in headers: {headers}")
+            continue
+        
+        if field_name not in headers:
+            logger.warning(f"multi_league_extract: '{field_name}' not in headers: {headers}")
+            continue
+        
+        entity_idx = headers.index(entity_id_field)
+        field_idx = headers.index(field_name)
+        
+        for row in rows:
+            entity_id = row[entity_idx]
+            value = row[field_idx]
+            if value is not None:
+                data[entity_id] = (data.get(entity_id) or 0) + value
+    
+    # Convert to int (these are counting stats)
+    return {eid: int(v) if v is not None else 0 for eid, v in data.items()}
 
 
 def _operation_db_copy(

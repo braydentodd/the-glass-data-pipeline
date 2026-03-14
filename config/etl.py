@@ -153,6 +153,52 @@ ENDPOINT_PARAMS = {
 PARAM_KEYS = list(ENDPOINT_PARAMS.keys())
 
 # ============================================================================
+# SHOT TRACKING HELPERS (used by multi_league_extract columns below)
+# ============================================================================
+
+# API call param combos for contested/open × close/all shot zones
+_CONTESTED_CLOSE_CALLS = [
+    {'close_def_dist_range_nullable': '0-2 Feet - Very Tight', 'general_range_nullable': 'Less Than 10 ft'},
+    {'close_def_dist_range_nullable': '2-4 Feet - Tight', 'general_range_nullable': 'Less Than 10 ft'},
+]
+_OPEN_CLOSE_CALLS = [
+    {'close_def_dist_range_nullable': '4-6 Feet - Open', 'general_range_nullable': 'Less Than 10 ft'},
+    {'close_def_dist_range_nullable': '6+ Feet - Wide Open', 'general_range_nullable': 'Less Than 10 ft'},
+]
+_CONTESTED_ALL_CALLS = [
+    {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
+    {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
+]
+_OPEN_ALL_CALLS = [
+    {'close_def_dist_range_nullable': '4-6 Feet - Open'},
+    {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
+]
+
+def _shot_source(entity: str, field: str, calls: list) -> dict:
+    """Generate multi_league_extract source config for shot tracking columns.
+    
+    Builds the full source dict (endpoint, execution_tier, transformation)
+    needed by the pipeline engine.  Keeps the 12 shot-tracking column
+    definitions DRY — each one is just _shot_source('player', 'FG2M', _CONTESTED_CLOSE_CALLS).
+    """
+    ep = 'leaguedashplayerptshot' if entity == 'player' else 'leaguedashteamptshot'
+    return {
+        'endpoint': ep,
+        'execution_tier': 'league',
+        'transformation': {
+            'type': 'pipeline',
+            'endpoint': ep,
+            'execution_tier': 'league',
+            'operations': [{
+                'type': 'multi_league_extract',
+                'field': field,
+                'result_set': 'LeagueDashPTShots',
+                'calls': calls,
+            }],
+        },
+    }
+
+# ============================================================================
 # DATABASE SCHEMA: COLUMNS AND METADATA
 # ============================================================================
 
@@ -630,50 +676,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'subtract',
-                        'sources': [
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '0-2 Feet - Very Tight'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '2-4 Feet - Tight'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '0-2 Feet - Very Tight'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '2-4 Feet - Tight'}, 'field': 'FG2M'}
-                        ],
-                        'formula': '(a + b) - (c + d)'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'subtract',
-                        'sources': [
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '0-2 Feet - Very Tight'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '2-4 Feet - Tight'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '0-2 Feet - Very Tight'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '2-4 Feet - Tight'}, 'field': 'FG2M'}
-                        ],
-                        'formula': '(a + b) - (c + d)'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG2M', _CONTESTED_CLOSE_CALLS),
+        'team_source': _shot_source('team', 'FG2M', _CONTESTED_CLOSE_CALLS),
         'opponent_source': None
     },
     
@@ -684,50 +688,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'subtract',
-                        'sources': [
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '0-2 Feet - Very Tight'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '2-4 Feet - Tight'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '0-2 Feet - Very Tight'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '2-4 Feet - Tight'}, 'field': 'FG2A'}
-                        ],
-                        'formula': '(a + b) - (c + d)'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'subtract',
-                        'sources': [
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '0-2 Feet - Very Tight'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '2-4 Feet - Tight'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '0-2 Feet - Very Tight'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '2-4 Feet - Tight'}, 'field': 'FG2A'}
-                        ],
-                        'formula': '(a + b) - (c + d)'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG2A', _CONTESTED_CLOSE_CALLS),
+        'team_source': _shot_source('team', 'FG2A', _CONTESTED_CLOSE_CALLS),
         'opponent_source': None
     },
     
@@ -738,50 +700,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'subtract',
-                        'sources': [
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '4-6 Feet - Open'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '6+ Feet - Wide Open'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '4-6 Feet - Open'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '6+ Feet - Wide Open'}, 'field': 'FG2M'}
-                        ],
-                        'formula': '(a + b) - (c + d)'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'subtract',
-                        'sources': [
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '4-6 Feet - Open'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '6+ Feet - Wide Open'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '4-6 Feet - Open'}, 'field': 'FG2M'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '6+ Feet - Wide Open'}, 'field': 'FG2M'}
-                        ],
-                        'formula': '(a + b) - (c + d)'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG2M', _OPEN_CLOSE_CALLS),
+        'team_source': _shot_source('team', 'FG2M', _OPEN_CLOSE_CALLS),
         'opponent_source': None
     },
     
@@ -792,50 +712,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'subtract',
-                        'sources': [
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '4-6 Feet - Open'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '6+ Feet - Wide Open'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '4-6 Feet - Open'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '6+ Feet - Wide Open'}, 'field': 'FG2A'}
-                        ],
-                        'formula': '(a + b) - (c + d)'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'subtract',
-                        'sources': [
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '4-6 Feet - Open'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefenderShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '6+ Feet - Wide Open'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '4-6 Feet - Open'}, 'field': 'FG2A'},
-                            {'result_set': 'ClosestDefender10ftPlusShooting', 'filter': {'CLOSE_DEF_DIST_RANGE': '6+ Feet - Wide Open'}, 'field': 'FG2A'}
-                        ],
-                        'formula': '(a + b) - (c + d)'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG2A', _OPEN_CLOSE_CALLS),
+        'team_source': _shot_source('team', 'FG2A', _OPEN_CLOSE_CALLS),
         'opponent_source': None
     },
     
@@ -846,52 +724,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG2M',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG2M',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG2M', _CONTESTED_ALL_CALLS),
+        'team_source': _shot_source('team', 'FG2M', _CONTESTED_ALL_CALLS),
         'opponent_source': None
     },
     
@@ -902,52 +736,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG2A',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG2A',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG2A', _CONTESTED_ALL_CALLS),
+        'team_source': _shot_source('team', 'FG2A', _CONTESTED_ALL_CALLS),
         'opponent_source': None
     },
     
@@ -958,52 +748,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG2M',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG2M',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG2M', _OPEN_ALL_CALLS),
+        'team_source': _shot_source('team', 'FG2M', _OPEN_ALL_CALLS),
         'opponent_source': None
     },
     
@@ -1014,52 +760,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG2A',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG2A',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG2A', _OPEN_ALL_CALLS),
+        'team_source': _shot_source('team', 'FG2A', _OPEN_ALL_CALLS),
         'opponent_source': None
     },
     
@@ -1070,52 +772,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG3M',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefender10ftPlusShooting',
-                        'field': 'FG3M',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG3M', _CONTESTED_ALL_CALLS),
+        'team_source': _shot_source('team', 'FG3M', _CONTESTED_ALL_CALLS),
         'opponent_source': None
     },
     
@@ -1126,52 +784,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG3A',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefender10ftPlusShooting',
-                        'field': 'FG3A',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['0-2 Feet - Very Tight', '2-4 Feet - Tight']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG3A', _CONTESTED_ALL_CALLS),
+        'team_source': _shot_source('team', 'FG3A', _CONTESTED_ALL_CALLS),
         'opponent_source': None
     },
     
@@ -1182,52 +796,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG3M',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefender10ftPlusShooting',
-                        'field': 'FG3M',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG3M', _OPEN_ALL_CALLS),
+        'team_source': _shot_source('team', 'FG3M', _OPEN_ALL_CALLS),
         'opponent_source': None
     },
     
@@ -1238,52 +808,8 @@ DB_COLUMNS = {
         'update_frequency': 'daily',
         'api': True,
         'pt_indicator': 'tr_games',
-        'player_source': {
-            'endpoint': 'playerdashptshots',
-            'execution_tier': 'player',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'playerdashptshots',
-                'execution_tier': 'player',
-                'endpoint_params': {'team_id': 0},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefenderShooting',
-                        'field': 'FG3A',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
-        'team_source': {
-            'endpoint': 'teamdashptshots',
-            'execution_tier': 'team',
-            'transformation': {
-                'type': 'pipeline',
-                'endpoint': 'teamdashptshots',
-                'execution_tier': 'team',
-                'endpoint_params': {},
-                'operations': [
-                    {
-                        'type': 'extract',
-                        'result_set': 'ClosestDefender10ftPlusShooting',
-                        'field': 'FG3A',
-                        'filter_field': 'CLOSE_DEF_DIST_RANGE',
-                        'filter_values': ['4-6 Feet - Open', '6+ Feet - Wide Open']
-                    },
-                    {
-                        'type': 'aggregate',
-                        'method': 'sum'
-                    }
-                ]
-            }
-        },
+        'player_source': _shot_source('player', 'FG3A', _OPEN_ALL_CALLS),
+        'team_source': _shot_source('team', 'FG3A', _OPEN_ALL_CALLS),
         'opponent_source': None
     },
     
@@ -2187,6 +1713,78 @@ DB_COLUMNS = {
         'opponent_source': None
     },
     
+    'real_d_close_2fg_pct_x1000': {
+        'table': 'stats',
+        'type': 'SMALLINT',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'pt_indicator': 'tr_games',
+        'player_source': {
+            'endpoint': 'leaguedashptdefend',
+            'params': {'defense_category': 'Less Than 10Ft'},
+            'field': 'PLUSMINUS',
+            'transform': 'safe_int',
+            'scale': 1000
+        },
+        'team_source': {
+            'endpoint': 'leaguedashptteamdefend',
+            'params': {'defense_category': 'Less Than 10Ft'},
+            'field': 'PLUSMINUS',
+            'transform': 'safe_int',
+            'scale': 1000
+        },
+        'opponent_source': None
+    },
+    
+    'real_d_2fg_pct_x1000': {
+        'table': 'stats',
+        'type': 'SMALLINT',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'pt_indicator': 'tr_games',
+        'player_source': {
+            'endpoint': 'leaguedashptdefend',
+            'params': {'defense_category': '2 Pointers'},
+            'field': 'PLUSMINUS',
+            'transform': 'safe_int',
+            'scale': 1000
+        },
+        'team_source': {
+            'endpoint': 'leaguedashptteamdefend',
+            'params': {'defense_category': '2 Pointers'},
+            'field': 'PLUSMINUS',
+            'transform': 'safe_int',
+            'scale': 1000
+        },
+        'opponent_source': None
+    },
+    
+    'real_d_3fg_pct_x1000': {
+        'table': 'stats',
+        'type': 'SMALLINT',
+        'nullable': True,
+        'update_frequency': 'daily',
+        'api': True,
+        'pt_indicator': 'tr_games',
+        'player_source': {
+            'endpoint': 'leaguedashptdefend',
+            'params': {'defense_category': '3 Pointers'},
+            'field': 'PLUSMINUS',
+            'transform': 'safe_int',
+            'scale': 1000
+        },
+        'team_source': {
+            'endpoint': 'leaguedashptteamdefend',
+            'params': {'defense_category': '3 Pointers'},
+            'field': 'PLUSMINUS',
+            'transform': 'safe_int',
+            'scale': 1000
+        },
+        'opponent_source': None
+    },
+    
     'o_rating_x10': {
         'table': 'stats',
         'type': 'SMALLINT',
@@ -2460,7 +2058,29 @@ ENDPOINTS_CONFIG = {
         'tracking': True,
     },
     
-    # Shot Tracking Data (available since 2013-14)
+    # Shot Tracking Data — League-wide (available since 2013-14)
+    # Replaces per-player playerdashptshots and per-team teamdashptshots
+    # with efficient league-wide calls (8 calls total vs ~560 per-entity calls)
+    'leaguedashplayerptshot': {
+        'min_season': '2013-14',
+        'execution_tier': 'league',
+        'default_result_set': 'LeagueDashPTShots',
+        'season_type_param': 'season_type_all_star',
+        'per_mode_param': 'per_mode_simple',
+        'entity_types': ['player'],
+        'tracking': True,
+    },
+    'leaguedashteamptshot': {
+        'min_season': '2013-14',
+        'execution_tier': 'league',
+        'default_result_set': 'LeagueDashPTShots',
+        'season_type_param': 'season_type_all_star',
+        'per_mode_param': 'per_mode_simple',
+        'entity_types': ['team'],
+        'tracking': True,
+    },
+    
+    # Shot Tracking Data — Per-entity (legacy, kept for reference)
     'playerdashptshots': {
         'min_season': '2013-14',
         'execution_tier': 'player',

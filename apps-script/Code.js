@@ -453,32 +453,41 @@ function _applyVerticalBorders(sheet, sheetType, showAdv, showPct) {
    * @param {boolean} shouldShow - Whether to apply or remove the border
    */
   function _setBoundaryBorder(baseCol, hasPercentile, startRow, shouldShow) {
-    var col = (showPct && hasPercentile) ? baseCol + 1 : baseCol;
-    if (col > maxCols) return;
+    // For data rows the border shifts to the pct column when percentiles are shown.
+    // For header rows (rows 1-2 which have merged cells) the border MUST stay on
+    // baseCol — the merge anchor — regardless of showPct.  Setting a border on any
+    // other column inside a merged range is invisible in Google Sheets.  Python also
+    // always places borders at baseCol for this reason, letting the hidden-column
+    // logic make the merge's visual left edge carry the border automatically.
+    var dataCol = (showPct && hasPercentile) ? baseCol + 1 : baseCol;
+    if (baseCol > maxCols) return;
+    var firstDataRow = headerRows + 1;
     try {
       if (shouldShow) {
-        // White left border on header rows (startRow through headerRows)
-        if (startRow <= headerRows) {
-          sheet.getRange(startRow, col, headerRows - startRow + 1, 1)
+        // Header rows: always use baseCol (merge anchor in rows 1-2).
+        // The border stays here even when baseCol is hidden — Google Sheets renders
+        // it at the visual left edge of the merged cell.
+        if (startRow <= headerRows && baseCol <= maxCols) {
+          sheet.getRange(startRow, baseCol, headerRows - startRow + 1, 1)
                .setBorder(null, true, null, null, null, null,
                           '#FFFFFF', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
         }
-        // Black left border on data rows below headers
-        if (maxRows > headerRows) {
-          sheet.getRange(headerRows + 1, col, maxRows - headerRows, 1)
+        // Data rows: use dataCol (shifts to pct column when showPct && hp).
+        if (maxRows >= firstDataRow && dataCol <= maxCols) {
+          sheet.getRange(firstDataRow, dataCol, maxRows - firstDataRow + 1, 1)
                .setBorder(null, true, null, null, null, null,
                           '#000000', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-        }
-        // Clear stale border from the OTHER column (previous toggle state)
-        if (hasPercentile) {
-          var otherCol = showPct ? baseCol : baseCol + 1;
-          if (otherCol > 0 && otherCol <= maxCols) {
-            sheet.getRange(startRow, otherCol, maxRows - startRow + 1, 1)
-                 .setBorder(null, false, null, null, null, null);
+          // Clear stale border from data rows only (never touch header rows here).
+          if (hasPercentile) {
+            var otherDataCol = showPct ? baseCol : baseCol + 1;
+            if (otherDataCol !== dataCol && otherDataCol > 0 && otherDataCol <= maxCols) {
+              sheet.getRange(firstDataRow, otherDataCol, maxRows - firstDataRow + 1, 1)
+                   .setBorder(null, false, null, null, null, null);
+            }
           }
         }
       } else {
-        // Remove border from BOTH base and pct columns
+        // Remove border from BOTH base and pct columns (all rows)
         sheet.getRange(startRow, baseCol, maxRows - startRow + 1, 1)
              .setBorder(null, false, null, null, null, null);
         if (hasPercentile && baseCol + 1 <= maxCols) {
@@ -487,7 +496,7 @@ function _applyVerticalBorders(sheet, sheetType, showAdv, showPct) {
         }
       }
     } catch (e) {
-      Logger.log('Border error col ' + col + ': ' + e);
+      Logger.log('Border error col ' + baseCol + ': ' + e);
     }
   }
 
