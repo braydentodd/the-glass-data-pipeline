@@ -25,11 +25,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import all config data at module level (no circular dependency)
-from config.etl import (
-    TABLES_CONFIG, ENDPOINTS_CONFIG, DB_COLUMNS,
+from config.nba_etl import (
+    TABLES_CONFIG, ENDPOINTS_CONFIG, DB_COLUMNS, DB_SCHEMA,
     RETRY_CONFIG, API_CONFIG, DB_CONFIG, DB_OPERATIONS, NBA_CONFIG,
     DATA_INTEGRITY_RULES, ENDPOINT_PARAMS, PARAM_KEYS
 )
+
+# Schema-qualified table name for endpoint tracking (NBA-only system table)
+ENDPOINT_TRACKER_TABLE = f"{DB_SCHEMA}.endpoint_tracker"
 
 
 # ============================================================================
@@ -260,22 +263,24 @@ def get_primary_key(entity: Literal['player', 'team']) -> str:
 
 
 def get_table_name(entity: Literal['player', 'team'], contents: Literal['entity', 'stats'] = 'stats') -> str:
-    """Get table name for entity and content type."""
+    """Get schema-qualified table name for entity and content type.
+    Returns e.g. 'nba.players', 'nba.team_season_stats'.
+    """
     for table_name, config in TABLES_CONFIG.items():
         if config['entity'] == entity and config['contents'] == contents:
-            return table_name
+            return f"{DB_SCHEMA}.{table_name}"
     
     raise ValueError(f"No table found for entity='{entity}' and contents='{contents}'")
 
 
 def get_stats_table_names() -> List[str]:
-    """Get list of stats table names."""
-    return [name for name, config in TABLES_CONFIG.items() if config['contents'] == 'stats']
+    """Get list of schema-qualified stats table names."""
+    return [f"{DB_SCHEMA}.{name}" for name, config in TABLES_CONFIG.items() if config['contents'] == 'stats']
 
 
 def get_entity_table_names() -> List[str]:
-    """Get list of entity table names."""
-    return [name for name, config in TABLES_CONFIG.items() if config['contents'] == 'entity']
+    """Get list of schema-qualified entity table names."""
+    return [f"{DB_SCHEMA}.{name}" for name, config in TABLES_CONFIG.items() if config['contents'] == 'entity']
 
 
 def get_composite_keys() -> List[str]:
@@ -408,6 +413,7 @@ def get_teams_from_db(db_config: Optional[Dict[str, Any]] = None) -> Dict[int, T
     if db_config is None:
         db_config = DB_CONFIG
     
+    teams_table = get_table_name('team', 'entity')
     conn = psycopg2.connect(
         host=db_config['host'],
         database=db_config['database'],
@@ -416,7 +422,7 @@ def get_teams_from_db(db_config: Optional[Dict[str, Any]] = None) -> Dict[int, T
         port=db_config['port']
     )
     cursor = conn.cursor()
-    cursor.execute("SELECT team_id, team_abbr, team_name FROM teams ORDER BY team_id")
+    cursor.execute(f"SELECT team_id, team_abbr, team_name FROM {teams_table} ORDER BY team_id")
     teams = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
     cursor.close()
     return_db_connection(conn)
@@ -1397,7 +1403,7 @@ def get_source_endpoint_for_column(col_name: str, entity: Literal['player', 'tea
         get_source_endpoint_for_column('cont_o_rebs', 'player') → 'playerdashptreb'
         get_source_endpoint_for_column('3fgm', 'player') → 'leaguedashplayerstats'
     """
-    from config.etl import DB_COLUMNS
+    from config.nba_etl import DB_COLUMNS
     
     col_config = DB_COLUMNS.get(col_name)
     if not col_config:
@@ -1817,8 +1823,8 @@ def log_missing_data_to_tracker(
             try:
                 # Normalize params: None/empty dict becomes '{}'
                 params_json = json.dumps(params or {})
-                query = """
-                    UPDATE endpoint_tracker
+                query = f"""
+                    UPDATE {ENDPOINT_TRACKER_TABLE}
                     SET missing_data = NULL,
                         status = 'complete',
                         updated_at = NOW()
@@ -1842,8 +1848,8 @@ def log_missing_data_to_tracker(
         cursor = conn.cursor()
         
         try:
-            query = """
-                UPDATE endpoint_tracker
+            query = f"""
+                UPDATE {ENDPOINT_TRACKER_TABLE}
                 SET missing_data = %s::jsonb,
                     status = 'retry',
                     updated_at = NOW()
@@ -1861,8 +1867,8 @@ def log_missing_data_to_tracker(
             
             if cursor.rowcount == 0:
                 # Record doesn't exist - insert it
-                query_insert = """
-                    INSERT INTO endpoint_tracker
+                query_insert = f"""
+                    INSERT INTO {ENDPOINT_TRACKER_TABLE}
                         (endpoint, year, season_type, entity, params, missing_data, status, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s::jsonb, 'retry', NOW())
                 """
@@ -1916,9 +1922,9 @@ def get_missing_data_for_retry(
         cursor = conn.cursor()
         
         try:
-            query = """
+            query = f"""
                 SELECT missing_data
-                FROM endpoint_tracker
+                FROM {ENDPOINT_TRACKER_TABLE}
                 WHERE endpoint = %s AND year = %s AND season_type = %s AND entity = %s
                     AND params = %s
                     AND missing_data IS NOT NULL
@@ -2179,10 +2185,10 @@ def get_backfill_status(endpoint: str, season: str, season_type: int, params: Op
         # Convert params to JSON string for comparison (normalized)
         params_json = json.dumps(params or {}, sort_keys=True)
         
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT endpoint, year, season_type, params, player_successes, players_total,
                    team_successes, teams_total, updated_at, status, entity
-            FROM endpoint_tracker
+            FROM {ENDPOINT_TRACKER_TABLE}
             WHERE endpoint = %s AND year = %s AND season_type = %s AND params = %s AND entity = %s
         """, (endpoint, season, season_type, params_json, entity))
         
@@ -2241,8 +2247,8 @@ def update_backfill_status(
         # Convert params to JSON string (normalized)
         params_json = json.dumps(params or {}, sort_keys=True)
         
-        cursor.execute("""
-            INSERT INTO endpoint_tracker 
+        cursor.execute(f"""
+            INSERT INTO {ENDPOINT_TRACKER_TABLE} 
             (endpoint, year, season_type, params, entity, player_successes, players_total,
              team_successes, teams_total, status, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
@@ -2301,8 +2307,8 @@ def reset_current_season_endpoints(season: str) -> None:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
-                UPDATE endpoint_tracker
+            cursor.execute(f"""
+                UPDATE {ENDPOINT_TRACKER_TABLE}
                 SET status = 'ready', missing_data = NULL, updated_at = NOW()
                 WHERE year = %s
             """, (season,))
@@ -2334,7 +2340,7 @@ def ensure_endpoint_tracker_coverage(start_season: str, end_season: Optional[str
     Returns:
         Number of new rows inserted
     """
-    from config.etl import ENDPOINTS_CONFIG, SEASON_TYPE_CONFIG
+    from config.nba_etl import ENDPOINTS_CONFIG, SEASON_TYPE_CONFIG
     from psycopg2.extras import execute_values
     import json
 
@@ -2400,8 +2406,8 @@ def ensure_endpoint_tracker_coverage(start_season: str, end_season: Optional[str
     with db_connection() as conn:
         cursor = conn.cursor()
         try:
-            sql_plain = """
-                INSERT INTO endpoint_tracker
+            sql_plain = f"""
+                INSERT INTO {ENDPOINT_TRACKER_TABLE}
                     (endpoint, year, season_type, params, entity,
                      player_successes, players_total, team_successes, teams_total,
                      status)
@@ -2441,8 +2447,8 @@ def reset_historical_endpoints(current_season: str) -> int:
     with db_connection() as conn:
         cursor = conn.cursor()
         try:
-            cursor.execute("""
-                UPDATE endpoint_tracker
+            cursor.execute(f"""
+                UPDATE {ENDPOINT_TRACKER_TABLE}
                 SET status = 'ready', missing_data = NULL, updated_at = NOW()
                 WHERE year != %s
             """, (current_season,))
@@ -2478,7 +2484,7 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None, current_s
     Returns:
         None (prints status to console)
     """
-    from config.etl import NBA_CONFIG
+    from config.nba_etl import NBA_CONFIG
     
     with db_connection() as conn:
         cursor = conn.cursor()
@@ -2488,13 +2494,13 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None, current_s
             # Only check from earliest_rookie_year onwards if provided
             # Resolve current_season if not passed in
             if current_season is None:
-                from config.etl import NBA_CONFIG as _NBA_CONFIG
+                from config.nba_etl import NBA_CONFIG as _NBA_CONFIG
                 current_season = _NBA_CONFIG['current_season']
 
             if earliest_rookie_year:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT COUNT(*) 
-                    FROM endpoint_tracker
+                    FROM {ENDPOINT_TRACKER_TABLE}
                     WHERE (status IS NULL OR status != 'complete')
                       AND year >= %s
                       AND year < %s
@@ -2503,9 +2509,9 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None, current_s
                 incomplete_count = cursor.fetchone()[0]
                 logger.info(f"[BACKFILL STATUS] Checking historical endpoints from {earliest_rookie_year} to {current_season} (excl.): {incomplete_count} incomplete")
             else:
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT COUNT(*) 
-                    FROM endpoint_tracker
+                    FROM {ENDPOINT_TRACKER_TABLE}
                     WHERE (status IS NULL OR status != 'complete')
                       AND year < %s
                       AND entity = 'player'
@@ -2528,8 +2534,8 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None, current_s
             # Team historical rows stay 'complete' permanently — team data doesn't
             # change for past seasons, so there's no reason to re-run them each cycle.
             # Current-season endpoints are managed separately by reset_current_season_endpoints.
-            cursor.execute("""
-                UPDATE endpoint_tracker
+            cursor.execute(f"""
+                UPDATE {ENDPOINT_TRACKER_TABLE}
                 SET status = 'ready', missing_data = NULL, updated_at = NOW()
                 WHERE year != %s AND entity = 'player'
             """, (NBA_CONFIG['current_season'],))
@@ -2660,7 +2666,7 @@ def get_active_teams() -> List[int]:
     Returns:
         List of team IDs (30 teams)
     """
-    from config.etl import TEAM_IDS
+    from config.nba_etl import TEAM_IDS
     return list(TEAM_IDS.values())
 
 
@@ -2728,7 +2734,7 @@ def build_endpoint_params(
     Raises:
         ValueError: If endpoint not configured or entity type not supported
     """
-    from config.etl import API_CONFIG
+    from config.nba_etl import API_CONFIG
     
     # Get endpoint configuration
     endpoint_config = get_endpoint_config(endpoint_name)
@@ -2915,7 +2921,7 @@ def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
                              season_type_name: str, entity: str,
                              custom_params: Optional[Dict[str, Any]] = None) -> List[Any]:
     """Fetch data from per-team endpoint (30 API calls, one per team)."""
-    from config.etl import TEAM_IDS
+    from config.nba_etl import TEAM_IDS
     
     EndpointClass = get_endpoint_class(endpoint_name)
     base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity, custom_params=custom_params)
@@ -2985,7 +2991,7 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
                                custom_params: Optional[Dict[str, Any]] = None,
                                player_ids: Optional[List[int]] = None) -> List[Any]:
     """Fetch data from per-player endpoint (hundreds/thousands of API calls)."""
-    from config.etl import SEASON_TYPE_CONFIG
+    from config.nba_etl import SEASON_TYPE_CONFIG
     
     # Get season_type code from name
     season_type = SEASON_TYPE_CONFIG.get(season_type_name, {}).get('season_code', 1)

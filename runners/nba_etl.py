@@ -66,7 +66,7 @@ except ImportError:
     pass
 
 # Configuration data (pure data structures)
-from config.etl import (
+from config.nba_etl import (
     NBA_CONFIG, TEAM_IDS,
     DB_COLUMNS, SEASON_TYPE_CONFIG,
     ENDPOINTS_CONFIG,
@@ -75,13 +75,13 @@ from config.etl import (
 )
 
 # Reusable utilities and helpers
-from lib.etl import (
+from lib.nba_etl import (
     infer_execution_tier_from_endpoint,
     get_columns_by_endpoint,
     safe_int, safe_float, safe_str, parse_height, parse_birthdate, format_season,
     get_entity_id_field, get_endpoint_config, is_endpoint_available_for_season,
     with_retry, create_api_call, load_endpoint_class,
-    get_primary_key, get_table_name,
+    get_primary_key, get_table_name, ENDPOINT_TRACKER_TABLE,
     quote_column, get_db_connection, return_db_connection, db_connection,
     get_season, get_season_year, build_endpoint_params,
     # Schema
@@ -140,8 +140,6 @@ if os.path.exists('.env'):
             if line and not line.startswith('#') and '=' in line:
                 key, value = line.split('=', 1)
                 os.environ.setdefault(key, value)
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # ============================================================================
 # LOGGING CONFIGURATION
@@ -2509,9 +2507,9 @@ def backfill_all_endpoints(
     # Load already-complete combinations for fast skip (player and team entities)
     with db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT endpoint, year, season_type, params, entity
-            FROM endpoint_tracker
+            FROM {ENDPOINT_TRACKER_TABLE}
             WHERE status = 'complete'
               AND (missing_data IS NULL OR missing_data = 'null'::jsonb)
         """)
@@ -2925,10 +2923,11 @@ def run_daily_etl(ctx: ETLContext) -> None:
         # STEP 2: Find earliest rookie_year among non-backfilled players
         # ================================================================
         with db_connection() as conn:
+            players_table = get_table_name('player', 'entity')
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT MIN(rookie_year)
-                FROM players
+                FROM {players_table}
                 WHERE backfilled = FALSE AND rookie_year IS NOT NULL
             """)
             earliest_rookie_year = cursor.fetchone()[0]
@@ -2976,8 +2975,8 @@ def run_daily_etl(ctx: ETLContext) -> None:
             # ============================================================
             with db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT COUNT(*) FROM endpoint_tracker
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {ENDPOINT_TRACKER_TABLE}
                     WHERE entity = 'team' AND year < %s
                       AND (status IS NULL OR status != 'complete')
                 """, (current_season,))

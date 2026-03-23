@@ -13,10 +13,10 @@ from flask_cors import CORS
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from config.etl import DB_CONFIG, NBA_CONFIG
-from config.sheets import API_CONFIG, SERVER_CONFIG
-from lib.etl import get_table_name, get_teams_from_db
-from lib.sheets import (
+from config.nba_etl import DB_CONFIG, NBA_CONFIG
+from config.nba_sheets import API_CONFIG, SERVER_CONFIG
+from lib.nba_etl import get_table_name, get_teams_from_db
+from lib.nba_sheets import (
     calculate_entity_stats,
     get_reverse_stats,
     get_editable_fields,
@@ -385,9 +385,9 @@ def get_team_players(team_id):
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        query = """
+        query = f"""
             SELECT player_id, name
-            FROM players
+            FROM {get_table_name('player', 'entity')}
             WHERE team_id = %s
               AND team_id IS NOT NULL
             ORDER BY name

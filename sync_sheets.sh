@@ -1,9 +1,9 @@
 #!/bin/bash
 #
 # Sync NBA team rosters and stats to Google Sheets
-# Usage: ./sync_sheets.sh [TEAM_ABBR] [--mode per_game|per_36|per_100|totals]
+# Usage: ./sync_sheets.sh [TEAM_ABBR] [--mode per_game|per_48|per_100]
 # Example: ./sync_sheets.sh BOS             (sync Boston, per_game mode)
-#          ./sync_sheets.sh BOS --mode per_36
+#          ./sync_sheets.sh BOS --mode per_48
 #          ./sync_sheets.sh                  (sync all teams)
 #
 
@@ -28,7 +28,7 @@ if [ -n "$1" ]; then
         shift
     fi
 fi
-# Pass remaining args (e.g. --mode per_36) straight through
+# Pass remaining args (e.g. --mode per_48) straight through
 ARGS="$ARGS $@"
 
 if [ -n "$(echo $ARGS | tr -d ' ')" ]; then
@@ -37,4 +37,4 @@ else
     echo "Syncing all team sheets..."
 fi
 
-python3 -m src.sheets $ARGS 2>&1
+python3 -m runners.nba_sheets $ARGS 2>&1

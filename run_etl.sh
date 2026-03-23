@@ -50,7 +50,7 @@ while [ $RESTART_COUNT -lt $MAX_RESTARTS ]; do
     echo ""
     
     # Run the ETL (venv already activated above)
-    python3 -m src.etl
+    python3 -m runners.nba_etl
     EXIT_CODE=$?
     
     # Check exit code

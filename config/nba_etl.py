@@ -23,6 +23,8 @@ DB_CONFIG = {
     'password': os.getenv('DB_PASSWORD', '')
 }
 
+DB_SCHEMA = 'nba'
+
 TABLES_CONFIG = {
     'players': {
         'entity': 'player',
@@ -96,7 +98,7 @@ def _get_team_ids() -> Dict[str, int]:
     global _team_ids_cache
     
     if _team_ids_cache is None:
-        from lib.etl import get_teams_from_db
+        from lib.nba_etl import get_teams_from_db
         teams = get_teams_from_db(DB_CONFIG)
         _team_ids_cache = {abbr: tid for tid, (abbr, name) in teams.items()}
     

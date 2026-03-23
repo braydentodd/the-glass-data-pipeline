@@ -1,28 +1,43 @@
 /**
  * apps-script/Code.js
  *
- * Pure UI layer for The Glass NBA stats spreadsheet.
- * ALL data calculations are performed by the Python backend (src/sheets.py).
+ * Unified, config-driven UI layer for The Glass stats spreadsheets.
+ * Supports NBA and NCAA via a separate LeagueConfig.js file.
+ * ALL data calculations are performed by the Python backend.
+ *
+ * Deployment:
+ *   1. Copy this file + the league's LeagueConfig.js to Apps Script
+ *   2. For NBA, also include HistoricalStatsDialog.html
+ *   3. Code.js is IDENTICAL for both leagues — never edit it per-league
  *
  * Responsibilities:
- *   - Load config from /api/config (single source of truth)
+ *   - Load config from the API (single source of truth)
  *   - Menu creation and user interactions
  *   - Trigger Python-side syncs via the API (including stat mode switching)
- *   - Write-back wingspan / notes edits to the DB via PATCH
- *   - Column visibility toggles (sections, advanced stats, percentiles)
+ *   - Write-back editable fields to the DB via PATCH/PUT
+ *   - Column visibility toggles (sections, advanced stats)
  *
  * Explicitly NOT done here:
  *   - Stat calculations of any kind
- *   - Percentile math
  *   - Hardcoded team lists or column indices
  */
+
+// ============================================================
+// LEAGUE CONFIG
+// ============================================================
+//
+// The LEAGUE global is defined in a separate LeagueConfig.js file
+// (NbaLeagueConfig.js or NcaaLeagueConfig.js). Apps Script loads
+// all project files into one shared scope, so Code.js sees it
+// automatically. This file is IDENTICAL across both deployments.
+//
 
 // ============================================================
 // CONFIG
 // ============================================================
 
-/** Bootstrap URL — single place to change if server moves. */
-var BOOTSTRAP_URL = 'http://150.136.255.23:5000/api/config';
+/** Server base URL — single place to change if server moves. */
+var API_BASE = 'http://150.136.255.23:5000';
 
 var CONFIG = null;
 
@@ -33,8 +48,11 @@ var CONFIG = null;
 function loadConfig() {
   if (CONFIG) return CONFIG;
 
+  var league = LEAGUE;
+  var url = API_BASE + league.configEndpoint;
+
   try {
-    var response = UrlFetchApp.fetch(BOOTSTRAP_URL, { muteHttpExceptions: true });
+    var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
     if (response.getResponseCode() === 200) {
       CONFIG = JSON.parse(response.getContentText());
       return CONFIG;
@@ -44,12 +62,10 @@ function loadConfig() {
     Logger.log('loadConfig: failed to reach API - ' + e);
   }
 
-  // Minimal fallback — derive base URL from BOOTSTRAP_URL
-  var fallbackBase = BOOTSTRAP_URL.replace(/\/api\/config$/, '');
+  // Minimal fallback so the spreadsheet never hard-breaks
   CONFIG = {
-    api_base_url: fallbackBase,
-    nba_teams: {},
-    column_ranges: { team_sheet: {}, nba_sheet: {} },
+    api_base_url: API_BASE,
+    column_ranges: { team_sheet: {} },
     column_indices: {},
     layout: { header_row_count: 4 },
     colors: {
@@ -58,11 +74,13 @@ function loadConfig() {
       green:  { r: 76,  g: 187, b: 23  }
     }
   };
+  CONFIG[league.teamsKey] = {};
+  CONFIG.column_ranges[league.playersRangeKey] = {};
   return CONFIG;
 }
 
 function getApiBaseUrl() {
-  return loadConfig().api_base_url || BOOTSTRAP_URL.replace(/\/api\/config$/, '');
+  return loadConfig().api_base_url || API_BASE;
 }
 
 function getColors() {
@@ -79,19 +97,21 @@ function getColors() {
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
-  ui.createMenu('Display Settings')
+  var league = LEAGUE;
+
+  var menu = ui.createMenu('Display Settings')
     .addSubMenu(ui.createMenu('Stat Mode')
       .addItem('Per 100 Possessions', 'switchToPer100')
       .addItem('Per Game',            'switchToPerGame')
-      .addItem('Per 36 Minutes',      'switchToPer36')
-      .addItem('Totals',              'switchToTotals'))
-    .addSubMenu(ui.createMenu('Advanced Stats')
+      .addItem('Per 48 Minutes',      'switchToPer48'));
+
+  if (league.hasAdvancedStats) {
+    menu.addSubMenu(ui.createMenu('Advanced Stats')
       .addItem('Show', 'showAdvancedStats')
-      .addItem('Hide', 'hideAdvancedStats'))
-    .addSubMenu(ui.createMenu('Percentiles')
-      .addItem('Show', 'showPercentiles')
-      .addItem('Hide', 'hidePercentiles'))
-    .addSeparator()
+      .addItem('Hide', 'hideAdvancedStats'));
+  }
+
+  menu.addSeparator()
     .addSubMenu(ui.createMenu('Player Info')
       .addItem('Show', 'showPlayerInfo')
       .addItem('Hide', 'hidePlayerInfo'))
@@ -106,22 +126,26 @@ function onOpen() {
       .addItem('Hide', 'hideHistoricalStats'))
     .addSubMenu(ui.createMenu('Postseason Stats')
       .addItem('Show', 'showPostseasonStats')
-      .addItem('Hide', 'hidePostseasonStats'))
-    .addSeparator()
-    .addItem('Historical Timeframe', 'showHistoricalStatsDialog')
-    .addToUi();
+      .addItem('Hide', 'hidePostseasonStats'));
+
+  if (league.hasHistoricalDialog) {
+    menu.addSeparator()
+      .addItem('Historical Timeframe', 'showHistoricalStatsDialog');
+  }
+
+  menu.addToUi();
 }
 
 // ============================================================
-// EDIT TRIGGER - config-driven write-back to DB for all
-//                editable fields (wingspan, hand, notes, …)
+// EDIT TRIGGER — config-driven write-back to DB
 // ============================================================
 
 function onEditInstallable(e) {
   var sheet     = e.range.getSheet();
   var sheetName = sheet.getName().toUpperCase();
   var config    = loadConfig();
-  var nbaTeams  = config.nba_teams || {};
+  var league    = LEAGUE;
+  var teams     = config[league.teamsKey] || {};
   var sheetType = _getSheetType(sheetName);
 
   if (!sheetType) return;
@@ -133,7 +157,7 @@ function onEditInstallable(e) {
   var editedCol = e.range.getColumn();
   var ss        = SpreadsheetApp.getActiveSpreadsheet();
 
-  // ---- Teams sheet: every row is a team, save notes to teams table ----
+  // ---- Teams sheet: every row is a team ----
   if (sheetType === 'teams') {
     var teamsEditable = config.teams_editable_columns || [];
     var matched = null;
@@ -142,20 +166,18 @@ function onEditInstallable(e) {
     }
     if (!matched) return;
 
-    // Get entity name (team name or abbreviation) from Names column
     var entityName = sheet.getRange(editedRow, 1).getValue();
     if (!entityName) return;
 
-    // Resolve team abbreviation (could be full name or abbreviation)
     var nameToAbbr = config.team_name_to_abbr || {};
-    var teamAbbr = nbaTeams.hasOwnProperty(String(entityName).toUpperCase())
+    var teamAbbr = teams.hasOwnProperty(String(entityName).toUpperCase())
       ? String(entityName).toUpperCase()
       : nameToAbbr[entityName];
     if (!teamAbbr) {
       ss.toast('Could not identify team: ' + entityName, 'Error', 3);
       return;
     }
-    var teamId = nbaTeams[teamAbbr];
+    var teamId = teams[teamAbbr];
     if (!teamId) {
       ss.toast('Could not find team: ' + teamAbbr, 'Error', 3);
       return;
@@ -169,14 +191,14 @@ function onEditInstallable(e) {
     return;
   }
 
-  // ---- Team/Players sheets: player or team row editing ----
+  // ---- Team/Players sheets ----
   var editableColumns = config.editable_columns || [];
   var isPlayersSheet  = (sheetType === 'players');
   var matched         = null;
 
   for (var i = 0; i < editableColumns.length; i++) {
     var ec     = editableColumns[i];
-    var colIdx = isPlayersSheet ? ec.nba_col_index : ec.team_col_index;
+    var colIdx = isPlayersSheet ? ec[league.editColIndexKey] : ec.team_col_index;
     if (colIdx === editedCol) { matched = ec; break; }
   }
   if (!matched) return;
@@ -191,13 +213,13 @@ function onEditInstallable(e) {
 
   var value = e.range.getValue();
 
-  // ---- TEAM row: save to teams table ----
+  // ---- TEAM row ----
   if (entityName === 'TEAM') {
     if (matched.col_key !== 'notes') {
       ss.toast('Only notes can be edited for teams', 'Info', 3);
       return;
     }
-    var teamId = nbaTeams[teamAbbr];
+    var teamId = teams[teamAbbr];
     if (!teamId) {
       ss.toast('Could not find team: ' + teamAbbr, 'Error', 3);
       return;
@@ -217,8 +239,8 @@ function onEditInstallable(e) {
     return;
   }
 
-  // ---- Player row: save via player API ----
-  if (matched.col_key === 'wingspan') {
+  // ---- Player row ----
+  if (league.hasWingspan && matched.col_key === 'wingspan') {
     value = parseWingspan(value);
     if (value === null) {
       ss.toast("Invalid wingspan. Use feet'inches (e.g. 6'8) or total inches.", 'Error', 5);
@@ -241,14 +263,12 @@ function onEditInstallable(e) {
 // MODE SWITCHING
 // ============================================================
 
-function switchToTotals()  { _switchStatMode('totals'); }
 function switchToPerGame() { _switchStatMode('per_game'); }
-function switchToPer36()   { _switchStatMode('per_36'); }
+function switchToPer48()   { _switchStatMode('per_48'); }
 function switchToPer100()  { _switchStatMode('per_100'); }
 
 /**
  * Switch stat mode by triggering a re-sync from the Python backend.
- * The backend rebuilds all sheets with the new mode's calculations.
  * Also updates section header text for immediate visual feedback.
  */
 function _switchStatMode(newMode) {
@@ -262,7 +282,6 @@ function _switchStatMode(newMode) {
     return;
   }
 
-  // Update section headers immediately for visual feedback
   var sheets = ss.getSheets();
   for (var i = 0; i < sheets.length; i++) {
     var name = sheets[i].getName().toUpperCase();
@@ -272,7 +291,6 @@ function _switchStatMode(newMode) {
   }
   SpreadsheetApp.flush();
 
-  // Trigger backend re-sync with the new mode
   triggerSync(newMode, { priorityTeam: _getActiveTeamAbbr() });
 }
 
@@ -282,10 +300,9 @@ function _switchStatMode(newMode) {
  */
 function _updateSectionHeaders(sheet, newMode) {
   var labels = {
-    'per_100': 'per 100 Poss',
+    'per_100':  'per 100 Poss',
     'per_game': 'per Game',
-    'per_36': 'per 36 Mins',
-    'totals': 'Totals',
+    'per_48':   'per 48 Mins',
   };
   var allLabels = Object.values(labels);
   var newLabel = labels[newMode] || '';
@@ -294,8 +311,6 @@ function _updateSectionHeaders(sheet, newMode) {
     var lastCol = sheet.getMaxColumns();
     if (lastCol < 1) return;
     var values = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-    // Write only the cells that change — setValues on the full range would
-    // clear cell formatting (including borders) on every cell it touches.
     for (var i = 0; i < values.length; i++) {
       var text = String(values[i]);
       if (!text) continue;
@@ -312,22 +327,302 @@ function _updateSectionHeaders(sheet, newMode) {
 }
 
 // ============================================================
-// ADVANCED STATS & PERCENTILES TOGGLE
+// ADVANCED STATS TOGGLE  (NBA only — menu item is gated)
 // ============================================================
 
-/**
- * Show/Hide advanced stat columns across all sheets.
- * Uses column_metadata for precise control.
- * Advanced toggle determines whether percentiles or values are shown (never both).
- */
 function showAdvancedStats() { _setAdvancedStats(true); }
 function hideAdvancedStats() { _setAdvancedStats(false); }
 
-/** Keep legacy toggle for backward compatibility */
-function toggleAdvancedStats() {
+function _setAdvancedStats(newAdvancedVisible) {
+  var config = loadConfig();
+  var props  = PropertiesService.getDocumentProperties();
+  props.setProperty('SHOW_ADVANCED', newAdvancedVisible ? 'true' : 'false');
+
+  var subRow = config.subsection_row_index || 2;
+
+  _applyToAllSheets(function(sheet, sheetType) {
+    try {
+      if (newAdvancedVisible) sheet.showRows(subRow, 1);
+      else                     sheet.hideRows(subRow, 1);
+    } catch (e) { Logger.log('Subsection row toggle error: ' + e); }
+
+    _rehideAlwaysHidden(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType);
+    _applyVerticalBorders(sheet, sheetType, newAdvancedVisible);
+  }, newAdvancedVisible ? 'Advanced stats shown' : 'Basic stats shown');
+}
+
+// ============================================================
+// HISTORICAL / POSTSEASON TIMEFRAME DIALOG  (NBA only)
+// ============================================================
+
+function showHistoricalStatsDialog() {
+  var template = HtmlService.createTemplateFromFile('HistoricalStatsDialog');
   var props = PropertiesService.getDocumentProperties();
-  var current = props.getProperty('SHOW_ADVANCED') === 'true';
-  _setAdvancedStats(!current);
+  template.includeCurrentYear = props.getProperty('HIST_INCLUDE_CURRENT') || 'false';
+  var html = template.evaluate()
+    .setWidth(420)
+    .setHeight(320);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Historical & Postseason Timeframe');
+}
+
+function parseHistoricalStatsInput(input) {
+  if (!input) return null;
+  var str = input.toString().trim();
+  if (str.toLowerCase() === 'career' || str.toLowerCase() === 'c') return { mode: 'career' };
+  if (/^\d+$/.test(str)) {
+    var years = parseInt(str);
+    if (years > 0 && years <= 30) return { mode: 'years', years: years };
+    return null;
+  }
+  if (/^(\d{2,4})-(\d{2})$/.test(str)) return { mode: 'since_season', season: str };
+  return null;
+}
+
+/**
+ * Called by HistoricalStatsDialog — unified timeframe for both hist and post.
+ */
+function saveHistoricalStatsConfig(input, includeCurrentYear) {
+  var result = parseHistoricalStatsInput(input);
+  if (!result) return { success: false, error: 'Invalid input: ' + input };
+
+  var props = PropertiesService.getDocumentProperties();
+  props.setProperty('HIST_MODE', result.mode);
+  props.setProperty('HIST_INCLUDE_CURRENT', includeCurrentYear ? 'true' : 'false');
+  if (result.mode === 'years')        props.setProperty('HIST_YEARS', String(result.years));
+  if (result.mode === 'since_season') props.setProperty('HIST_SEASON', result.season);
+
+  triggerSync(null, { priorityTeam: _getActiveTeamAbbr() });
+  return { success: true };
+}
+
+// ============================================================
+// SYNC TRIGGER
+// ============================================================
+
+function triggerSync(mode, options) {
+  options = options || {};
+  var config  = loadConfig();
+  var league  = LEAGUE;
+  var apiBase = config.api_base_url || getApiBaseUrl();
+  var props   = PropertiesService.getDocumentProperties();
+
+  if (mode) props.setProperty('STATS_MODE', mode);
+  var statsMode = mode || props.getProperty('STATS_MODE');
+
+  // If STATS_MODE was never set (initial sync via CLI), detect from headers
+  if (!statsMode) {
+    var labels = {
+      'per 100 Poss': 'per_100',
+      'per Game':     'per_game',
+      'per 48 Mins':  'per_48',
+    };
+    try {
+      var active = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+      var lastCol = active.getMaxColumns();
+      if (lastCol > 0) {
+        var headerVals = active.getRange(1, 1, 1, lastCol).getValues()[0];
+        for (var hi = 0; hi < headerVals.length; hi++) {
+          var headerText = String(headerVals[hi]);
+          for (var lbl in labels) {
+            if (headerText.indexOf(lbl) !== -1) {
+              statsMode = labels[lbl];
+              props.setProperty('STATS_MODE', statsMode);
+              break;
+            }
+          }
+          if (statsMode) break;
+        }
+      }
+    } catch (e) { Logger.log('Stats mode detection error: ' + e); }
+    if (!statsMode) statsMode = 'per_100';
+  }
+
+  // Build sync payload — league-aware
+  var payload = {
+    stats_mode:    statsMode,
+    priority_team: options.priorityTeam || null,
+    data_only:     true,
+  };
+
+  if (league.hasHistoricalDialog) {
+    // NBA: read historical/postseason prefs from document properties
+    var showAdvanced = (options.showAdvanced !== undefined)
+      ? options.showAdvanced
+      : (props.getProperty('SHOW_ADVANCED') === 'true');
+
+    payload.mode            = props.getProperty('HIST_MODE') || 'career';
+    payload.years           = parseInt(props.getProperty('HIST_YEARS') || '25');
+    payload.include_current = props.getProperty('HIST_INCLUDE_CURRENT') === 'true';
+    payload.show_advanced   = showAdvanced;
+
+    var histSeason = props.getProperty('HIST_SEASON') || null;
+    if (histSeason) payload.seasons = [histSeason];
+  } else {
+    // NCAA: simple defaults
+    payload.mode            = 'career';
+    payload.include_current = false;
+    payload.show_advanced   = false;
+  }
+
+  var url = apiBase + league.syncEndpoint;
+
+  try {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Syncing stats...', 'Update', 3);
+    var response = UrlFetchApp.fetch(url, {
+      method:             'post',
+      contentType:        'application/json',
+      payload:            JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+    var code = response.getResponseCode();
+    if (code === 200 || code === 202) {
+      SpreadsheetApp.getActiveSpreadsheet().toast('Sync triggered - data will refresh shortly.', 'Update', 4);
+    } else {
+      var errMsg = String(code);
+      try { errMsg = JSON.parse(response.getContentText()).error || errMsg; } catch (_) {}
+      SpreadsheetApp.getActiveSpreadsheet().toast('Sync error: ' + errMsg, 'Error', 6);
+    }
+  } catch (err) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Network error: ' + err.message, 'Error', 6);
+    Logger.log('triggerSync error: ' + err);
+  }
+}
+
+// ============================================================
+// PLAYER / TEAM FIELD UPDATES
+// ============================================================
+
+function getPlayerIdByName(playerName, teamAbbr) {
+  var config = loadConfig();
+  var league = LEAGUE;
+  var teams  = config[league.teamsKey] || {};
+  var teamId = teams[teamAbbr];
+  if (!teamId) return null;
+  var url = getApiBaseUrl() + league.apiPrefix + '/team/' + teamId + '/players';
+  try {
+    var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    var data     = JSON.parse(response.getContentText());
+    if (response.getResponseCode() === 200 && data.players) {
+      var player = data.players.find(function(p) { return p.name === playerName; });
+      return player ? player.player_id : null;
+    }
+  } catch (err) { Logger.log('getPlayerIdByName error: ' + err); }
+  return null;
+}
+
+function updatePlayerField(playerId, fieldName, fieldValue) {
+  var league  = LEAGUE;
+  var payload = {};
+  payload[fieldName] = fieldValue;
+  var response = UrlFetchApp.fetch(getApiBaseUrl() + league.apiPrefix + '/player/' + playerId, {
+    method: 'patch', contentType: 'application/json',
+    payload: JSON.stringify(payload), muteHttpExceptions: true
+  });
+  var data = JSON.parse(response.getContentText());
+  if (response.getResponseCode() !== 200) throw new Error(data.error || 'Unknown error');
+  return data;
+}
+
+function updateTeamField(teamId, fieldName, fieldValue) {
+  var league  = LEAGUE;
+  var payload = {};
+  payload[fieldName] = fieldValue;
+  var response = UrlFetchApp.fetch(getApiBaseUrl() + league.apiPrefix + '/teams/' + teamId, {
+    method: 'put', contentType: 'application/json',
+    payload: JSON.stringify(payload), muteHttpExceptions: true
+  });
+  var data = JSON.parse(response.getContentText());
+  if (response.getResponseCode() !== 200) throw new Error(data.error || 'Unknown error');
+  return data;
+}
+
+// ============================================================
+// WINGSPAN PARSER  (NBA only — guarded in onEditInstallable)
+// ============================================================
+
+function parseWingspan(value) {
+  if (!value) return null;
+  var str = value.toString().trim();
+  var feetInches = str.match(/^(\d+)'(\d+)"?$/);
+  if (feetInches) return parseInt(feetInches[1]) * 12 + parseInt(feetInches[2]);
+  var inches = parseInt(str);
+  if (!isNaN(inches) && inches > 0 && inches < 120) return inches;
+  return null;
+}
+
+// ============================================================
+// PERCENTILE COLOR HELPER
+// ============================================================
+
+function getPercentileColor(percentile) {
+  var colors = getColors();
+  var red = colors.red, yellow = colors.yellow, green = colors.green;
+  var r, g, b;
+  if (percentile < 50) {
+    var t = percentile / 50;
+    r = Math.round(red.r + (yellow.r - red.r) * t);
+    g = Math.round(red.g + (yellow.g - red.g) * t);
+    b = Math.round(red.b + (yellow.b - red.b) * t);
+  } else {
+    var t2 = (percentile - 50) / 50;
+    r = Math.round(yellow.r + (green.r - yellow.r) * t2);
+    g = Math.round(yellow.g + (green.g - yellow.g) * t2);
+    b = Math.round(yellow.b + (green.b - yellow.b) * t2);
+  }
+  return '#' + r.toString(16).padStart(2, '0')
+             + g.toString(16).padStart(2, '0')
+             + b.toString(16).padStart(2, '0');
+}
+
+// ============================================================
+// SHEET TYPE & RANGE HELPERS
+// ============================================================
+
+/** Determine sheet type: 'team', 'players', 'teams', or null. */
+function _getSheetType(sheetName) {
+  var config = loadConfig();
+  var league = LEAGUE;
+  var teams  = config[league.teamsKey] || {};
+  var upper  = sheetName.toUpperCase();
+  if (teams.hasOwnProperty(upper)) return 'team';
+  if (league.playersSheetNames.indexOf(upper) !== -1) return 'players';
+  if (upper === 'TEAMS') return 'teams';
+  return null;
+}
+
+/** Map sheet type to the config range key. */
+function _getRangeKey(sheetType) {
+  var league = LEAGUE;
+  if (sheetType === 'team')    return 'team_sheet';
+  if (sheetType === 'players') return league.playersRangeKey;
+  if (sheetType === 'teams')   return 'teams_sheet';
+  return null;
+}
+
+/** Get active team abbreviation if on a team sheet, else null. */
+function _getActiveTeamAbbr() {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var name   = ss.getActiveSheet().getName().toUpperCase();
+  var config = loadConfig();
+  var league = LEAGUE;
+  var teams  = config[league.teamsKey] || {};
+  return teams.hasOwnProperty(name) ? name : null;
+}
+
+/** Apply show/hide to column ranges on a single sheet. */
+function _applyRangeVisibility(sheet, rangeList, maxCols, visible) {
+  for (var r = 0; r < rangeList.length; r++) {
+    var rng = rangeList[r];
+    if (rng.start > maxCols) continue;
+    var count = Math.min(rng.count, maxCols - rng.start + 1);
+    try {
+      if (visible) sheet.showColumns(rng.start, count);
+      else         sheet.hideColumns(rng.start, count);
+    } catch (e) {
+      Logger.log('_applyRangeVisibility error: ' + e);
+    }
+  }
 }
 
 // ============================================================
@@ -387,36 +682,9 @@ function _batchColumns(sheet, cols, show) {
   } catch (e) { Logger.log('_batchColumns error: ' + e); }
 }
 
-/**
- * Detect the current percentile/advanced state from the actual sheet.
- * Checks whether a known percentile column is visible (for pct state)
- * and whether the subsection row is visible (for advanced state).
- * This is more reliable than reading document properties, which can
- * become stale after a manual Python sync (./sync_sheets.sh).
- */
-function _detectToggleState(sheet, sheetType) {
-  var config   = loadConfig();
-  var rangeKey = _getRangeKey(sheetType);
-  var colMeta  = (config.column_metadata || {})[rangeKey] || [];
-
-  // Detect percentile state: find the first stats pct column and check visibility
-  var showPct = false;
-  for (var i = 0; i < colMeta.length; i++) {
-    if (colMeta[i].stats && colMeta[i].pct) {
-      try { showPct = !sheet.isColumnHiddenByUser(colMeta[i].col); }
-      catch (e) { /* fall through */ }
-      break;
-    }
-  }
-
-  // Detect advanced state: subsection row is visible iff advanced is on
-  var showAdv = false;
-  var subRow  = config.subsection_row_index || 2;
-  try { showAdv = !sheet.isRowHiddenByUser(subRow); }
-  catch (e) { /* fall through */ }
-
-  return { showPct: showPct, showAdv: showAdv };
-}
+// ============================================================
+// VERTICAL BORDERS
+// ============================================================
 
 /**
  * Apply ALL vertical borders (both section and subsection) on a single sheet.
@@ -427,474 +695,54 @@ function _detectToggleState(sheet, sheetType) {
  * Subsection borders:  Only when showAdv=true. Span from subsection row through maxRows.
  *                      White in headers, black in data.
  *
- * When showPct=true AND a boundary has hp=true (has_percentile), the base
- * column is hidden so the border shifts +1 to the pct column.  Stale borders
- * on the "other" column are cleared to avoid ghosts after toggling.
- *
  * @param {Sheet}   sheet
  * @param {string}  sheetType
  * @param {boolean} showAdv   - Whether advanced/subsection borders are visible
- * @param {boolean} showPct   - Whether percentile columns are shown (shifts hp borders)
  */
-function _applyVerticalBorders(sheet, sheetType, showAdv, showPct) {
+function _applyVerticalBorders(sheet, sheetType, showAdv) {
   var config     = loadConfig();
   var rangeKey   = _getRangeKey(sheetType);
   var layout     = config.layout || {};
   var headerRows = layout.header_row_count || 4;
-  var subRow     = config.subsection_row_index || 2;  // 1-indexed
+  var subRow     = config.subsection_row_index || 2;
   var maxRows    = sheet.getMaxRows();
   var maxCols    = sheet.getMaxColumns();
 
-  /**
-   * Core border setter for a single boundary.
-   * @param {number}  baseCol    - 1-indexed base column of the boundary
-   * @param {boolean} hasPercentile - Whether this boundary has a pct column at +1
-   * @param {number}  startRow   - 1-indexed first row of the border
-   * @param {boolean} shouldShow - Whether to apply or remove the border
-   */
-  function _setBoundaryBorder(baseCol, hasPercentile, startRow, shouldShow) {
-    // For data rows the border shifts to the pct column when percentiles are shown.
-    // For header rows (rows 1-2 which have merged cells) the border MUST stay on
-    // baseCol — the merge anchor — regardless of showPct.  Setting a border on any
-    // other column inside a merged range is invisible in Google Sheets.  Python also
-    // always places borders at baseCol for this reason, letting the hidden-column
-    // logic make the merge's visual left edge carry the border automatically.
-    var dataCol = (showPct && hasPercentile) ? baseCol + 1 : baseCol;
+  function _setBoundaryBorder(baseCol, startRow, shouldShow) {
     if (baseCol > maxCols) return;
     var firstDataRow = headerRows + 1;
     try {
       if (shouldShow) {
-        // Header rows: always use baseCol (merge anchor in rows 1-2).
-        // The border stays here even when baseCol is hidden — Google Sheets renders
-        // it at the visual left edge of the merged cell.
         if (startRow <= headerRows && baseCol <= maxCols) {
           sheet.getRange(startRow, baseCol, headerRows - startRow + 1, 1)
                .setBorder(null, true, null, null, null, null,
                           '#FFFFFF', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
         }
-        // Data rows: use dataCol (shifts to pct column when showPct && hp).
-        if (maxRows >= firstDataRow && dataCol <= maxCols) {
-          sheet.getRange(firstDataRow, dataCol, maxRows - firstDataRow + 1, 1)
+        if (maxRows >= firstDataRow && baseCol <= maxCols) {
+          sheet.getRange(firstDataRow, baseCol, maxRows - firstDataRow + 1, 1)
                .setBorder(null, true, null, null, null, null,
                           '#000000', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-          // Clear stale border from data rows only (never touch header rows here).
-          if (hasPercentile) {
-            var otherDataCol = showPct ? baseCol : baseCol + 1;
-            if (otherDataCol !== dataCol && otherDataCol > 0 && otherDataCol <= maxCols) {
-              sheet.getRange(firstDataRow, otherDataCol, maxRows - firstDataRow + 1, 1)
-                   .setBorder(null, false, null, null, null, null);
-            }
-          }
         }
       } else {
-        // Remove border from BOTH base and pct columns (all rows)
         sheet.getRange(startRow, baseCol, maxRows - startRow + 1, 1)
              .setBorder(null, false, null, null, null, null);
-        if (hasPercentile && baseCol + 1 <= maxCols) {
-          sheet.getRange(startRow, baseCol + 1, maxRows - startRow + 1, 1)
-               .setBorder(null, false, null, null, null, null);
-        }
       }
     } catch (e) {
       Logger.log('Border error col ' + baseCol + ': ' + e);
     }
   }
 
-  // --- Section borders: always present, full height (row 1 through maxRows) ---
+  // Section borders — always present, full height (row 1 through maxRows)
   var secBounds = (config.section_boundaries || {})[rangeKey] || [];
   for (var s = 0; s < secBounds.length; s++) {
-    var sec = secBounds[s];
-    _setBoundaryBorder(sec.col, sec.hp, 1, true);  // always on, starts at row 1
+    _setBoundaryBorder(secBounds[s].col, 1, true);
   }
 
-  // --- Subsection borders: only when advanced is visible, starts at subRow ---
+  // Subsection borders — only when advanced is visible, starts at subRow
   var subBounds = (config.subsection_boundaries || {})[rangeKey] || [];
   for (var b = 0; b < subBounds.length; b++) {
-    var sub = subBounds[b];
-    _setBoundaryBorder(sub.col, sub.hp, subRow, showAdv);
+    _setBoundaryBorder(subBounds[b].col, subRow, showAdv);
   }
-}
-
-function _setAdvancedStats(newAdvancedVisible) {
-  var config = loadConfig();
-  var props  = PropertiesService.getDocumentProperties();
-  props.setProperty('SHOW_ADVANCED', newAdvancedVisible ? 'true' : 'false');
-
-  var subRow = config.subsection_row_index || 2;  // 1-indexed
-
-  // Detect actual percentile state from the active sheet and sync property
-  var ss     = SpreadsheetApp.getActiveSpreadsheet();
-  var active = ss.getActiveSheet();
-  var activeType = _getSheetType(active.getName().toUpperCase());
-  if (activeType) {
-    var detected = _detectToggleState(active, activeType);
-    props.setProperty('SHOW_PERCENTILES', detected.showPct ? 'true' : 'false');
-  }
-
-  _applyToAllSheets(function(sheet, sheetType) {
-    var rangeKey = _getRangeKey(sheetType);
-
-    // Show/hide subsection header row
-    try {
-      if (newAdvancedVisible) sheet.showRows(subRow, 1);
-      else                     sheet.hideRows(subRow, 1);
-    } catch (e) { Logger.log('Subsection row toggle error: ' + e); }
-
-    // Re-apply column visibility (adv/basic + pct swap) — batched
-    _rehideAlwaysHidden(sheet, sheetType);
-    _reapplyToggles(sheet, sheetType);
-
-    // Vertical borders — uses shared helper that handles section + subsection + pct offset
-    var curPct = props.getProperty('SHOW_PERCENTILES') === 'true';
-    _applyVerticalBorders(sheet, sheetType, newAdvancedVisible, curPct);
-  }, newAdvancedVisible ? 'Advanced stats shown' : 'Basic stats shown');
-}
-
-/**
- * Show/Hide percentile columns across all sheets.
- * Applies to ALL columns regardless of advanced/basic mode.
- * When shown, base value columns are hidden; when hidden, percentile columns hidden.
- * Also updates section headers: "Stats" ↔ "Percentiles"
- */
-function showPercentiles() { _setPercentiles(true); }
-function hidePercentiles() { _setPercentiles(false); }
-
-/** Keep legacy toggle for backward compatibility */
-function togglePercentiles() {
-  var props = PropertiesService.getDocumentProperties();
-  var current = props.getProperty('SHOW_PERCENTILES') === 'true';
-  _setPercentiles(!current);
-}
-
-function _setPercentiles(showPct) {
-  var props = PropertiesService.getDocumentProperties();
-  props.setProperty('SHOW_PERCENTILES', showPct ? 'true' : 'false');
-
-  // Detect actual advanced state from the active sheet and sync property
-  var ss     = SpreadsheetApp.getActiveSpreadsheet();
-  var active = ss.getActiveSheet();
-  var activeType = _getSheetType(active.getName().toUpperCase());
-  if (activeType) {
-    var detected = _detectToggleState(active, activeType);
-    props.setProperty('SHOW_ADVANCED', detected.showAdv ? 'true' : 'false');
-  }
-
-  _applyToAllSheets(function(sheet, sheetType) {
-    _rehideAlwaysHidden(sheet, sheetType);
-    _reapplyToggles(sheet, sheetType);
-    _updateSectionHeadersForPercentiles(sheet, showPct);
-    // Re-apply all vertical borders: in pct mode boundaries shift to pct column (+1)
-    var curAdv = props.getProperty('SHOW_ADVANCED') === 'true';
-    _applyVerticalBorders(sheet, sheetType, curAdv, showPct);
-  }, showPct ? 'Percentiles shown' : 'Values shown');
-}
-
-/**
- * Update section headers to say "Percentiles" or "Stats" based on toggle.
- */
-function _updateSectionHeadersForPercentiles(sheet, showPct) {
-  try {
-    var lastCol = sheet.getMaxColumns();
-    if (lastCol < 1) return;
-    var values = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-    // Write only the cells that change — setValues on the full range would
-    // clear cell formatting (including borders) on every cell it touches.
-    for (var i = 0; i < values.length; i++) {
-      var text = String(values[i]);
-      if (!text) continue;
-      if (showPct && text.indexOf(' Stats ') !== -1) {
-        sheet.getRange(1, i + 1).setValue(text.replace(' Stats ', ' Percentiles '));
-      } else if (!showPct && text.indexOf(' Percentiles ') !== -1) {
-        sheet.getRange(1, i + 1).setValue(text.replace(' Percentiles ', ' Stats '));
-      }
-    }
-  } catch (e) {
-    Logger.log('_updateSectionHeadersForPercentiles error: ' + e);
-  }
-}
-
-// ============================================================
-// HISTORICAL / POSTSEASON TIMEFRAME DIALOG
-// ============================================================
-
-/**
- * Determine sheet type: 'team', 'players', 'teams', or null.
- */
-function _getSheetType(sheetName) {
-  var config = loadConfig();
-  var nbaTeams = config.nba_teams || {};
-  var upper = sheetName.toUpperCase();
-  if (nbaTeams.hasOwnProperty(upper)) return 'team';
-  if (upper === 'NBA' || upper === 'PLAYERS') return 'players';
-  if (upper === 'TEAMS') return 'teams';
-  return null;
-}
-
-/** Map sheet type to the config range key. */
-function _getRangeKey(sheetType) {
-  if (sheetType === 'team')    return 'team_sheet';
-  if (sheetType === 'players') return 'nba_sheet';
-  if (sheetType === 'teams')   return 'teams_sheet';
-  return null;
-}
-
-/** Check if a sheet is a managed non-team sheet (Players, Teams, or legacy NBA). */
-function _isNbaSheet(name) {
-  return name === 'NBA' || name === 'PLAYERS' || name === 'TEAMS';
-}
-
-/** Get active team abbreviation if on a team sheet, else null. */
-function _getActiveTeamAbbr() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var name = ss.getActiveSheet().getName().toUpperCase();
-  var config = loadConfig();
-  var nbaTeams = config.nba_teams || {};
-  return nbaTeams.hasOwnProperty(name) ? name : null;
-}
-
-/** Apply show/hide to column ranges on a single sheet. */
-function _applyRangeVisibility(sheet, rangeList, maxCols, visible) {
-  for (var r = 0; r < rangeList.length; r++) {
-    var rng = rangeList[r];
-    if (rng.start > maxCols) continue;
-    var count = Math.min(rng.count, maxCols - rng.start + 1);
-    try {
-      if (visible) sheet.showColumns(rng.start, count);
-      else         sheet.hideColumns(rng.start, count);
-    } catch (e) {
-      Logger.log('_applyRangeVisibility error: ' + e);
-    }
-  }
-}
-
-// ============================================================
-// HISTORICAL / POSTSEASON TIMEFRAME DIALOG
-// ============================================================
-
-function showHistoricalStatsDialog() {
-  var template = HtmlService.createTemplateFromFile('HistoricalStatsDialog');
-  var props = PropertiesService.getDocumentProperties();
-  template.includeCurrentYear = props.getProperty('HIST_INCLUDE_CURRENT') || 'false';
-  var html = template.evaluate()
-    .setWidth(420)
-    .setHeight(320);
-  SpreadsheetApp.getUi().showModalDialog(html, 'Historical & Postseason Timeframe');
-}
-
-function parseHistoricalStatsInput(input) {
-  if (!input) return null;
-  var str = input.toString().trim();
-  if (str.toLowerCase() === 'career' || str.toLowerCase() === 'c') return { mode: 'career' };
-  if (/^\d+$/.test(str)) {
-    var years = parseInt(str);
-    if (years > 0 && years <= 30) return { mode: 'years', years: years };
-    return null;
-  }
-  if (/^(\d{2,4})-(\d{2})$/.test(str)) return { mode: 'since_season', season: str };
-  return null;
-}
-
-/**
- * Called by HistoricalStatsDialog — unified timeframe for both hist and post.
- */
-function saveHistoricalStatsConfig(input, includeCurrentYear) {
-  var result = parseHistoricalStatsInput(input);
-  if (!result) return { success: false, error: 'Invalid input: ' + input };
-
-  var props = PropertiesService.getDocumentProperties();
-  props.setProperty('HIST_MODE', result.mode);
-  props.setProperty('HIST_INCLUDE_CURRENT', includeCurrentYear ? 'true' : 'false');
-  if (result.mode === 'years')        props.setProperty('HIST_YEARS', String(result.years));
-  if (result.mode === 'since_season') props.setProperty('HIST_SEASON', result.season);
-
-  triggerSync(null, { priorityTeam: _getActiveTeamAbbr() });
-  return { success: true };
-}
-
-// ============================================================
-// SYNC TRIGGER
-// ============================================================
-
-function triggerSync(mode, options) {
-  options = options || {};
-  var config  = loadConfig();
-  var apiBase = config.api_base_url || getApiBaseUrl();
-  var props   = PropertiesService.getDocumentProperties();
-
-  if (mode) props.setProperty('STATS_MODE', mode);
-  var statsMode = mode || props.getProperty('STATS_MODE');
-
-  // If STATS_MODE property was never set (initial sync via CLI), detect from headers
-  if (!statsMode) {
-    var labels = {
-      'per 100 Poss': 'per_100',
-      'per Game':     'per_game',
-      'per 36 Mins':  'per_36',
-      'Totals':       'totals',
-    };
-    try {
-      var active = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-      var lastCol = active.getMaxColumns();
-      if (lastCol > 0) {
-        var headerVals = active.getRange(1, 1, 1, lastCol).getValues()[0];
-        for (var hi = 0; hi < headerVals.length; hi++) {
-          var headerText = String(headerVals[hi]);
-          for (var lbl in labels) {
-            if (headerText.indexOf(lbl) !== -1) {
-              statsMode = labels[lbl];
-              props.setProperty('STATS_MODE', statsMode);
-              break;
-            }
-          }
-          if (statsMode) break;
-        }
-      }
-    } catch (e) { Logger.log('Stats mode detection error: ' + e); }
-    if (!statsMode) statsMode = 'per_100';  // ultimate fallback
-  }
-
-  var showPercentiles = (options.showPercentiles !== undefined)
-    ? options.showPercentiles
-    : (props.getProperty('SHOW_PERCENTILES') === 'true');
-
-  var showAdvanced = (options.showAdvanced !== undefined)
-    ? options.showAdvanced
-    : (props.getProperty('SHOW_ADVANCED') === 'true');
-
-  // Unified timeframe for both historical and postseason
-  var histMode    = props.getProperty('HIST_MODE') || 'career';
-  var histYears   = parseInt(props.getProperty('HIST_YEARS') || '25');
-  var histSeason  = props.getProperty('HIST_SEASON') || null;
-  var includeCurr = props.getProperty('HIST_INCLUDE_CURRENT') === 'true';
-
-  var timeframe = {
-    mode:            histMode,
-    years:           histYears,
-    season:          histSeason,
-    include_current: includeCurr,
-  };
-
-  var payload = {
-    stats_mode:       statsMode,
-    mode:             histMode,               // 'career', 'years', or 'seasons'
-    years:            histYears,
-    include_current:  includeCurr,
-    show_percentiles: showPercentiles,
-    show_advanced:    showAdvanced,
-    priority_team:    options.priorityTeam || null,
-    data_only:        true,  // mode/timeframe switches use fast sync (skip structural formatting)
-  };
-  if (histSeason) payload.seasons = [histSeason];
-
-  var url = apiBase + '/api/sync-historical-stats';
-
-  try {
-    SpreadsheetApp.getActiveSpreadsheet().toast('Syncing stats...', 'Update', 3);
-    var response = UrlFetchApp.fetch(url, {
-      method:             'post',
-      contentType:        'application/json',
-      payload:            JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-    var code = response.getResponseCode();
-    if (code === 200 || code === 202) {
-      SpreadsheetApp.getActiveSpreadsheet().toast('Sync triggered - data will refresh shortly.', 'Update', 4);
-    } else {
-      var errMsg = String(code);
-      try { errMsg = JSON.parse(response.getContentText()).error || errMsg; } catch (_) {}
-      SpreadsheetApp.getActiveSpreadsheet().toast('Sync error: ' + errMsg, 'Error', 6);
-    }
-  } catch (err) {
-    SpreadsheetApp.getActiveSpreadsheet().toast('Network error: ' + err.message, 'Error', 6);
-    Logger.log('triggerSync error: ' + err);
-  }
-}
-
-// ============================================================
-// PLAYER FIELD UPDATE
-// ============================================================
-
-function getPlayerIdByName(playerName, teamAbbr) {
-  var config   = loadConfig();
-  var nbaTeams = config.nba_teams || {};
-  var teamId   = nbaTeams[teamAbbr];
-  if (!teamId) return null;
-  var url = getApiBaseUrl() + '/api/team/' + teamId + '/players';
-  try {
-    var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-    var data     = JSON.parse(response.getContentText());
-    if (response.getResponseCode() === 200 && data.players) {
-      var player = data.players.find(function(p) { return p.name === playerName; });
-      return player ? player.player_id : null;
-    }
-  } catch (err) { Logger.log('getPlayerIdByName error: ' + err); }
-  return null;
-}
-
-function updatePlayerField(playerId, fieldName, fieldValue) {
-  var payload = {};
-  payload[fieldName] = fieldValue;
-  var response = UrlFetchApp.fetch(getApiBaseUrl() + '/api/player/' + playerId, {
-    method: 'patch', contentType: 'application/json',
-    payload: JSON.stringify(payload), muteHttpExceptions: true
-  });
-  var data = JSON.parse(response.getContentText());
-  if (response.getResponseCode() !== 200) throw new Error(data.error || 'Unknown error');
-  return data;
-}
-
-// ============================================================
-// TEAM FIELD UPDATE
-// ============================================================
-
-function updateTeamField(teamId, fieldName, fieldValue) {
-  var payload = {};
-  payload[fieldName] = fieldValue;
-  var response = UrlFetchApp.fetch(getApiBaseUrl() + '/api/teams/' + teamId, {
-    method: 'put', contentType: 'application/json',
-    payload: JSON.stringify(payload), muteHttpExceptions: true
-  });
-  var data = JSON.parse(response.getContentText());
-  if (response.getResponseCode() !== 200) throw new Error(data.error || 'Unknown error');
-  return data;
-}
-
-// ============================================================
-// WINGSPAN PARSER
-// ============================================================
-
-function parseWingspan(value) {
-  if (!value) return null;
-  var str = value.toString().trim();
-  var feetInches = str.match(/^(\d+)'(\d+)"?$/);
-  if (feetInches) return parseInt(feetInches[1]) * 12 + parseInt(feetInches[2]);
-  var inches = parseInt(str);
-  if (!isNaN(inches) && inches > 0 && inches < 120) return inches;
-  return null;
-}
-
-// ============================================================
-// PERCENTILE COLOR HELPER
-// ============================================================
-
-function getPercentileColor(percentile) {
-  var colors = getColors();
-  var red = colors.red, yellow = colors.yellow, green = colors.green;
-  var r, g, b;
-  if (percentile < 50) {
-    var t = percentile / 50;
-    r = Math.round(red.r + (yellow.r - red.r) * t);
-    g = Math.round(red.g + (yellow.g - red.g) * t);
-    b = Math.round(red.b + (yellow.b - red.b) * t);
-  } else {
-    var t2 = (percentile - 50) / 50;
-    r = Math.round(yellow.r + (green.r - yellow.r) * t2);
-    g = Math.round(yellow.g + (green.g - yellow.g) * t2);
-    b = Math.round(yellow.b + (green.b - yellow.b) * t2);
-  }
-  return '#' + r.toString(16).padStart(2, '0')
-             + g.toString(16).padStart(2, '0')
-             + b.toString(16).padStart(2, '0');
 }
 
 // ============================================================
@@ -919,13 +767,13 @@ function _rehideAlwaysHidden(sheet, sheetType) {
 }
 
 /**
- * Re-apply current toggle states (percentiles, advanced/basic) after any toggle.
+ * Re-apply current toggle states (advanced/basic) after any toggle.
  * Ensures toggles are DRY — showing a section doesn't reveal columns that should
- * be hidden by another toggle (e.g. percentile columns when in values mode,
- * basic columns when advanced is shown).
+ * be hidden by another toggle (e.g. basic columns when advanced is shown).
  *
  * Single-mode architecture: only one set of stat columns exists per sheet,
  * so no mode-based column hiding is needed.
+ * Percentile companions are always visible (inline, not toggled).
  *
  * Uses column_metadata for per-column precision when available,
  * falling back to range-based approach otherwise.
@@ -938,9 +786,11 @@ function _reapplyToggles(sheet, sheetType) {
   var props    = PropertiesService.getDocumentProperties();
   var rangeKey = _getRangeKey(sheetType);
   var maxCols  = sheet.getMaxColumns();
+  var league   = LEAGUE;
 
-  var showPct = props.getProperty('SHOW_PERCENTILES') === 'true';
-  var showAdv = props.getProperty('SHOW_ADVANCED') === 'true';
+  var showAdv = league.hasAdvancedStats
+    ? (props.getProperty('SHOW_ADVANCED') === 'true')
+    : false;
 
   // --- column_metadata path (per-column flags, batched) ---
   var colMeta = (config.column_metadata || {})[rangeKey];
@@ -948,8 +798,6 @@ function _reapplyToggles(sheet, sheetType) {
     var showList = [];
     var hideList = [];
 
-    // Map section context names → SECTION_VIS_ property keys so that the
-    // isStats branch can honour section-level hide state (current/historical/postseason).
     var _secVisMap = {
       'current_stats':    'SECTION_VIS_CURRENT',
       'historical_stats': 'SECTION_VIS_HISTORICAL',
@@ -963,38 +811,22 @@ function _reapplyToggles(sheet, sheetType) {
       var colIdx = meta.col;
       if (colIdx > maxCols) continue;
 
-      var isPct      = meta.pct || false;
       var isAdvanced = meta.adv || false;
       var isBasic    = meta.bas || false;
       var isStats    = meta.stats || false;
-      var hasPercentile = meta.hp || false;
       var secName    = meta.sec || '';
+
+      if (!isStats) continue;
 
       var shouldShow = true;
 
-      if (isStats) {
-        // Respect section-level visibility: if the section is hidden, hide this column too
-        var secVisKey = _secVisMap[secName];
-        if (secVisKey && props.getProperty(secVisKey) === 'false') {
-          shouldShow = false;
-        } else {
-          if (isAdvanced && !showAdv) shouldShow = false;
-          if (isBasic && showAdv)     shouldShow = false;
-          if (shouldShow && isPct && !showPct) shouldShow = false;
-          if (shouldShow && !isPct && hasPercentile && showPct) shouldShow = false;
-        }
-      } else if (isPct) {
-        if (!showPct) {
-          shouldShow = false;
-        } else if (secName && props.getProperty('SECTION_VIS_' + secName.toUpperCase()) === 'false') {
-          shouldShow = false;
-        }
-      } else if (hasPercentile) {
-        var secHidden = secName && props.getProperty('SECTION_VIS_' + secName.toUpperCase()) === 'false';
-        if (secHidden) continue;
-        if (showPct) shouldShow = false;
+      // Respect section-level visibility
+      var secVisKey = _secVisMap[secName];
+      if (secVisKey && props.getProperty(secVisKey) === 'false') {
+        shouldShow = false;
       } else {
-        continue;
+        if (isAdvanced && !showAdv) shouldShow = false;
+        if (isBasic && showAdv)     shouldShow = false;
       }
 
       if (shouldShow) showList.push(colIdx);
@@ -1011,15 +843,6 @@ function _reapplyToggles(sheet, sheetType) {
   var basR = (config.basic_column_ranges || {})[rangeKey] || [];
   _applyRangeVisibility(sheet, advR, maxCols, showAdv);
   _applyRangeVisibility(sheet, basR, maxCols, !showAdv);
-
-  var pctR = (config.percentile_column_ranges || {})[rangeKey] || [];
-  var valR = (config.base_value_column_ranges || {})[rangeKey] || [];
-  _applyRangeVisibility(sheet, pctR, maxCols, showPct);
-  _applyRangeVisibility(sheet, valR, maxCols, !showPct);
-
-  // Re-enforce adv/basic after pct/val swap (ranges overlap)
-  if (showAdv) _applyRangeVisibility(sheet, basR, maxCols, false);
-  else         _applyRangeVisibility(sheet, advR, maxCols, false);
 }
 
 /**
@@ -1036,7 +859,6 @@ function _setSectionVisibility(sectionKey, makeVisible, label) {
   var sheets       = ss.getSheets();
   var updatedCount = 0;
 
-  // Persist state so _reapplyToggles can respect section visibility
   var props = PropertiesService.getDocumentProperties();
   props.setProperty('SECTION_VIS_' + sectionKey.toUpperCase(), makeVisible ? 'true' : 'false');
 
@@ -1074,24 +896,6 @@ function _setSectionVisibility(sectionKey, makeVisible, label) {
   ss.toast(label + ' (' + updatedCount + ' sheets)', 'Section Visibility', 3);
 }
 
-/** Keep legacy toggles for backward compat */
-function _toggleSection(sectionKey, labelOn, labelOff) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var config = loadConfig();
-  var columnRanges = config.column_ranges || {};
-  var activeSheet = ss.getActiveSheet();
-  var activeName  = activeSheet.getName().toUpperCase();
-  var activeType  = _getSheetType(activeName);
-  var activeKey   = _getRangeKey(activeType);
-  var detectRange = (columnRanges[activeKey] || {})[sectionKey] || null;
-  var newVisible  = true;
-  if (detectRange && detectRange.start <= activeSheet.getMaxColumns()) {
-    try { newVisible = activeSheet.isColumnHiddenByUser(detectRange.start); }
-    catch (e) { Logger.log('_toggleSection detect error: ' + e); }
-  }
-  _setSectionVisibility(sectionKey, newVisible, newVisible ? labelOn : labelOff);
-}
-
 // Explicit show/hide for each section
 function showCurrentStats()    { _setSectionVisibility('current',     true,  'Current stats shown');    }
 function hideCurrentStats()    { _setSectionVisibility('current',     false, 'Current stats hidden');   }
@@ -1103,13 +907,6 @@ function showPlayerInfo()      { _setSectionVisibility('player_info', true,  'Pl
 function hidePlayerInfo()      { _setSectionVisibility('player_info', false, 'Player info hidden');     }
 function showAnalysis()        { _setSectionVisibility('notes',       true,  'Analysis shown');         }
 function hideAnalysis()        { _setSectionVisibility('notes',       false, 'Analysis hidden');        }
-
-// Legacy toggle wrappers
-function toggleCurrentStats()    { _toggleSection('current',     'Current stats shown',    'Current stats hidden');    }
-function toggleHistoricalStats() { _toggleSection('historical',  'Historical stats shown', 'Historical stats hidden'); }
-function togglePostseasonStats() { _toggleSection('postseason',  'Postseason stats shown', 'Postseason stats hidden'); }
-function togglePlayerInfo()      { _toggleSection('player_info', 'Player info shown',      'Player info hidden');      }
-function toggleAnalysis()        { _toggleSection('notes',       'Analysis shown',         'Analysis hidden');         }
 
 function showAllSections() {
   var sections = ['current', 'historical', 'postseason', 'player_info', 'notes'];
