@@ -14,6 +14,7 @@ NCAA and lightweight shared callers.
 """
 import logging
 from contextlib import contextmanager
+from datetime import datetime
 
 import psycopg2
 
@@ -63,3 +64,23 @@ def db_connection():
         raise
     finally:
         conn.close()
+
+
+# ============================================================================
+# SHARED SEASON UTILITIES
+# ============================================================================
+
+def get_current_season_year() -> int:
+    """Current season end-year (calendar year of spring semester).
+
+    After August we're already in the next season (e.g. September 2024 → 2025).
+    Both NBA and NCAA share this convention.
+    """
+    now = datetime.now()
+    return now.year + 1 if now.month > 8 else now.year
+
+
+def get_current_season() -> str:
+    """Current season as a display string, e.g. '2024-25'."""
+    year = get_current_season_year()
+    return f"{year - 1}-{str(year)[-2:]}"

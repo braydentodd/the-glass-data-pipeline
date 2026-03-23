@@ -1,6 +1,12 @@
 """
-Flask API for interactive NBA stat calculations
-Provides endpoints for switching between stat modes (totals, per-game, per-100, etc.)
+The Glass - Flask API
+
+Serves interactive NBA stat calculations and triggers sheet sync.
+Provides endpoints for switching stat modes, fetching player/team data,
+and triggering background Google Sheets syncs.
+
+Run with:
+    python -m lib.api
 """
 
 import sys
@@ -118,7 +124,7 @@ def sync_historical_stats():
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # Build command arguments - run as module to ensure imports work
-        cmd = [sys.executable, '-m', 'src.sheets']
+        cmd = [sys.executable, '-m', 'runners.nba_sheets']
         
         # Add priority team as CLI argument if specified
         if priority_team:
@@ -216,7 +222,7 @@ def sync_postseason_stats():
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # Build command arguments
-        cmd = [sys.executable, '-m', 'src.sheets']
+        cmd = [sys.executable, '-m', 'runners.nba_sheets']
         
         if priority_team:
             cmd += ['--team', priority_team.upper()]

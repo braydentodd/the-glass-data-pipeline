@@ -7,11 +7,10 @@ and data writing helpers.
 """
 
 import logging
+from typing import Callable, Optional
 
 import gspread
 from google.oauth2.service_account import Credentials
-
-from lib.sheets_engine import build_formatting_requests
 
 logger = logging.getLogger(__name__)
 
@@ -58,22 +57,34 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
                            percentile_cells: list, n_player_rows: int,
                            sheet_type: str = 'team',
                            show_advanced: bool = False,
-                           data_only: bool = False):
+                           data_only: bool = False,
+                           build_fn: Optional[Callable] = None):
     """
     Apply ALL Google Sheets formatting via batch API requests.
-    Delegates to sheets_engine.build_formatting_requests (config-driven).
+    Delegates to the league-specific build_formatting_requests function passed
+    via build_fn (from ctx.sheets_lib.build_formatting_requests).
 
     Removes any pre-existing banded ranges on the worksheet first so that
     addBanding does not collide with stale banding from a previous sync
     (ws.clear() removes cell values but NOT banding properties).
 
-    For large sheets (500+ players), requests are chunked to stay under
+    For large sheets (500+ players), requests are chunded to stay under
     the Google Sheets API ~10 MB request size limit.
 
     When data_only=True, skips structural formatting (fonts, borders, widths,
     column visibility) and only applies banding, percentile shading, and
     grid resize.  Used for fast mode/timeframe switches.
+
+    Args:
+        build_fn: League-specific build_formatting_requests callable.
+                  Typically ctx.sheets_lib.build_formatting_requests.
+                  Required — must be provided by the orchestrator.
     """
+    if build_fn is None:
+        raise ValueError(
+            "apply_sheet_formatting requires build_fn — pass "
+            "ctx.sheets_lib.build_formatting_requests from the orchestrator."
+        )
     # --- Remove existing banded ranges (survive ws.clear()) --------------
     meta = worksheet.spreadsheet.fetch_sheet_metadata(
         params={'fields': 'sheets(properties.sheetId,bandedRanges)'}
@@ -87,7 +98,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
                 })
             break
 
-    requests = build_formatting_requests(
+    requests = build_fn(
         ws_id=worksheet.id,
         columns_list=columns_list,
         header_merges=header_merges,

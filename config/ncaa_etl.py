@@ -14,7 +14,6 @@ Design Principles:
 - No tracking data, no hustle stats, no shot-type breakdowns
 """
 import os
-from datetime import datetime
 from typing import Dict, Optional
 from dotenv import load_dotenv
 
@@ -25,6 +24,7 @@ load_dotenv()
 # ============================================================================
 
 from config.db import DB_CONFIG
+from lib.db import get_current_season, get_current_season_year
 
 # ============================================================================
 # CBBD API CONFIGURATION
@@ -98,19 +98,13 @@ SEASON_TYPE_CONFIG = {
 
 
 def _get_current_ncaa_season_int() -> int:
-    """
-    Get current NCAA season as integer (for CBBD API calls).
-    NCAA season year = calendar year of the spring semester.
-    Season starts in November, so after August we're in next season.
-    """
-    now = datetime.now()
-    return now.year + 1 if now.month > 8 else now.year
+    """Get current NCAA season as integer (delegates to shared lib.db utility)."""
+    return get_current_season_year()
 
 
 def _get_current_ncaa_season() -> str:
-    """Get current NCAA season as display string (matching NBA format)."""
-    year = _get_current_ncaa_season_int()
-    return f"{year - 1}-{str(year)[-2:]}"
+    """Get current NCAA season as display string (delegates to shared lib.db utility)."""
+    return get_current_season()
 
 
 def season_int_to_display(season_int: int) -> str:

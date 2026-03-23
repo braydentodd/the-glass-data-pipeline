@@ -5,9 +5,11 @@ Pure configuration data: database settings, NBA API constants, column schemas.
 All reusable functions moved to lib.etl for separation of data vs code.
 """
 import os
-from datetime import datetime
 from typing import Dict, Optional
 from dotenv import load_dotenv
+
+from config.db import DB_CONFIG
+from lib.db import get_current_season, get_current_season_year
 
 load_dotenv()
 
@@ -15,14 +17,7 @@ load_dotenv()
 # DATABASE CONFIGURATION
 # ============================================================================
 
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'port': int(os.getenv('DB_PORT', '5432')),
-    'database': os.getenv('DB_NAME', ''),
-    'user': os.getenv('DB_USER', ''),
-    'password': os.getenv('DB_PASSWORD', '')
-}
-
+# DB_CONFIG imported from config.db (single source of truth)
 DB_SCHEMA = 'nba'
 
 TABLES_CONFIG = {
@@ -50,6 +45,28 @@ TABLES_CONFIG = {
 
 TABLES = list(TABLES_CONFIG.keys())
 
+
+def get_table_name(entity: str, contents: str = 'stats') -> str:
+    """Get schema-qualified table name by entity type and contents type.
+    Returns e.g. 'nba.players', 'nba.team_season_stats'.
+    """
+    for table_name, meta in TABLES_CONFIG.items():
+        if meta['entity'] == entity and meta['contents'] == contents:
+            return f"{DB_SCHEMA}.{table_name}"
+    raise ValueError(f"No table for entity={entity!r}, contents={contents!r}")
+
+
+def get_stats_table_names() -> list:
+    """Get list of schema-qualified stats table names."""
+    return [f"{DB_SCHEMA}.{name}" for name, meta in TABLES_CONFIG.items()
+            if meta['contents'] == 'stats']
+
+
+def get_entity_table_names() -> list:
+    """Get list of schema-qualified entity table names."""
+    return [f"{DB_SCHEMA}.{name}" for name, meta in TABLES_CONFIG.items()
+            if meta['contents'] == 'entity']
+
 # ============================================================================
 # NBA SEASON CONFIGURATION
 # ============================================================================
@@ -71,17 +88,15 @@ SEASON_TYPE_CONFIG = {
 
 def _get_current_season_year() -> int:
     """Helper to calculate current season year (private - used only during module init)."""
-    now = datetime.now()
-    return now.year + 1 if now.month > 8 else now.year
+    return get_current_season_year()
 
 def _get_current_season() -> str:
     """Helper to calculate current season string (private - used only during module init)."""
-    year = _get_current_season_year()
-    return f"{year - 1}-{str(year)[-2:]}"
+    return get_current_season()
 
 NBA_CONFIG = {
-    'current_season': _get_current_season(),
-    'current_season_year': _get_current_season_year(),
+    'current_season': get_current_season(),
+    'current_season_year': get_current_season_year(),
     'season_type': int(os.getenv('SEASON_TYPE', '1')),
     'backfill_start_season': '2003-04',
     'combine_start_year': 2003,

@@ -5,14 +5,14 @@ League-agnostic sync functions for Google Sheets.
 Each league (NBA / NCAA) creates a LeagueSyncContext with its specific
 configuration and function references, then delegates to these shared
 functions.  This eliminates ~90% of the duplication between the
-NBA and NCAA sheets_main files.
+NBA and NCAA sheets runners.
 
 Architecture:
-    general/sheets_engine.py       – all formatting, row/header building, formulas
-    general/sheets_sync.py         – Google Sheets API utilities (client, worksheet, formatting)
-    general/sheets_orchestrator.py – THIS FILE: sync orchestration (fetch → percentile → build → write)
-    nba/sheets/nba_sheets_main.py  – thin NBA wrapper: context + main()
-    ncaa/sheets/ncaa_sheets_main.py – thin NCAA wrapper: context + main()
+    lib/sheets_engine.py       – formatting, row/header building, formulas (unused; logic in lib/nba_sheets.py and lib/ncaa_sheets.py)
+    lib/sheets_sync.py         – Google Sheets API utilities (client, worksheet, formatting)
+    lib/sheets_orchestrator.py – THIS FILE: sync orchestration (fetch → percentile → build → write)
+    runners/nba_sheets.py      – thin NBA wrapper: context + main()
+    runners/ncaa_sheets.py     – thin NCAA wrapper: context + main()
 """
 
 import time
@@ -45,8 +45,8 @@ class LeagueSyncContext:
     """
 
     # Module references (for function dispatch)
-    sheets_lib: ModuleType      # e.g. nba.sheets.nba_sheets_lib
-    etl_lib: ModuleType         # e.g. nba.etl.nba_etl_lib
+    sheets_lib: ModuleType      # e.g. lib.nba_sheets
+    etl_lib: ModuleType         # e.g. lib.nba_etl
 
     # Config dicts (league-specific)
     league_config: dict         # NBA_CONFIG or NCAA_CONFIG
@@ -116,8 +116,13 @@ def _combine_team_opp(teams_dict):
 def _write_and_format(worksheet, columns, headers, data_rows,
                       percentile_cells, n_entity_rows,
                       team_name, sheet_type, show_advanced,
-                      data_only):
-    """Resize worksheet, write values, and apply formatting."""
+                      data_only, build_fn):
+    """Resize worksheet, write values, and apply formatting.
+
+    Args:
+        build_fn: League-specific build_formatting_requests callable
+                  (ctx.sheets_lib.build_formatting_requests).
+    """
     n_cols = len(columns)
     filter_row = [''] * n_cols
     all_rows = [headers['row1'], headers['row2'], headers['row3'],
@@ -141,6 +146,7 @@ def _write_and_format(worksheet, columns, headers, data_rows,
         sheet_type=sheet_type,
         show_advanced=show_advanced,
         data_only=data_only,
+        build_fn=build_fn,
     )
 
 
@@ -411,6 +417,7 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
             all_percentile_cells, n_player_rows,
             display_name, 'team', show_advanced,
             data_only,
+            build_fn=ctx.sheets_lib.build_formatting_requests,
         )
 
         logger.info(
@@ -568,6 +575,7 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_100',
             all_percentile_cells, n_player_rows,
             'Players', 'players', show_advanced,
             data_only,
+            build_fn=ctx.sheets_lib.build_formatting_requests,
         )
 
         _move_sheet_to_position(worksheet, 0)
@@ -744,6 +752,7 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_100',
             all_percentile_cells, n_team_rows,
             'Teams', 'teams', show_advanced,
             data_only,
+            build_fn=ctx.sheets_lib.build_formatting_requests,
         )
 
         _move_sheet_to_position(worksheet, 1)

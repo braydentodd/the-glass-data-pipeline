@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 from config.nba_etl import (
     TABLES_CONFIG, ENDPOINTS_CONFIG, DB_COLUMNS, DB_SCHEMA,
     RETRY_CONFIG, API_CONFIG, DB_CONFIG, DB_OPERATIONS, NBA_CONFIG,
-    DATA_INTEGRITY_RULES, ENDPOINT_PARAMS, PARAM_KEYS
+    DATA_INTEGRITY_RULES, ENDPOINT_PARAMS, PARAM_KEYS,
+    get_table_name, get_stats_table_names, get_entity_table_names,
 )
 
 # Schema-qualified table name for endpoint tracking (NBA-only system table)
@@ -262,26 +263,7 @@ def get_primary_key(entity: Literal['player', 'team']) -> str:
     return PRIMARY_KEYS.get(entity, 'id')
 
 
-def get_table_name(entity: Literal['player', 'team'], contents: Literal['entity', 'stats'] = 'stats') -> str:
-    """Get schema-qualified table name for entity and content type.
-    Returns e.g. 'nba.players', 'nba.team_season_stats'.
-    """
-    for table_name, config in TABLES_CONFIG.items():
-        if config['entity'] == entity and config['contents'] == contents:
-            return f"{DB_SCHEMA}.{table_name}"
-    
-    raise ValueError(f"No table found for entity='{entity}' and contents='{contents}'")
-
-
-def get_stats_table_names() -> List[str]:
-    """Get list of schema-qualified stats table names."""
-    return [f"{DB_SCHEMA}.{name}" for name, config in TABLES_CONFIG.items() if config['contents'] == 'stats']
-
-
-def get_entity_table_names() -> List[str]:
-    """Get list of schema-qualified entity table names."""
-    return [f"{DB_SCHEMA}.{name}" for name, config in TABLES_CONFIG.items() if config['contents'] == 'entity']
-
+# get_table_name, get_stats_table_names, get_entity_table_names imported from config.nba_etl
 
 def get_composite_keys() -> List[str]:
     """Get composite key field names."""
