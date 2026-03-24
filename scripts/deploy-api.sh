@@ -6,9 +6,16 @@
 # Deploys these Python packages:
 #   config/   - Shared + per-league configuration
 #   lib/      - Shared engine, orchestrator, sync, API, DB, ETL libs
-#   runners/  - CLI entry points (nba_etl, nba_sheets, ncaa_etl, ncaa_sheets)
+#   runners/  - CLI entry points (api, nba_etl, nba_sheets, ncaa_etl, ncaa_sheets)
+#
+# Usage: scripts/deploy-api.sh
 
 set -e  # Exit on error
+
+# Resolve to repo root
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_ROOT"
 
 # Load environment variables from .env
 if [ -f .env ]; then

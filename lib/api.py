@@ -626,9 +626,4 @@ def get_column_config():
     return get_config()
 
 
-if __name__ == '__main__':
-    app.run(
-        host=API_CONFIG.get('host', '0.0.0.0'),
-        port=API_CONFIG.get('port', 5000),
-        debug=API_CONFIG.get('debug', False),
-    )
+# Entry point: python -m runners.api

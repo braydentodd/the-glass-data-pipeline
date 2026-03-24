@@ -6,9 +6,9 @@
  * ALL data calculations are performed by the Python backend.
  *
  * Deployment:
- *   1. Copy this file + the league's LeagueConfig.js to Apps Script
- *   2. For NBA, also include HistoricalStatsDialog.html
- *   3. Code.js is IDENTICAL for both leagues — never edit it per-league
+ *   1. Copy this file + the league's config file (config/NBA.js or config/NCAA.js)
+ *      to the Apps Script project
+ *   2. Code.js is IDENTICAL for both leagues — never edit it per-league
  *
  * Responsibilities:
  *   - Load config from the API (single source of truth)
@@ -128,10 +128,19 @@ function onOpen() {
       .addItem('Show', 'showPostseasonStats')
       .addItem('Hide', 'hidePostseasonStats'));
 
-  if (league.hasHistoricalDialog) {
-    menu.addSeparator()
-      .addItem('Historical Timeframe', 'showHistoricalStatsDialog');
+  // Timeframe submenu — 1-10 years + Career + include/exclude current season
+  var tfMenu = ui.createMenu('Historical Timeframe');
+  for (var y = 1; y <= 10; y++) {
+    tfMenu.addItem(y + (y === 1 ? ' Year' : ' Years'), 'setTimeframe' + y);
   }
+  tfMenu.addSeparator()
+    .addItem('Career', 'setTimeframeCareer')
+    .addSeparator()
+    .addItem('Include Current Season', 'setIncludeCurrent')
+    .addItem('Exclude Current Season', 'setExcludeCurrent');
+
+  menu.addSeparator()
+    .addSubMenu(tfMenu);
 
   menu.addToUi();
 }
@@ -353,48 +362,44 @@ function _setAdvancedStats(newAdvancedVisible) {
 }
 
 // ============================================================
-// HISTORICAL / POSTSEASON TIMEFRAME DIALOG  (NBA only)
+// HISTORICAL / POSTSEASON TIMEFRAME  (menu-driven)
 // ============================================================
 
-function showHistoricalStatsDialog() {
-  var template = HtmlService.createTemplateFromFile('HistoricalStatsDialog');
-  var props = PropertiesService.getDocumentProperties();
-  template.includeCurrentYear = props.getProperty('HIST_INCLUDE_CURRENT') || 'false';
-  var html = template.evaluate()
-    .setWidth(420)
-    .setHeight(320);
-  SpreadsheetApp.getUi().showModalDialog(html, 'Historical & Postseason Timeframe');
-}
-
-function parseHistoricalStatsInput(input) {
-  if (!input) return null;
-  var str = input.toString().trim();
-  if (str.toLowerCase() === 'career' || str.toLowerCase() === 'c') return { mode: 'career' };
-  if (/^\d+$/.test(str)) {
-    var years = parseInt(str);
-    if (years > 0 && years <= 30) return { mode: 'years', years: years };
-    return null;
-  }
-  if (/^(\d{2,4})-(\d{2})$/.test(str)) return { mode: 'since_season', season: str };
-  return null;
-}
-
 /**
- * Called by HistoricalStatsDialog — unified timeframe for both hist and post.
+ * Set historical/postseason timeframe and trigger sync.
+ * Called by all setTimeframeN / setTimeframeCareer handlers.
  */
-function saveHistoricalStatsConfig(input, includeCurrentYear) {
-  var result = parseHistoricalStatsInput(input);
-  if (!result) return { success: false, error: 'Invalid input: ' + input };
-
+function _setTimeframe(mode, years) {
   var props = PropertiesService.getDocumentProperties();
-  props.setProperty('HIST_MODE', result.mode);
-  props.setProperty('HIST_INCLUDE_CURRENT', includeCurrentYear ? 'true' : 'false');
-  if (result.mode === 'years')        props.setProperty('HIST_YEARS', String(result.years));
-  if (result.mode === 'since_season') props.setProperty('HIST_SEASON', result.season);
-
+  props.setProperty('HIST_MODE', mode);
+  if (years) props.setProperty('HIST_YEARS', String(years));
+  var label = mode === 'career' ? 'Career' : years + ' year' + (years > 1 ? 's' : '');
+  SpreadsheetApp.getActiveSpreadsheet().toast('Timeframe set to ' + label, 'Updated', 3);
   triggerSync(null, { priorityTeam: _getActiveTeamAbbr() });
-  return { success: true };
 }
+
+function _setIncludeCurrentSeason(include) {
+  var props = PropertiesService.getDocumentProperties();
+  props.setProperty('HIST_INCLUDE_CURRENT', include ? 'true' : 'false');
+  var msg = include ? 'Current season included' : 'Current season excluded';
+  SpreadsheetApp.getActiveSpreadsheet().toast(msg, 'Updated', 3);
+  triggerSync(null, { priorityTeam: _getActiveTeamAbbr() });
+}
+
+// Menu handlers — one per timeframe option
+function setTimeframe1()      { _setTimeframe('years', 1); }
+function setTimeframe2()      { _setTimeframe('years', 2); }
+function setTimeframe3()      { _setTimeframe('years', 3); }
+function setTimeframe4()      { _setTimeframe('years', 4); }
+function setTimeframe5()      { _setTimeframe('years', 5); }
+function setTimeframe6()      { _setTimeframe('years', 6); }
+function setTimeframe7()      { _setTimeframe('years', 7); }
+function setTimeframe8()      { _setTimeframe('years', 8); }
+function setTimeframe9()      { _setTimeframe('years', 9); }
+function setTimeframe10()     { _setTimeframe('years', 10); }
+function setTimeframeCareer() { _setTimeframe('career', null); }
+function setIncludeCurrent()  { _setIncludeCurrentSeason(true); }
+function setExcludeCurrent()  { _setIncludeCurrentSeason(false); }
 
 // ============================================================
 // SYNC TRIGGER
@@ -445,25 +450,20 @@ function triggerSync(mode, options) {
     data_only:     true,
   };
 
-  if (league.hasHistoricalDialog) {
-    // NBA: read historical/postseason prefs from document properties
-    var showAdvanced = (options.showAdvanced !== undefined)
-      ? options.showAdvanced
-      : (props.getProperty('SHOW_ADVANCED') === 'true');
+  // Historical timeframe — always read from document properties
+  var showAdvanced = league.hasAdvancedStats
+    ? ((options.showAdvanced !== undefined)
+        ? options.showAdvanced
+        : (props.getProperty('SHOW_ADVANCED') === 'true'))
+    : false;
 
-    payload.mode            = props.getProperty('HIST_MODE') || 'career';
-    payload.years           = parseInt(props.getProperty('HIST_YEARS') || '25');
-    payload.include_current = props.getProperty('HIST_INCLUDE_CURRENT') === 'true';
-    payload.show_advanced   = showAdvanced;
+  payload.mode            = props.getProperty('HIST_MODE') || 'career';
+  payload.years           = parseInt(props.getProperty('HIST_YEARS') || '25');
+  payload.include_current = props.getProperty('HIST_INCLUDE_CURRENT') === 'true';
+  payload.show_advanced   = showAdvanced;
 
-    var histSeason = props.getProperty('HIST_SEASON') || null;
-    if (histSeason) payload.seasons = [histSeason];
-  } else {
-    // NCAA: simple defaults
-    payload.mode            = 'career';
-    payload.include_current = false;
-    payload.show_advanced   = false;
-  }
+  var histSeason = props.getProperty('HIST_SEASON') || null;
+  if (histSeason) payload.seasons = [histSeason];
 
   var url = apiBase + league.syncEndpoint;
 

@@ -1,9 +1,9 @@
 /**
- * apps-script/NbaLeagueConfig.js
+ * apps-script/config/NBA.js
  *
  * NBA league configuration for Code.js.
  * Include this file alongside Code.js in the NBA spreadsheet's Apps Script project.
- * Do NOT include NcaaLeagueConfig.js in the same project.
+ * Do NOT include NCAA.js in the same project.
  */
 
 var LEAGUE = {
@@ -16,6 +16,5 @@ var LEAGUE = {
   apiPrefix:           '/api',
   syncEndpoint:        '/api/sync-historical-stats',
   hasAdvancedStats:    true,
-  hasHistoricalDialog: true,
   hasWingspan:         true,
 };

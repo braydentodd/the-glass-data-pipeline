@@ -8,13 +8,14 @@ functions.  This eliminates ~90% of the duplication between the
 NBA and NCAA sheets runners.
 
 Architecture:
-    lib/sheets_engine.py       – formatting, row/header building, formulas (unused; logic in lib/nba_sheets.py and lib/ncaa_sheets.py)
+    lib/sheets_engine.py       – shared formatting, row/header building, formulas
     lib/sheets_sync.py         – Google Sheets API utilities (client, worksheet, formatting)
     lib/sheets_orchestrator.py – THIS FILE: sync orchestration (fetch → percentile → build → write)
     runners/nba_sheets.py      – thin NBA wrapper: context + main()
     runners/ncaa_sheets.py     – thin NCAA wrapper: context + main()
 """
 
+import os
 import time
 import logging
 from collections import defaultdict
@@ -71,7 +72,40 @@ class LeagueSyncContext:
 
 
 # ============================================================================
-# INTERNAL HELPERS
+# TIMEFRAME CONFIG BUILDER (used by runners)
+# ============================================================================
+
+def build_timeframe_configs(hist_years_arg=None, post_years_arg=None,
+                            default_mode='years'):
+    """Build historical and postseason config dicts from env vars and CLI args.
+
+    Centralises the duplicated env-var → config-dict parsing that was in both
+    runners/nba_sheets.py and runners/ncaa_sheets.py.
+
+    Args:
+        hist_years_arg: --hist-years CLI value (or None for env/default)
+        post_years_arg: --post-years CLI value (or None for env/default)
+        default_mode: Default when HISTORICAL_MODE env not set
+                      ('years' for NBA, 'career' for NCAA)
+
+    Returns:
+        Tuple of (historical_config, postseason_config)
+    """
+    hist_mode = os.environ.get('HISTORICAL_MODE', default_mode)
+    include_current = os.environ.get('INCLUDE_CURRENT_YEAR', 'false') == 'true'
+
+    def _build(years_arg):
+        if hist_mode == 'career':
+            return {'mode': 'career', 'include_current': include_current}
+        if hist_mode == 'seasons':
+            season_str = os.environ.get('HISTORICAL_SEASONS', '')
+            seasons = [s.strip() for s in season_str.split(',') if s.strip()]
+            return {'mode': 'seasons', 'value': seasons, 'include_current': include_current}
+        years = years_arg or int(os.environ.get('HISTORICAL_YEARS', '3'))
+        return {'mode': 'years', 'value': years, 'include_current': include_current}
+
+    return _build(hist_years_arg), _build(post_years_arg)
+
 # ============================================================================
 
 def _enrich_teams_with_player_averages(teams_list, player_groups,

@@ -1,17 +1,32 @@
 #!/bin/bash
 
 # ============================================================================
-# The Glass - NCAA Daily ETL Auto-Restart Wrapper
+# The Glass - Daily ETL Auto-Restart Wrapper
 # ============================================================================
-# This script runs the NCAA daily ETL and automatically restarts on exit code 42
+# Unified script for NBA and NCAA ETL.  Automatically restarts on exit code 42
 # (triggered when API session exhaustion is detected).
 #
+# The ETL will automatically resume where it left off using endpoint_tracker.
+#
 # Usage:
-#   ./run_ncaa_etl.sh                    # Run daily ETL with auto-restart
-#   ./run_ncaa_etl.sh --max-restarts 10  # Limit to 10 restarts (default: unlimited)
+#   scripts/etl.sh nba                    # Run NBA daily ETL
+#   scripts/etl.sh ncaa                   # Run NCAA daily ETL
+#   scripts/etl.sh nba --max-restarts 10  # Limit to 10 restarts
 #
 # GitHub Actions Compatible: Yes
 # ============================================================================
+
+set -e
+
+LEAGUE="${1:?Usage: scripts/etl.sh <nba|ncaa> [--max-restarts N]}"
+shift
+LEAGUE=$(echo "$LEAGUE" | tr '[:upper:]' '[:lower:]')
+
+case "$LEAGUE" in
+    nba)  RUNNER="runners.nba_etl";  LABEL="NBA"  ;;
+    ncaa) RUNNER="runners.ncaa_etl"; LABEL="NCAA" ;;
+    *)    echo "Unknown league: $LEAGUE (use nba or ncaa)"; exit 1 ;;
+esac
 
 # Configuration
 MAX_RESTARTS=${1:-999999}  # Default: essentially unlimited
@@ -26,44 +41,44 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo "========================================================================"
-echo -e "${BLUE}THE GLASS - NCAA Daily ETL with Auto-Restart${NC}"
+echo -e "${BLUE}THE GLASS - ${LABEL} Daily ETL with Auto-Restart${NC}"
 echo "========================================================================"
 echo "Max restarts: ${MAX_RESTARTS}"
 echo "Started: $(date)"
 echo ""
 
-# Activate virtual environment
-if [ -d "venv" ]; then
+# Resolve to repo root and activate virtual environment
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_ROOT"
+
+if [ -d "$REPO_ROOT/venv" ]; then
     echo "Activating virtual environment..."
-    source venv/bin/activate
+    source "$REPO_ROOT/venv/bin/activate"
 else
-    echo -e "${RED}ERROR: Virtual environment not found${NC}"
+    echo -e "${RED}ERROR: Virtual environment not found at $REPO_ROOT/venv${NC}"
     echo "Please create it with: python3 -m venv venv"
     exit 1
 fi
 
 # Main restart loop
 while [ $RESTART_COUNT -lt $MAX_RESTARTS ]; do
-    echo -e "${YELLOW}[$(date +%H:%M:%S)]${NC} Starting NCAA ETL (Attempt $(($RESTART_COUNT + 1)))..."
+    echo -e "${YELLOW}[$(date +%H:%M:%S)]${NC} Starting ${LABEL} ETL (Attempt $(($RESTART_COUNT + 1)))..."
     echo ""
 
-    # Run the ETL (venv already activated above)
-    python3 -m runners.ncaa_etl
+    python3 -m "$RUNNER"
     EXIT_CODE=$?
 
-    # Check exit code
     if [ $EXIT_CODE -eq 0 ]; then
-        # Success - ETL completed normally
         echo ""
         echo "========================================================================"
-        echo -e "${GREEN}✓ NCAA ETL COMPLETED SUCCESSFULLY${NC}"
+        echo -e "${GREEN}✓ ${LABEL} ETL COMPLETED SUCCESSFULLY${NC}"
         echo "========================================================================"
         echo "Total restarts: ${RESTART_COUNT}"
         echo "Finished: $(date)"
         exit 0
 
     elif [ $EXIT_CODE -eq 42 ]; then
-        # Restart requested (API session exhaustion)
         RESTART_COUNT=$((RESTART_COUNT + 1))
         echo ""
         echo "========================================================================"
@@ -71,16 +86,14 @@ while [ $RESTART_COUNT -lt $MAX_RESTARTS ]; do
         echo "========================================================================"
         echo "Reason: API session exhaustion detected (exit code 42)"
         echo "Action: Restarting ETL to get fresh API session..."
+        echo "Note: ETL will resume where it left off using endpoint_tracker"
         echo ""
-
-        # Brief pause before restart
         sleep 5
 
     else
-        # Unexpected error - stop
         echo ""
         echo "========================================================================"
-        echo -e "${RED}✗ NCAA ETL FAILED${NC}"
+        echo -e "${RED}✗ ${LABEL} ETL FAILED${NC}"
         echo "========================================================================"
         echo "Exit code: ${EXIT_CODE}"
         echo "Restarts: ${RESTART_COUNT}"
@@ -91,10 +104,10 @@ while [ $RESTART_COUNT -lt $MAX_RESTARTS ]; do
 done
 
 # Max restarts reached
-echo ""
 echo "========================================================================"
 echo -e "${RED}✗ MAX RESTARTS REACHED${NC}"
 echo "========================================================================"
 echo "Attempted ${RESTART_COUNT} restarts"
+echo "The ETL may still be incomplete - check endpoint_tracker for status"
 echo "You can restart this script to continue"
 exit 1

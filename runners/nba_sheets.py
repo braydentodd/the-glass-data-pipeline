@@ -19,7 +19,7 @@ import lib.nba_etl as nba_etl
 from config.nba_etl import NBA_CONFIG
 from config.nba_sheets import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
 
-from lib.sheets_orchestrator import LeagueSyncContext, sync_all_teams
+from lib.sheets_orchestrator import LeagueSyncContext, sync_all_teams, build_timeframe_configs
 
 load_dotenv()
 logging.basicConfig(
@@ -79,30 +79,12 @@ def main():
     priority_team = args.team or os.environ.get('PRIORITY_TEAM_ABBR')
     data_only = args.data_only or os.environ.get('DATA_ONLY_SYNC') == 'true'
 
-    # Historical timeframe
-    hist_mode = os.environ.get('HISTORICAL_MODE', 'years')
-    include_current = os.environ.get('INCLUDE_CURRENT_YEAR', 'false') == 'true'
-
-    if hist_mode == 'career':
-        historical_config = {'mode': 'career'}
-    elif hist_mode == 'seasons':
-        season_str = os.environ.get('HISTORICAL_SEASONS', '')
-        seasons = [s.strip() for s in season_str.split(',') if s.strip()]
-        historical_config = {'mode': 'seasons', 'value': seasons, 'include_current': include_current}
-    else:
-        hist_years = args.hist_years or int(os.environ.get('HISTORICAL_YEARS', '3'))
-        historical_config = {'mode': 'years', 'value': hist_years, 'include_current': include_current}
-
-    # Postseason timeframe - same structure as historical
-    if hist_mode == 'career':
-        postseason_config = {'mode': 'career'}
-    elif hist_mode == 'seasons':
-        season_str = os.environ.get('HISTORICAL_SEASONS', '')
-        seasons = [s.strip() for s in season_str.split(',') if s.strip()]
-        postseason_config = {'mode': 'seasons', 'value': seasons, 'include_current': include_current}
-    else:
-        post_years = args.post_years or int(os.environ.get('HISTORICAL_YEARS', '3'))
-        postseason_config = {'mode': 'years', 'value': post_years, 'include_current': include_current}
+    # Historical & postseason timeframes
+    historical_config, postseason_config = build_timeframe_configs(
+        hist_years_arg=args.hist_years,
+        post_years_arg=args.post_years,
+        default_mode='years',
+    )
 
     sync_all_teams(
         NBA_CONTEXT,
