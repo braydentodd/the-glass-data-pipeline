@@ -24,7 +24,8 @@ from typing import Optional
 from psycopg2.extras import execute_values
 
 from config.ncaa_etl import (
-    NCAA_CONFIG, CBBD_ENDPOINTS, DB_COLUMNS, SEASON_TYPE_CONFIG,
+    NCAA_CONFIG, CBBD_ENDPOINTS, DB_SCHEMA, TABLES_CONFIG, DB_COLUMNS,
+    SEASON_TYPE_CONFIG,
     season_to_display, season_int_to_display, display_to_season_int,
     get_table_name,
 )
@@ -36,6 +37,7 @@ from lib.ncaa_etl import (
     generate_schema_ddl,
     get_season_player_count,
 )
+from lib.db import ensure_schema
 
 # Configure logging
 logging.basicConfig(
@@ -520,6 +522,9 @@ def run_daily_etl():
     conn = get_db_connection()
 
     try:
+        # Auto-add any new columns defined in config
+        ensure_schema(DB_SCHEMA, TABLES_CONFIG, DB_COLUMNS, conn=conn)
+
         # Ensure teams exist
         teams_table = get_table_name('team', 'entity')
         with conn.cursor() as cur:

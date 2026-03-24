@@ -49,8 +49,8 @@ jobs:
         PYTHONUNBUFFERED: "1"
       run: |
         source venv/bin/activate
-        chmod +x scripts/etl.sh
-        ./scripts/etl.sh nba 999  # Effectively unlimited; endpoint_tracker handles resume
+        chmod +x scripts/run_etl.sh
+        scripts/run_etl.sh nba 999  # Effectively unlimited; endpoint_tracker handles resume
     
     - name: Sync Google Sheets
       env:
@@ -65,8 +65,8 @@ jobs:
         PYTHONUNBUFFERED: "1"
       run: |
         source venv/bin/activate
-        chmod +x scripts/sync.sh
-        ./scripts/sync.sh nba
+        chmod +x scripts/sync_sheets.sh
+        scripts/sync_sheets.sh nba
 
     - name: Upload logs
       if: always()

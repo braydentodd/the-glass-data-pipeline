@@ -9,16 +9,16 @@
 # The ETL will automatically resume where it left off using endpoint_tracker.
 #
 # Usage:
-#   scripts/etl.sh nba                    # Run NBA daily ETL
-#   scripts/etl.sh ncaa                   # Run NCAA daily ETL
-#   scripts/etl.sh nba --max-restarts 10  # Limit to 10 restarts
+#   scripts/run_etl.sh nba                    # Run NBA daily ETL
+#   scripts/run_etl.sh ncaa                   # Run NCAA daily ETL
+#   scripts/run_etl.sh nba --max-restarts 10  # Limit to 10 restarts
 #
 # GitHub Actions Compatible: Yes
 # ============================================================================
 
 set -e
 
-LEAGUE="${1:?Usage: scripts/etl.sh <nba|ncaa> [--max-restarts N]}"
+LEAGUE="${1:?Usage: scripts/run_etl.sh <nba|ncaa> [--max-restarts N]}"
 shift
 LEAGUE=$(echo "$LEAGUE" | tr '[:upper:]' '[:lower:]')
 

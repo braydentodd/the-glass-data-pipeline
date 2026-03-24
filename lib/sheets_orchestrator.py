@@ -150,7 +150,7 @@ def _combine_team_opp(teams_dict):
 def _write_and_format(worksheet, columns, headers, data_rows,
                       percentile_cells, n_entity_rows,
                       team_name, sheet_type, show_advanced,
-                      data_only, build_fn):
+                      show_percentiles, data_only, build_fn):
     """Resize worksheet, write values, and apply formatting.
 
     Args:
@@ -179,6 +179,7 @@ def _write_and_format(worksheet, columns, headers, data_rows,
         n_player_rows=n_entity_rows,
         sheet_type=sheet_type,
         show_advanced=show_advanced,
+        show_percentiles=show_percentiles,
         data_only=data_only,
         build_fn=build_fn,
     )
@@ -239,7 +240,7 @@ def _filter_to_desired(ctx, abbrs, team_names):
 
 def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
                     team_name='', mode='per_100',
-                    show_advanced=False,
+                    show_advanced=False, show_percentiles=False,
                     historical_config=None, postseason_config=None,
                     data_only=False, precomputed=None):
     """
@@ -450,7 +451,7 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
             worksheet, columns, headers, data_rows,
             all_percentile_cells, n_player_rows,
             display_name, 'team', show_advanced,
-            data_only,
+            show_percentiles, data_only,
             build_fn=ctx.sheets_lib.build_formatting_requests,
         )
 
@@ -468,7 +469,7 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
 # ============================================================================
 
 def sync_players_sheet(ctx, client, spreadsheet, mode='per_100',
-                       show_advanced=False,
+                       show_advanced=False, show_percentiles=False,
                        historical_config=None, postseason_config=None,
                        data_only=False):
     """
@@ -608,7 +609,7 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_100',
             worksheet, columns, headers, data_rows,
             all_percentile_cells, n_player_rows,
             'Players', 'players', show_advanced,
-            data_only,
+            show_percentiles, data_only,
             build_fn=ctx.sheets_lib.build_formatting_requests,
         )
 
@@ -627,7 +628,7 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_100',
 # ============================================================================
 
 def sync_teams_sheet(ctx, client, spreadsheet, mode='per_100',
-                     show_advanced=False,
+                     show_advanced=False, show_percentiles=False,
                      historical_config=None, postseason_config=None,
                      data_only=False):
     """
@@ -785,7 +786,7 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_100',
             worksheet, columns, headers, data_rows,
             all_percentile_cells, n_team_rows,
             'Teams', 'teams', show_advanced,
-            data_only,
+            show_percentiles, data_only,
             build_fn=ctx.sheets_lib.build_formatting_requests,
         )
 
@@ -804,7 +805,7 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_100',
 # ============================================================================
 
 def sync_all_teams(ctx, mode='per_100',
-                   show_advanced=False,
+                   show_advanced=False, show_percentiles=False,
                    historical_config=None, postseason_config=None,
                    priority_team=None, data_only=False):
     """Sync all sheets. priority_team is synced first, then teams, then Players/Teams."""
@@ -816,6 +817,7 @@ def sync_all_teams(ctx, mode='per_100',
 
     sync_kwargs = dict(mode=mode,
                        show_advanced=show_advanced,
+                       show_percentiles=show_percentiles,
                        historical_config=historical_config,
                        postseason_config=postseason_config,
                        data_only=data_only)

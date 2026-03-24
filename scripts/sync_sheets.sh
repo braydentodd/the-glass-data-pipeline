@@ -3,15 +3,15 @@
 # The Glass - Sync team rosters and stats to Google Sheets
 #
 # Usage:
-#   scripts/sync.sh nba                         # Sync all NBA teams
-#   scripts/sync.sh ncaa                        # Sync all NCAA teams
-#   scripts/sync.sh nba BOS                     # Sync Boston only
-#   scripts/sync.sh ncaa DUKE --mode per_48     # Sync Duke, per-48 mode
+#   scripts/sync_sheets.sh nba                         # Sync all NBA teams
+#   scripts/sync_sheets.sh ncaa                        # Sync all NCAA teams
+#   scripts/sync_sheets.sh nba BOS                     # Sync Boston only
+#   scripts/sync_sheets.sh ncaa DUKE --mode per_48     # Sync Duke, per-48 mode
 #
 
 set -e
 
-LEAGUE="${1:?Usage: scripts/sync.sh <nba|ncaa> [TEAM_ABBR] [--mode ...]}"
+LEAGUE="${1:?Usage: scripts/sync_sheets.sh <nba|ncaa> [TEAM_ABBR] [--mode ...]}"
 shift
 LEAGUE=$(echo "$LEAGUE" | tr '[:upper:]' '[:lower:]')
 

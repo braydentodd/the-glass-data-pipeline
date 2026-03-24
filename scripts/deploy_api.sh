@@ -8,7 +8,7 @@
 #   lib/      - Shared engine, orchestrator, sync, API, DB, ETL libs
 #   runners/  - CLI entry points (api, nba_etl, nba_sheets, ncaa_etl, ncaa_sheets)
 #
-# Usage: scripts/deploy-api.sh
+# Usage: scripts/deploy_api.sh
 
 set -e  # Exit on error
 

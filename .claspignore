@@ -4,4 +4,4 @@
 **/**
 !appsscript.json
 !Code.js
-!HistoricalStatsDialog.html
+!config/*.js

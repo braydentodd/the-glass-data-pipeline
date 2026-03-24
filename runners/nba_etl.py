@@ -68,13 +68,14 @@ except ImportError:
 # Configuration data (pure data structures)
 from config.nba_etl import (
     NBA_CONFIG, TEAM_IDS,
-    DB_COLUMNS, SEASON_TYPE_CONFIG,
+    DB_SCHEMA, TABLES_CONFIG, DB_COLUMNS, SEASON_TYPE_CONFIG,
     ENDPOINTS_CONFIG,
     PARALLEL_EXECUTION,
     API_CONFIG, RETRY_CONFIG, DB_OPERATIONS
 )
 
 # Reusable utilities and helpers
+from lib.db import ensure_schema
 from lib.nba_etl import (
     infer_execution_tier_from_endpoint,
     get_columns_by_endpoint,
@@ -1251,7 +1252,7 @@ def _trigger_automatic_restart(reason: str, progress_msg: str, threshold: int, f
 
 
 def ensure_schema_exists() -> None:
-    """Create database schema if it doesn't exist (first-time setup)"""
+    """Create database schema if it doesn't exist, then auto-sync columns."""
     
     with db_connection() as conn:
         cursor = conn.cursor()
@@ -1265,20 +1266,17 @@ def ensure_schema_exists() -> None:
             )
         """)
         
-        if cursor.fetchone()[0]:
-            cursor.close()
-            return
-        
-        logger.info("Creating database schema...")
-        
-        # Generate and execute schema DDL
-        schema_ddl = generate_schema_ddl()
-        cursor.execute(schema_ddl)
-        conn.commit()
-        
-        logger.info("Schema created successfully")
+        if not cursor.fetchone()[0]:
+            logger.info("Creating database schema...")
+            schema_ddl = generate_schema_ddl()
+            cursor.execute(schema_ddl)
+            conn.commit()
+            logger.info("Schema created successfully")
         
         cursor.close()
+        
+        # Auto-add any new columns defined in config
+        ensure_schema(DB_SCHEMA, TABLES_CONFIG, DB_COLUMNS, conn=conn)
 
 
 

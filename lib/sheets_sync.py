@@ -57,6 +57,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
                            percentile_cells: list, n_player_rows: int,
                            sheet_type: str = 'team',
                            show_advanced: bool = False,
+                           show_percentiles: bool = False,
                            data_only: bool = False,
                            build_fn: Optional[Callable] = None):
     """
@@ -108,6 +109,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
         n_player_rows=n_player_rows,
         sheet_type=sheet_type,
         show_advanced=show_advanced,
+        show_percentiles=show_percentiles,
         data_only=data_only,
     )
     # Prepend deleteBanding so old banding is removed before new is added
