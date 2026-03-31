@@ -11,13 +11,18 @@
 
 set -e
 
-LEAGUE="${1:?Usage: scripts/sync_sheets.sh <nba|ncaa> [TEAM_ABBR] [--mode ...]}"
+if [ -z "$1" ]; then
+    echo "Usage: scripts/sync_sheets.sh <nba|ncaa> [TEAM_ABBR] [--mode ...]"
+    exit 1
+fi
+
+LEAGUE="$1"
 shift
 LEAGUE=$(echo "$LEAGUE" | tr '[:upper:]' '[:lower:]')
 
 case "$LEAGUE" in
-    nba)  RUNNER="runners.nba_sheets";  LABEL="NBA"  ;;
-    ncaa) RUNNER="runners.ncaa_sheets"; LABEL="NCAA" ;;
+    nba)  LABEL="NBA"  ;;
+    ncaa) LABEL="NCAA" ;;
     *)    echo "Unknown league: $LEAGUE (use nba or ncaa)"; exit 1 ;;
 esac
 
@@ -50,4 +55,4 @@ else
     echo "Syncing all ${LABEL} team sheets..."
 fi
 
-python3 -m "$RUNNER" $ARGS 2>&1
+python3 -m "runners.sheets" --league "$LEAGUE" $ARGS 2>&1

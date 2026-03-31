@@ -98,12 +98,14 @@ function getColors() {
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   var league = LEAGUE;
+  var tfMenu = _buildTimeframeMenu();
 
   var menu = ui.createMenu('Display Settings')
-    .addSubMenu(ui.createMenu('Stat Mode')
+    .addSubMenu(tfMenu)
+    .addSubMenu(ui.createMenu('Stats Mode')
       .addItem('Per 100 Possessions', 'switchToPer100')
-      .addItem('Per Game',            'switchToPerGame')
-      .addItem('Per 48 Minutes',      'switchToPer48'));
+      .addItem('Per 48 Minutes',      'switchToPer48')
+      .addItem('Per Game',            'switchToPerGame'));
 
   if (league.hasAdvancedStats) {
     menu.addSubMenu(ui.createMenu('Advanced Stats')
@@ -128,21 +130,25 @@ function onOpen() {
       .addItem('Show', 'showPostseasonStats')
       .addItem('Hide', 'hidePostseasonStats'));
 
-  // Timeframe submenu — 1-10 years + Career + include/exclude current season
-  var tfMenu = ui.createMenu('Historical Timeframe');
-  for (var y = 1; y <= 10; y++) {
-    tfMenu.addItem(y + (y === 1 ? ' Year' : ' Years'), 'setTimeframe' + y);
-  }
-  tfMenu.addSeparator()
-    .addItem('Career', 'setTimeframeCareer')
-    .addSeparator()
-    .addItem('Include Current Season', 'setIncludeCurrent')
-    .addItem('Exclude Current Season', 'setExcludeCurrent');
-
-  menu.addSeparator()
-    .addSubMenu(tfMenu);
-
   menu.addToUi();
+}
+
+function _buildTimeframeMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var menu = ui.createMenu('Historical Timeframe');
+
+  for (var years = 1; years <= 23; years++) {
+    var label = 'Last ' + years + ' Season' + (years > 1 ? 's' : '');
+    var includeFn = 'setTimeframe' + years + 'IncludeCurrent';
+    var excludeFn = 'setTimeframe' + years + 'ExcludeCurrent';
+    menu.addSubMenu(
+      ui.createMenu(label)
+        .addItem('Include Current Season', includeFn)
+        .addItem('Exclude Current Season', excludeFn)
+    );
+  }
+
+  return menu;
 }
 
 // ============================================================
@@ -367,13 +373,13 @@ function _setAdvancedStats(newAdvancedVisible) {
 
 /**
  * Set historical/postseason timeframe and trigger sync.
- * Called by all setTimeframeN / setTimeframeCareer handlers.
+ * Called by timeframe menu handlers.
  */
 function _setTimeframe(mode, years) {
   var props = PropertiesService.getDocumentProperties();
   props.setProperty('HIST_MODE', mode);
   if (years) props.setProperty('HIST_YEARS', String(years));
-  var label = mode === 'career' ? 'Career' : years + ' year' + (years > 1 ? 's' : '');
+  var label = years + ' season' + (years > 1 ? 's' : '');
   SpreadsheetApp.getActiveSpreadsheet().toast('Timeframe set to ' + label, 'Updated', 3);
   triggerSync(null, { priorityTeam: _getActiveTeamAbbr() });
 }
@@ -386,20 +392,59 @@ function _setIncludeCurrentSeason(include) {
   triggerSync(null, { priorityTeam: _getActiveTeamAbbr() });
 }
 
-// Menu handlers — one per timeframe option
-function setTimeframe1()      { _setTimeframe('years', 1); }
-function setTimeframe2()      { _setTimeframe('years', 2); }
-function setTimeframe3()      { _setTimeframe('years', 3); }
-function setTimeframe4()      { _setTimeframe('years', 4); }
-function setTimeframe5()      { _setTimeframe('years', 5); }
-function setTimeframe6()      { _setTimeframe('years', 6); }
-function setTimeframe7()      { _setTimeframe('years', 7); }
-function setTimeframe8()      { _setTimeframe('years', 8); }
-function setTimeframe9()      { _setTimeframe('years', 9); }
-function setTimeframe10()     { _setTimeframe('years', 10); }
-function setTimeframeCareer() { _setTimeframe('career', null); }
-function setIncludeCurrent()  { _setIncludeCurrentSeason(true); }
-function setExcludeCurrent()  { _setIncludeCurrentSeason(false); }
+// Menu handlers — one per timeframe option (1..23, each with include/exclude)
+function _setTimeframeWithCurrent(years, includeCurrent) {
+  var props = PropertiesService.getDocumentProperties();
+  props.setProperty('HIST_INCLUDE_CURRENT', includeCurrent ? 'true' : 'false');
+  _setTimeframe('years', years);
+}
+
+function setTimeframe1IncludeCurrent()  { _setTimeframeWithCurrent(1, true); }
+function setTimeframe1ExcludeCurrent()  { _setTimeframeWithCurrent(1, false); }
+function setTimeframe2IncludeCurrent()  { _setTimeframeWithCurrent(2, true); }
+function setTimeframe2ExcludeCurrent()  { _setTimeframeWithCurrent(2, false); }
+function setTimeframe3IncludeCurrent()  { _setTimeframeWithCurrent(3, true); }
+function setTimeframe3ExcludeCurrent()  { _setTimeframeWithCurrent(3, false); }
+function setTimeframe4IncludeCurrent()  { _setTimeframeWithCurrent(4, true); }
+function setTimeframe4ExcludeCurrent()  { _setTimeframeWithCurrent(4, false); }
+function setTimeframe5IncludeCurrent()  { _setTimeframeWithCurrent(5, true); }
+function setTimeframe5ExcludeCurrent()  { _setTimeframeWithCurrent(5, false); }
+function setTimeframe6IncludeCurrent()  { _setTimeframeWithCurrent(6, true); }
+function setTimeframe6ExcludeCurrent()  { _setTimeframeWithCurrent(6, false); }
+function setTimeframe7IncludeCurrent()  { _setTimeframeWithCurrent(7, true); }
+function setTimeframe7ExcludeCurrent()  { _setTimeframeWithCurrent(7, false); }
+function setTimeframe8IncludeCurrent()  { _setTimeframeWithCurrent(8, true); }
+function setTimeframe8ExcludeCurrent()  { _setTimeframeWithCurrent(8, false); }
+function setTimeframe9IncludeCurrent()  { _setTimeframeWithCurrent(9, true); }
+function setTimeframe9ExcludeCurrent()  { _setTimeframeWithCurrent(9, false); }
+function setTimeframe10IncludeCurrent() { _setTimeframeWithCurrent(10, true); }
+function setTimeframe10ExcludeCurrent() { _setTimeframeWithCurrent(10, false); }
+function setTimeframe11IncludeCurrent() { _setTimeframeWithCurrent(11, true); }
+function setTimeframe11ExcludeCurrent() { _setTimeframeWithCurrent(11, false); }
+function setTimeframe12IncludeCurrent() { _setTimeframeWithCurrent(12, true); }
+function setTimeframe12ExcludeCurrent() { _setTimeframeWithCurrent(12, false); }
+function setTimeframe13IncludeCurrent() { _setTimeframeWithCurrent(13, true); }
+function setTimeframe13ExcludeCurrent() { _setTimeframeWithCurrent(13, false); }
+function setTimeframe14IncludeCurrent() { _setTimeframeWithCurrent(14, true); }
+function setTimeframe14ExcludeCurrent() { _setTimeframeWithCurrent(14, false); }
+function setTimeframe15IncludeCurrent() { _setTimeframeWithCurrent(15, true); }
+function setTimeframe15ExcludeCurrent() { _setTimeframeWithCurrent(15, false); }
+function setTimeframe16IncludeCurrent() { _setTimeframeWithCurrent(16, true); }
+function setTimeframe16ExcludeCurrent() { _setTimeframeWithCurrent(16, false); }
+function setTimeframe17IncludeCurrent() { _setTimeframeWithCurrent(17, true); }
+function setTimeframe17ExcludeCurrent() { _setTimeframeWithCurrent(17, false); }
+function setTimeframe18IncludeCurrent() { _setTimeframeWithCurrent(18, true); }
+function setTimeframe18ExcludeCurrent() { _setTimeframeWithCurrent(18, false); }
+function setTimeframe19IncludeCurrent() { _setTimeframeWithCurrent(19, true); }
+function setTimeframe19ExcludeCurrent() { _setTimeframeWithCurrent(19, false); }
+function setTimeframe20IncludeCurrent() { _setTimeframeWithCurrent(20, true); }
+function setTimeframe20ExcludeCurrent() { _setTimeframeWithCurrent(20, false); }
+function setTimeframe21IncludeCurrent() { _setTimeframeWithCurrent(21, true); }
+function setTimeframe21ExcludeCurrent() { _setTimeframeWithCurrent(21, false); }
+function setTimeframe22IncludeCurrent() { _setTimeframeWithCurrent(22, true); }
+function setTimeframe22ExcludeCurrent() { _setTimeframeWithCurrent(22, false); }
+function setTimeframe23IncludeCurrent() { _setTimeframeWithCurrent(23, true); }
+function setTimeframe23ExcludeCurrent() { _setTimeframeWithCurrent(23, false); }
 
 // ============================================================
 // SYNC TRIGGER
@@ -457,8 +502,8 @@ function triggerSync(mode, options) {
         : (props.getProperty('SHOW_ADVANCED') === 'true'))
     : false;
 
-  payload.mode            = props.getProperty('HIST_MODE') || 'career';
-  payload.years           = parseInt(props.getProperty('HIST_YEARS') || '25');
+  payload.mode            = props.getProperty('HIST_MODE') || 'years';
+  payload.years           = parseInt(props.getProperty('HIST_YEARS') || '3');
   payload.include_current = props.getProperty('HIST_INCLUDE_CURRENT') === 'true';
   payload.show_advanced   = showAdvanced;
 
@@ -867,18 +912,44 @@ function _setSectionVisibility(sectionKey, makeVisible, label) {
     var sheetType = _getSheetType(name);
     if (!sheetType) return;
     var rangeKey = _getRangeKey(sheetType);
-    var ranges   = (columnRanges[rangeKey] || {})[sectionKey] || null;
-    if (!ranges) return;
     var maxCols = sheet.getMaxColumns();
-    if (ranges.start > maxCols) return;
-    var count = Math.min(ranges.count, maxCols - ranges.start + 1);
-    try {
-      if (makeVisible) sheet.showColumns(ranges.start, count);
-      else             sheet.hideColumns(ranges.start, count);
-      updatedCount++;
-    } catch (e) {
-      Logger.log('_setSectionVisibility error on ' + sheet.getName() + ': ' + e);
+
+    // Preferred path: section-aware per-column metadata
+    var secMap = {
+      current: 'current_stats',
+      historical: 'historical_stats',
+      postseason: 'postseason_stats',
+      player_info: 'player_info',
+      notes: 'analysis'
+    };
+    var targetSec = secMap[sectionKey] || sectionKey;
+    var colMeta = ((config.column_metadata || {})[rangeKey] || []);
+    var sectionCols = [];
+    for (var m = 0; m < colMeta.length; m++) {
+      var meta = colMeta[m];
+      if (meta.sec === targetSec && meta.col <= maxCols) {
+        sectionCols.push(meta.col);
+      }
     }
+
+    if (sectionCols.length > 0) {
+      _batchColumns(sheet, sectionCols, makeVisible);
+      updatedCount++;
+    } else {
+      // Fallback path: legacy contiguous range map
+      var ranges = (columnRanges[rangeKey] || {})[sectionKey] || null;
+      if (!ranges) return;
+      if (ranges.start > maxCols) return;
+      var count = Math.min(ranges.count, maxCols - ranges.start + 1);
+      try {
+        if (makeVisible) sheet.showColumns(ranges.start, count);
+        else             sheet.hideColumns(ranges.start, count);
+        updatedCount++;
+      } catch (e) {
+        Logger.log('_setSectionVisibility error on ' + sheet.getName() + ': ' + e);
+      }
+    }
+
     if (makeVisible) {
       _rehideAlwaysHidden(sheet, sheetType);
       _reapplyToggles(sheet, sheetType);

@@ -6,7 +6,7 @@
  * Do NOT include NCAA.js in the same project.
  */
 
-var LEAGUE = {
+var NBA_CONFIG = {
   name:                'NBA',
   configEndpoint:      '/api/config',
   teamsKey:            'nba_teams',
@@ -18,3 +18,5 @@ var LEAGUE = {
   hasAdvancedStats:    true,
   hasWingspan:         true,
 };
+
+var LEAGUE = NBA_CONFIG;

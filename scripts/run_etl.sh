@@ -18,7 +18,12 @@
 
 set -e
 
-LEAGUE="${1:?Usage: scripts/run_etl.sh <nba|ncaa> [--max-restarts N]}"
+if [ -z "$1" ]; then
+    echo "Usage: scripts/run_etl.sh <nba|ncaa> [--max-restarts N]"
+    exit 1
+fi
+
+LEAGUE="$1"
 shift
 LEAGUE=$(echo "$LEAGUE" | tr '[:upper:]' '[:lower:]')
 

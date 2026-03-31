@@ -1024,9 +1024,9 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         if col_key == 'years':
             # In merged mode, get the year count from the section's entity data
             if section_data and is_stats_section and col_ctx in section_data:
-                year_count = section_data[col_ctx][0].get('year')
+                year_count = section_data[col_ctx][0].get('season')
             elif not section_data:
-                year_count = entity_data.get('year')
+                year_count = entity_data.get('season')
             else:
                 year_count = None
             # year count is already an integer from COUNT(DISTINCT s.year)
