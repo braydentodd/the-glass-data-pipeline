@@ -2728,7 +2728,7 @@ def clear_cache():
 
 def resolve_columns_for_league(league):
     """Resolve fully expanded SHEETS_COLUMNS into a league-specific flat dict."""
-    from sheets.config.config import WIDTH_CLASSES
+    from sheets.config.settings import WIDTH_CLASSES
     resolved = {}
 
     for col_key, col_def in SHEETS_COLUMNS.items():

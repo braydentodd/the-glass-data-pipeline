@@ -139,7 +139,6 @@ _engine.init_engine(
     colors=COLORS,
     color_thresholds=COLOR_THRESHOLDS,
     sheet_formatting=SHEET_FORMATTING,
-    per_minute_mode='per_40',
     percentile_rank_fn=get_percentile_rank,
     league_key='ncaa',
     minutes_fields=_MINUTES_FIELDS,

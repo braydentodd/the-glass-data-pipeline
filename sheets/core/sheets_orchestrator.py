@@ -934,7 +934,7 @@ def get_league_profile(league: str) -> dict:
     """Builds the dictionary kwargs used to initialize the Sync Context."""
     import importlib
     from db.lib import get_db_table_columns
-    from sheets.config.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING, LEAGUE_CONSTANTS
+    from sheets.config.settings import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING, STAT_CONSTANTS
     from sheets.sheets_engine import resolve_columns_for_league
 
     if league == 'nba':
@@ -984,7 +984,7 @@ def get_league_profile(league: str) -> dict:
         
         'engine_kwargs': dict(
             sheets_columns=resolve_columns_for_league(league),
-            per_minute_mode=LEAGUE_CONSTANTS[league]['per_minute_mode'],
+            per_minute_mode=f"per_{int(STAT_CONSTANTS['default_per_minute'])}",
             league_key=league,
         )
     }

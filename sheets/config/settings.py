@@ -36,18 +36,8 @@ GOOGLE_SHEETS_CONFIG = {
 # STAT CALCULATION CONSTANTS
 # ============================================================================
 
-LEAGUE_CONSTANTS = {
-    'nba': {
-        'game_length_minutes': 48.0,
-        'per_minute_mode': 'per_36',
-    },
-    'ncaa': {
-        'game_length_minutes': 40.0,
-        'per_minute_mode': 'per_40',
-    }
-}
-
 STAT_CONSTANTS = {
+    'default_per_minute': 36.0,         # Default minutes for per-minute stats across all leagues
     'default_per_possessions': 100.0,   # Default possessions for per-possession stats
     'cache_ttl_seconds': 300,           # API response cache TTL
 }
@@ -83,6 +73,8 @@ COLOR_THRESHOLDS = {
 # ============================================================================
 # SHEET FORMATTING CONFIG
 # ============================================================================
+
+HEADER_ROW_COUNT = 4
 
 SHEET_FORMATTING = {
     # Fonts
@@ -134,11 +126,11 @@ SHEET_FORMATTING = {
     'subsection_header_row': 1,
     'column_header_row': 2,
     'filter_row': 3,
-    'data_start_row': 4,
-    'header_row_count': 4,
+    'data_start_row': HEADER_ROW_COUNT,
+    'header_row_count': HEADER_ROW_COUNT,
 
     # Freeze
-    'frozen_rows': 4,
+    'frozen_rows': HEADER_ROW_COUNT,
     'frozen_cols': 1,
 
     # Row sections
@@ -194,30 +186,17 @@ SECTIONS = [
     'identity',
 ]
 
-# Stat subsections - correspond to Row 2 subsection headers
-SUBSECTIONS = [
-    'rates',          # Games, Minutes, Possessions
-    'scoring',        # Points, TS%, 2fg/3, Rim/Mid/3PT tracking, FT
-    'ball_management',   # Touches, Assists, Potential Assists, Turnovers
-    'rebounding',     # OREB%, DREB%, Contested OREB/DREB%, Putbacks
-    'movement',       # Offensive/Defensive distance traveled
-    'defense',        # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
-    'opponent',       # All opponent stats (Teams sheet only, between defense and on/off)
-    'efficiency',     # Efficiency metrics
-    'onoff',          # Offensive/Defensive Rating, Off-court ratings
-]
-
-# Display names for subsections — used in header row
-SUBSECTION_DISPLAY_NAMES = {
-    'rates': 'Rates',
-    'scoring': 'Scoring',
-    'ball_management': 'Ball Management',
-    'rebounding': 'Rebounding',
-    'movement': 'Movement',
-    'defense': 'Defense',
-    'opponent': 'Opponent',
-    'efficiency': 'Efficiency',
-    'onoff': 'On/Off',
+# Stat subsections and their display names (used in Row 2 subsection headers)
+SUBSECTIONS = {
+    'rates': 'Rates',                 # Games, Minutes, Possessions
+    'scoring': 'Scoring',             # Points, TS%, 2fg/3, Rim/Mid/3PT tracking, FT
+    'ball_management': 'Ball Management', # Touches, Assists, Potential Assists, Turnovers
+    'rebounding': 'Rebounding',       # OREB%, DREB%, Contested OREB/DREB%, Putbacks
+    'movement': 'Movement',           # Offensive/Defensive distance traveled
+    'defense': 'Defense',             # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
+    'opponent': 'Opponent',           # All opponent stats (Teams sheet only, between defense and on/off)
+    'efficiency': 'Efficiency',       # Efficiency metrics
+    'onoff': 'On/Off',                # Offensive/Defensive Rating, Off-court ratings
 }
 
 # ============================================================================

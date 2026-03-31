@@ -6,7 +6,7 @@ so runners/sheets.py can build generic instances.
 """
 import importlib
 
-from sheets.config.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING, LEAGUE_CONSTANTS
+from sheets.config.settings import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING, LEAGUE_CONSTANTS
 from lib.sheets_data import get_db_table_columns
 from sheets.config.columns import resolve_columns_for_league
 

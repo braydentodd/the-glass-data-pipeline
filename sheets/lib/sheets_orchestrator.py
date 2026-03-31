@@ -934,7 +934,7 @@ def get_league_profile(league: str) -> dict:
     """Builds the dictionary kwargs used to initialize the Sync Context."""
     import importlib
     from db.lib import get_db_table_columns
-    from sheets.config.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING, LEAGUE_CONSTANTS
+    from sheets.config.settings import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING, LEAGUE_CONSTANTS
     from sheets.sheets_engine import resolve_columns_for_league
 
     if league == 'nba':

@@ -5,7 +5,7 @@ Single source of truth for every column across all leagues.
 """
 
 from typing import Any, Dict
-from sheets.config.config import WIDTH_CLASSES
+from sheets.config.settings import WIDTH_CLASSES
 
 # ============================================================================
 # COLUMN DEFINITIONS
