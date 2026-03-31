@@ -46,8 +46,11 @@ STAT_CONSTANTS = {
 # STAT MODE CONFIGURATION
 # ============================================================================
 
-STAT_MODES = ['per_100', 'per_game', 'per_48']
-DEFAULT_STAT_MODE = 'per_100'
+_pm = int(STAT_CONSTANTS['default_per_minute'])
+_pp = int(STAT_CONSTANTS['default_per_possessions'])
+
+STAT_MODES = [f'per_{_pp}', 'per_game', f'per_{_pm}', 'totals']
+DEFAULT_STAT_MODE = f'per_{_pp}'
 
 # ============================================================================
 # COLORS & PERCENTILES
@@ -239,4 +242,5 @@ MINUTES_FIELD_MAP = {
     'basic': 'minutes_x10',
     'tracking': 'tr_minutes_x10',
     'hustle': 'h_minutes_x10',
+    'onoff': 'off_minutes_x10',
 }

@@ -1,5 +1,4 @@
 Passes Leading to Fouls
-Secondary Assists
 oRAPM (Offensive Real Adjusted Plus Minus)
 dRAPM (Defensive Real Adjusted Plus Minus)
 On-Off Stats
@@ -15,8 +14,6 @@ Real Offensive/Defensive Rating
 Real O/D Reb %s
 playtype data
 Gravity
-
-o and d on/off?
 
 heaves
 Season team IDs

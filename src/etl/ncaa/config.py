@@ -127,7 +127,6 @@ NCAA_CONFIG = {
     'current_season_int': _get_current_ncaa_season_int(),
     'backfill_start_season': '2018-19',
     'backfill_end_season': '2025-26',
-    'game_length_minutes': 40.0,
 }
 
 # ============================================================================

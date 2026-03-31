@@ -7,7 +7,8 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/the-glass-api
 EnvironmentFile=/home/ubuntu/the-glass-api/.env
-ExecStart=/home/ubuntu/the-glass-api/venv/bin/python -m runners.api
+Environment=PYTHONPATH=/home/ubuntu/the-glass-api/src
+ExecStart=/home/ubuntu/the-glass-api/venv/bin/python -m api.runner
 Restart=always
 RestartSec=10
 

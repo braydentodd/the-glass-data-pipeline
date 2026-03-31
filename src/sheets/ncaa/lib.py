@@ -1,72 +1,88 @@
 """
-The Glass — NBA Sheets Library (thin wrapper)
+The Glass — NCAA Sheets Library (thin wrapper)
 
-League-specific DB queries, entity fields, and percentile logic for NBA.
+League-specific DB queries, entity fields, and percentile logic for NCAA.
 All shared display/formatting logic lives in lib/sheets_engine.py.
 
-Call flow:
-  runners/nba_sheets.py → lib.nba_sheets (this file)
-                        → lib.sheets_engine (via init_engine at import time)
+Key NCAA differences from NBA:
+  - Weighted-CDF percentile rank (minutes as weights, not just filters)
+  - calculate_all_percentiles returns sorted (value, weight) tuples
+  - INNER JOIN player stats (only players with stats appear)
+  - 'season' column (varchar) instead of 'year'
+  - _build_year_filter career mode can exclude current season
+  - Entity fields: no 'age', different team fields (abbr/institution/conference/mascot)
 """
 
 import hashlib
 import json
 import logging
 import time
-from bisect import bisect_left, bisect_right
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from etl.nba.config import DB_CONFIG, DB_SCHEMA, NBA_CONFIG
-from sheets.nba_sheets import (
+from etl.ncaa.config import DB_CONFIG, DB_SCHEMA, NCAA_CONFIG
+from sheets.config.settings import (
     COLORS, COLOR_THRESHOLDS,
     DEFAULT_STAT_MODE,
-    GOOGLE_SHEETS_CONFIG, SERVER_CONFIG,
-    SECTION_CONFIG, SECTIONS, SHEETS_COLUMNS,
+    SECTION_CONFIG, SECTIONS,
     SHEET_FORMATTING,
-    STAT_CONSTANTS, SUBSECTIONS, SUBSECTION_DISPLAY_NAMES,
+    STAT_CONSTANTS, SUBSECTIONS,
 )
-from etl.nba.lib import get_table_name
+from sheets.lib.sheets_engine import resolve_columns_for_league
+from etl.ncaa.lib import get_table_name
+from db.lib import get_db_connection  # re-exported for callers
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# PERCENTILE RANK FUNCTION (NBA: bisect-based, plain sorted lists)
+# PERCENTILE RANK FUNCTION (NCAA: minute-weighted CDF)
 # Must be defined BEFORE init_engine() so it can be registered.
 # ============================================================================
 
-def get_percentile_rank(value: Any, sorted_values: List, reverse: bool = False) -> float:
+def get_percentile_rank(value: Any, sorted_weighted: List, reverse: bool = False) -> float:
     """
-    Calculate percentile rank using binary search on pre-sorted values.
+    Calculate minute-weighted percentile rank.
 
-    Uses midpoint of bisect_left/bisect_right to handle ties correctly.
+    Uses weighted CDF: for each entry below the value, accumulate its weight.
+    Ties get the midpoint of their cumulative weight range.
 
     Args:
         value: The value to rank
-        sorted_values: Pre-sorted list of all values
+        sorted_weighted: Sorted list of (value, weight) tuples
         reverse: True if lower is better (turnovers, fouls)
 
     Returns:
         Percentile rank 0-100
     """
-    if not sorted_values or value is None or not isinstance(value, (int, float)):
+    if not sorted_weighted or value is None or not isinstance(value, (int, float)):
         return 50.0
 
-    n = len(sorted_values)
+    n = len(sorted_weighted)
     if n == 1:
         return 50.0
 
-    pos_left = bisect_left(sorted_values, value)
-    pos_right = bisect_right(sorted_values, value)
-    avg_pos = (pos_left + pos_right - 1) / 2.0
+    total_weight = sum(w for _, w in sorted_weighted)
+    if total_weight <= 0:
+        return 50.0
+
+    weight_below = 0.0
+    weight_equal = 0.0
+    for v, w in sorted_weighted:
+        if v < value:
+            weight_below += w
+        elif v == value:
+            weight_equal += w
+        elif v > value:
+            break
+
+    midpoint = weight_below + weight_equal / 2.0
+    percentile = (midpoint / total_weight) * 100
 
     if reverse:
-        percentile = (1 - avg_pos / (n - 1)) * 100
-    else:
-        percentile = (avg_pos / (n - 1)) * 100
+        percentile = 100 - percentile
 
     return max(0, min(100, percentile))
 
@@ -75,11 +91,9 @@ def get_percentile_rank(value: Any, sorted_values: List, reverse: bool = False) 
 # ENGINE INITIALISATION
 # ============================================================================
 
-# Minutes fields for NBA: basic + tracking + hustle tracking
+# Minutes fields for NCAA: basic only (no tracking/hustle data)
 _MINUTES_FIELDS = {
-    'basic':    'minutes_x10',
-    'tracking': 'tr_minutes_x10',
-    'hustle':   'h_minutes_x10',
+    'basic': 'minutes_x10',
 }
 
 from lib import sheets_engine as _engine  # noqa: E402
@@ -114,18 +128,17 @@ from lib.sheets_engine import (  # noqa: E402  — re-export everything callers 
 )
 
 _engine.init_engine(
-    sheets_columns=SHEETS_COLUMNS,
+    sheets_columns=resolve_columns_for_league('nba' if 'nba' in __name__ else 'ncaa'),
     section_config=SECTION_CONFIG,
     sections=SECTIONS,
     subsections=SUBSECTIONS,
-    subsection_display_names=SUBSECTION_DISPLAY_NAMES,
     stat_constants=STAT_CONSTANTS,
     default_stat_mode=DEFAULT_STAT_MODE,
     colors=COLORS,
     color_thresholds=COLOR_THRESHOLDS,
     sheet_formatting=SHEET_FORMATTING,
     percentile_rank_fn=get_percentile_rank,
-    league_key='nba',
+    league_key='ncaa',
     minutes_fields=_MINUTES_FIELDS,
 )
 
@@ -134,14 +147,9 @@ _engine.init_engine(
 # DATABASE HELPERS
 # ============================================================================
 
-def get_db_connection():
-    """Create a database connection."""
-    return psycopg2.connect(**DB_CONFIG)
-
-
 def _get_all_stat_db_fields() -> set:
     """Fetch all stat column names from player_season_stats table."""
-    _EXCLUDE = {'player_id', 'year', 'season_type', 'updated_at'}
+    _EXCLUDE = {'player_id', 'season', 'season_type', 'updated_at', 'team_id'}
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
@@ -160,7 +168,7 @@ def _get_all_stat_db_fields() -> set:
 
 def _get_all_team_stat_db_fields() -> set:
     """Fetch all stat column names from team_season_stats table."""
-    _EXCLUDE = {'team_id', 'year', 'season_type', 'updated_at'}
+    _EXCLUDE = {'team_id', 'season', 'season_type', 'updated_at'}
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
@@ -180,11 +188,14 @@ def _get_all_team_stat_db_fields() -> set:
 # Well-known entity table fields (not in stats table)
 _PLAYER_ENTITY_FIELDS = {
     'player_id', 'name', 'team_id', 'height_inches', 'weight_lbs',
-    'wingspan_inches', 'years_experience', 'age', 'jersey_number',
+    'wingspan_inches', 'years_experience', 'jersey_number',
     'hand', 'notes', 'birthdate', 'updated_at',
 }
+# NOTE: No 'age' field (NCAA birthdate is always null)
+
 _TEAM_ENTITY_FIELDS = {
-    'team_id', 'team_abbr', 'team_name', 'notes', 'updated_at',
+    'team_id', 'abbr', 'institution', 'conference', 'mascot',
+    'notes', 'updated_at',
 }
 
 # Dynamically computed at import time
@@ -217,24 +228,31 @@ def _build_year_filter(years_config: Optional[dict], current_year: int,
     """Build SQL year filter clause and params tuple.
 
     current_year is an integer end-year (e.g. 2026 for the 2025-26 season).
-    Converts to season strings matching the varchar year column.
+    Converts to season strings matching the varchar season column.
+
+    NCAA 'career' mode optionally excludes current season (birthdate is always null
+    so current-year stats are unreliable for some schools).
     """
     if not years_config:
         seasons = tuple(_year_to_season(current_year - i) for i in range(1, 4))
-        return "AND s.year IN %s", (seasons,)
+        return "AND s.season IN %s", (seasons,)
 
     mode = years_config.get('mode', 'years')
     value = years_config.get('value', 3)
     include_current = years_config.get('include_current', False)
 
     if mode == 'career':
-        return "", ()
+        if include_current:
+            return "", ()
+        else:
+            current_season = _year_to_season(current_year)
+            return "AND s.season != %s", (current_season,)
     elif mode == 'years':
         start = 0 if include_current else 1
         seasons = tuple(_year_to_season(current_year - i) for i in range(start, start + value))
-        return "AND s.year IN %s", (seasons,)
+        return "AND s.season IN %s", (seasons,)
     elif mode == 'seasons':
-        return "AND s.year IN %s", (tuple(value),)
+        return "AND s.season IN %s", (tuple(value),)
     else:
         return "", ()
 
@@ -246,19 +264,22 @@ def _build_year_filter(years_config: Optional[dict], current_year: int,
 def fetch_players_for_team(conn, team_abbr: str, section: str = 'current_stats',
                            years_config: Optional[dict] = None) -> List[dict]:
     """Fetch player data for a team with all stats needed for formula evaluation."""
-    current_season = NBA_CONFIG['current_season']
-    current_year = NBA_CONFIG['current_season_year']
-    season_type = NBA_CONFIG['season_type']
+    current_season = NCAA_CONFIG['current_season']
+    current_year = NCAA_CONFIG['current_season_int']
+    season_type = 1  # Regular season
 
     players_table = get_table_name('player', 'entity')
     teams_table = get_table_name('team', 'entity')
     stats_table = get_table_name('player', 'stats')
 
     p_fields_base = [f'p.{_quote_col(f)}' for f in sorted(_PLAYER_ENTITY_FIELDS)
-                     if f not in ('updated_at', 'birthdate', 'age')]
-    p_age_expr = 'EXTRACT(YEAR FROM AGE(CURRENT_DATE, p.birthdate))::int AS "age"'
-    p_fields = p_fields_base + [p_age_expr]
-    t_fields = ['t.team_abbr']
+                     if f not in ('updated_at', 'birthdate', 'years_experience')]
+    exp_subquery = (
+        f'(SELECT COUNT(DISTINCT ss.season) FROM {stats_table} ss '
+        f'WHERE ss.player_id = p.player_id AND ss.season_type = 1) AS years_experience'
+    )
+    p_fields = p_fields_base + [exp_subquery]
+    t_fields = ['t.abbr', 't.conference']
 
     if section == 'current_stats':
         s_fields = [f's.{_quote_col(f)}' for f in sorted(_STAT_TABLE_FIELDS)]
@@ -268,10 +289,10 @@ def fetch_players_for_team(conn, team_abbr: str, section: str = 'current_stats',
         SELECT {', '.join(all_fields)}
         FROM {players_table} p
         INNER JOIN {teams_table} t ON p.team_id = t.team_id
-        LEFT JOIN {stats_table} s
+        INNER JOIN {stats_table} s
             ON s.player_id = p.player_id
-            AND s.year = %s AND s.season_type = %s
-        WHERE t.team_abbr = %s
+            AND s.season = %s AND s.season_type = %s
+        WHERE t.abbr = %s
         ORDER BY COALESCE(s.minutes_x10, 0) DESC, p.name
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -283,9 +304,9 @@ def fetch_players_for_team(conn, team_abbr: str, section: str = 'current_stats',
         year_filter, params = _build_year_filter(years_config, current_year, st)
 
         s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(_STAT_TABLE_FIELDS)]
-        s_fields.append('COUNT(DISTINCT s.year) AS year')
+        s_fields.append('COUNT(DISTINCT s.season) AS season')
         all_fields = p_fields + t_fields + s_fields
-        group_fields = p_fields_base + ['p.birthdate'] + t_fields
+        group_fields = p_fields_base + t_fields
 
         query = f"""
         SELECT {', '.join(all_fields)}
@@ -295,7 +316,7 @@ def fetch_players_for_team(conn, team_abbr: str, section: str = 'current_stats',
             ON s.player_id = p.player_id
             {year_filter}
             AND s.season_type IN ({st})
-        WHERE t.team_abbr = %s
+        WHERE t.abbr = %s
         GROUP BY {', '.join(group_fields)}
         ORDER BY SUM(COALESCE(s.minutes_x10, 0)) DESC, p.name
         """
@@ -307,19 +328,22 @@ def fetch_players_for_team(conn, team_abbr: str, section: str = 'current_stats',
 def fetch_all_players(conn, section: str = 'current_stats',
                       years_config: Optional[dict] = None) -> List[dict]:
     """Fetch all players league-wide for percentile population."""
-    current_season = NBA_CONFIG['current_season']
-    current_year = NBA_CONFIG['current_season_year']
-    season_type = NBA_CONFIG['season_type']
+    current_season = NCAA_CONFIG['current_season']
+    current_year = NCAA_CONFIG['current_season_int']
+    season_type = 1  # Regular season
 
     players_table = get_table_name('player', 'entity')
     teams_table = get_table_name('team', 'entity')
     stats_table = get_table_name('player', 'stats')
 
     p_fields_base = [f'p.{_quote_col(f)}' for f in sorted(_PLAYER_ENTITY_FIELDS)
-                     if f not in ('updated_at', 'birthdate', 'age')]
-    p_age_expr = 'EXTRACT(YEAR FROM AGE(CURRENT_DATE, p.birthdate))::int AS "age"'
-    p_fields = p_fields_base + [p_age_expr]
-    t_fields = ['t.team_abbr']
+                     if f not in ('updated_at', 'birthdate', 'years_experience')]
+    exp_subquery = (
+        f'(SELECT COUNT(DISTINCT ss.season) FROM {stats_table} ss '
+        f'WHERE ss.player_id = p.player_id AND ss.season_type = 1) AS years_experience'
+    )
+    p_fields = p_fields_base + [exp_subquery]
+    t_fields = ['t.abbr', 't.conference']
 
     if section == 'current_stats':
         s_fields = [f's.{_quote_col(f)}' for f in sorted(_STAT_TABLE_FIELDS)]
@@ -329,10 +353,9 @@ def fetch_all_players(conn, section: str = 'current_stats',
         SELECT {', '.join(all_fields)}
         FROM {players_table} p
         LEFT JOIN {teams_table} t ON p.team_id = t.team_id
-        LEFT JOIN {stats_table} s
+        INNER JOIN {stats_table} s
             ON s.player_id = p.player_id
-            AND s.year = %s AND s.season_type = %s
-        WHERE s.player_id IS NOT NULL
+            AND s.season = %s AND s.season_type = %s
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (current_season, season_type))
@@ -343,9 +366,9 @@ def fetch_all_players(conn, section: str = 'current_stats',
         year_filter, params = _build_year_filter(years_config, current_year, st)
 
         s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(_STAT_TABLE_FIELDS)]
-        s_fields.append('COUNT(DISTINCT s.year) AS year')
+        s_fields.append('COUNT(DISTINCT s.season) AS season')
         all_fields = p_fields + t_fields + s_fields
-        group_fields = p_fields_base + ['p.birthdate'] + t_fields
+        group_fields = p_fields_base + t_fields
 
         query = f"""
         SELECT {', '.join(all_fields)}
@@ -366,20 +389,20 @@ def fetch_all_players(conn, section: str = 'current_stats',
 def fetch_team_stats(conn, team_abbr: str, section: str = 'current_stats',
                      years_config: Optional[dict] = None) -> dict:
     """Fetch team + opponent stats. Returns {'team': {...}, 'opponent': {...}}."""
-    current_season = NBA_CONFIG['current_season']
-    current_year = NBA_CONFIG['current_season_year']
-    season_type = NBA_CONFIG['season_type']
+    current_season = NCAA_CONFIG['current_season']
+    current_year = NCAA_CONFIG['current_season_int']
+    season_type = 1  # Regular season
     stats_table = get_table_name('team', 'stats')
     teams_table = get_table_name('team', 'entity')
 
     if section == 'current_stats':
         query = f"""
-        SELECT s.*, t.team_abbr, t.notes
+        SELECT s.*, t.abbr, t.institution, t.conference, t.notes
         FROM {teams_table} t
         LEFT JOIN {stats_table} s
             ON s.team_id = t.team_id
-            AND s.year = %s AND s.season_type = %s
-        WHERE t.team_abbr = %s
+            AND s.season = %s AND s.season_type = %s
+        WHERE t.abbr = %s
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (current_season, season_type, team_abbr))
@@ -390,17 +413,17 @@ def fetch_team_stats(conn, team_abbr: str, section: str = 'current_stats',
         year_filter, params = _build_year_filter(years_config, current_year, st)
 
         s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(_TEAM_STAT_TABLE_FIELDS)]
-        s_fields.append('COUNT(DISTINCT s.year) AS year')
+        s_fields.append('COUNT(DISTINCT s.season) AS season')
 
         query = f"""
-        SELECT t.team_abbr, t.notes, {', '.join(s_fields)}
+        SELECT t.abbr, t.institution, t.conference, t.notes, {', '.join(s_fields)}
         FROM {teams_table} t
         LEFT JOIN {stats_table} s
             ON s.team_id = t.team_id
             {year_filter}
             AND s.season_type IN ({st})
-        WHERE t.team_abbr = %s
-        GROUP BY t.team_abbr, t.notes
+        WHERE t.abbr = %s
+        GROUP BY t.abbr, t.institution, t.conference, t.notes
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params + (team_abbr,))
@@ -422,19 +445,19 @@ def fetch_team_stats(conn, team_abbr: str, section: str = 'current_stats',
 def fetch_all_teams(conn, section: str = 'current_stats',
                     years_config: Optional[dict] = None) -> dict:
     """Fetch all teams for percentile population. Returns {'teams': [...], 'opponents': [...]}."""
-    current_season = NBA_CONFIG['current_season']
-    current_year = NBA_CONFIG['current_season_year']
-    season_type = NBA_CONFIG['season_type']
+    current_season = NCAA_CONFIG['current_season']
+    current_year = NCAA_CONFIG['current_season_int']
+    season_type = 1  # Regular season
     stats_table = get_table_name('team', 'stats')
     teams_table = get_table_name('team', 'entity')
 
     if section == 'current_stats':
         query = f"""
-        SELECT s.*, t.team_abbr
+        SELECT s.*, t.abbr, t.institution, t.conference
         FROM {teams_table} t
         LEFT JOIN {stats_table} s
             ON s.team_id = t.team_id
-            AND s.year = %s AND s.season_type = %s
+            AND s.season = %s AND s.season_type = %s
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (current_season, season_type))
@@ -445,16 +468,16 @@ def fetch_all_teams(conn, section: str = 'current_stats',
         year_filter, params = _build_year_filter(years_config, current_year, st)
 
         s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(_TEAM_STAT_TABLE_FIELDS)]
-        s_fields.append('COUNT(DISTINCT s.year) AS year')
+        s_fields.append('COUNT(DISTINCT s.season) AS season')
 
         query = f"""
-        SELECT t.team_abbr, {', '.join(s_fields)}
+        SELECT t.abbr, t.institution, t.conference, {', '.join(s_fields)}
         FROM {teams_table} t
         LEFT JOIN {stats_table} s
             ON s.team_id = t.team_id
             {year_filter}
             AND s.season_type IN ({st})
-        GROUP BY t.team_abbr
+        GROUP BY t.abbr, t.institution, t.conference
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params)
@@ -475,23 +498,21 @@ def fetch_all_teams(conn, section: str = 'current_stats',
 
 
 # ============================================================================
-# PERCENTILE CALCULATIONS (NBA: plain sorted lists, multi-category minutes)
+# PERCENTILE CALCULATIONS (NCAA: minute-weighted sorted (value, weight) tuples)
 # ============================================================================
 
 def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
                               mode: str = 'per_game',
                               custom_value: Any = None) -> dict:
     """
-    Calculate percentile populations for all stat columns.
+    Calculate minute-weighted percentile populations for all stat columns.
 
-    Each stat value is weighted by the appropriate minutes for its stat_category:
-      - basic    → minutes_x10 / 10
-      - tracking → tr_minutes_x10 / 10
-      - hustle   → h_minutes_x10 / 10
-      - none     → no weighting
+    Each stat value is weighted by minutes played for its stat_category:
+      - basic → minutes_x10 / 10  (actual minutes as weight)
+      - none  → weight = 1        (unweighted)
 
     Returns:
-        Dict of {col_key: sorted_values_list} for bisect-based percentile lookups
+        Dict of {col_key: sorted list of (value, weight) tuples}
     """
     all_calculated = []
     for entity in all_entities:
@@ -506,19 +527,22 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
         stat_cat = col_def.get('stat_category', 'none')
         minutes_field = _MINUTES_FIELDS.get(stat_cat)
 
-        values = []
+        entries = []
         for entity, stats in all_calculated:
             val = stats.get(col_key)
             if val is None or not isinstance(val, (int, float)):
                 continue
+
             if minutes_field:
                 raw_minutes = (entity.get(minutes_field, 0) or 0) / 10.0
                 if raw_minutes <= 0:
                     continue
-            values.append(val)
+                entries.append((val, raw_minutes))
+            else:
+                entries.append((val, 1.0))
 
-        if values:
-            percentiles[col_key] = sorted(values)
+        if entries:
+            percentiles[col_key] = sorted(entries, key=lambda x: x[0])
 
     return percentiles
 
@@ -529,11 +553,11 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
 
 def get_config_for_export(mode: str = 'per_100') -> dict:
     """Build JSON-serializable config for /api/config endpoint."""
-    from etl.nba.lib import get_teams_from_db
+    from etl.ncaa.lib import get_teams_from_db
     return _engine.get_config_for_export(
-        league='nba',
+        league='ncaa',
         get_teams_fn=get_teams_from_db,
-        id_column_key='nba_id',
+        id_column_key='ncaa_id',
         server_config=SERVER_CONFIG,
         google_sheets_config=GOOGLE_SHEETS_CONFIG,
         mode=mode,

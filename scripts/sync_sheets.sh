@@ -55,4 +55,5 @@ else
     echo "Syncing all ${LABEL} team sheets..."
 fi
 
-python3 -m "runners.sheets" --league "$LEAGUE" $ARGS 2>&1
+export PYTHONPATH="$REPO_ROOT/src:$PYTHONPATH"
+python3 -m sheets.runner --league "$LEAGUE" $ARGS 2>&1

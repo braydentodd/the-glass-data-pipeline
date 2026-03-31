@@ -35,13 +35,12 @@ SHEETS_COLUMNS: Dict = {}
 SECTIONS: List[str] = []
 SECTION_CONFIG: Dict = {}
 SUBSECTIONS: List[str] = []
-SUBSECTION_DISPLAY_NAMES: Dict = {}
+
 STAT_CONSTANTS: Dict = {}
 DEFAULT_STAT_MODE: str = 'per_100'
 COLORS: Dict = {}
 COLOR_THRESHOLDS: Dict = {}
 SHEET_FORMATTING: Dict = {}
-PER_MINUTE_MODE: str = 'per_36'  # 'per_36' for NBA, 'per_40' for NCAA
 PERCENTILE_RANK_FN = None  # Set by init_engine(); defaults to get_percentile_rank
 LEAGUE_KEY: str = 'nba'  # 'nba' or 'ncaa' — used for sheet-type key mapping
 # Minutes field by stat_category for percentile population weighting.
@@ -51,10 +50,8 @@ _MINUTES_FIELD: Dict[str, str] = {
 }
 
 
-def init_engine(*, sheets_columns, section_config, sections, subsections,
-                subsection_display_names, stat_constants, default_stat_mode,
-                colors, color_thresholds, sheet_formatting,
-                per_minute_mode='per_36', percentile_rank_fn=None,
+def init_engine(*, sheets_columns, section_config, sections, subsections, stat_constants, default_stat_mode,
+                colors, color_thresholds, sheet_formatting, percentile_rank_fn=None,
                 league_key='nba', minutes_fields=None):
     """
     Initialize the shared engine with league-specific configuration.
@@ -63,7 +60,6 @@ def init_engine(*, sheets_columns, section_config, sections, subsections,
     Typically called at import time by nba_sheets_lib or ncaa_sheets_lib.
 
     Args:
-        per_minute_mode: Mode string used for per-minute display, e.g. 'per_36' or 'per_40'.
         percentile_rank_fn: Optional custom percentile rank function.
             Signature: (value, sorted_data, reverse) -> float.
             If None, defaults to the built-in bisect-based get_percentile_rank.
@@ -73,21 +69,19 @@ def init_engine(*, sheets_columns, section_config, sections, subsections,
             Defaults to {'basic': 'minutes_x10'} if not provided.
     """
     global SHEETS_COLUMNS, SECTION_CONFIG, SECTIONS, SUBSECTIONS
-    global SUBSECTION_DISPLAY_NAMES, STAT_CONSTANTS, DEFAULT_STAT_MODE
-    global COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, PER_MINUTE_MODE
+    global STAT_CONSTANTS, DEFAULT_STAT_MODE
+    global COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING
     global PERCENTILE_RANK_FN, LEAGUE_KEY, _MINUTES_FIELD
 
     SHEETS_COLUMNS = sheets_columns
     SECTION_CONFIG = section_config
     SECTIONS = sections
     SUBSECTIONS = subsections
-    SUBSECTION_DISPLAY_NAMES = subsection_display_names
     STAT_CONSTANTS = stat_constants
     DEFAULT_STAT_MODE = default_stat_mode
     COLORS = colors
     COLOR_THRESHOLDS = color_thresholds
     SHEET_FORMATTING = sheet_formatting
-    PER_MINUTE_MODE = per_minute_mode
     PERCENTILE_RANK_FN = percentile_rank_fn or get_percentile_rank
     LEAGUE_KEY = league_key
     _MINUTES_FIELD = minutes_fields if minutes_fields is not None else {'basic': 'minutes_x10'}
@@ -312,8 +306,8 @@ def _apply_scaling(raw_value: Any, mode: str, games: float, minutes: float,
 
     if mode == 'per_game':
         return raw_value / max(games, 1)
-    elif mode == PER_MINUTE_MODE:
-        return raw_value * STAT_CONSTANTS['default_per_minutes'] / max(minutes, 0.1)
+    elif mode == f"per_{int(STAT_CONSTANTS.get('default_per_minute', 36))}":
+        return raw_value * STAT_CONSTANTS.get('default_per_minute', 36.0) / max(minutes, 0.1)
     elif mode == 'per_100':
         return raw_value * STAT_CONSTANTS['default_per_possessions'] / max(possessions, 1)
     elif mode == 'per_minutes' and custom_value:
@@ -851,7 +845,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
                 merges.append({'row': 0, 'start_col': sec_start, 'end_col': idx, 'value': display})
             # Close pending subsection merge before switching sections
             if cur_subsection is not None and sub_start < idx:
-                sub_display = SUBSECTION_DISPLAY_NAMES.get(cur_subsection, cur_subsection.title())
+                sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
                 merges.append({'row': 1, 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
             cur_section = section
             sec_start = idx
@@ -867,17 +861,17 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
         if sc.get('is_stats_section') and subsection:
             if subsection != cur_subsection:
                 if cur_subsection is not None and sub_start < idx:
-                    sub_display = SUBSECTION_DISPLAY_NAMES.get(cur_subsection, cur_subsection.title())
+                    sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
                     merges.append({'row': 1, 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
                 cur_subsection = subsection
                 sub_start = idx
-                row2.append(SUBSECTION_DISPLAY_NAMES.get(subsection, subsection.title()))
+                row2.append(SUBSECTIONS.get(subsection, subsection.title()))
             else:
                 row2.append('')
         else:
             # Close pending subsection merge when leaving stats section
             if cur_subsection is not None and sub_start < idx:
-                sub_display = SUBSECTION_DISPLAY_NAMES.get(cur_subsection, cur_subsection.title())
+                sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
                 merges.append({'row': 1, 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
             cur_subsection = None
             row2.append('')
@@ -893,7 +887,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
         display = _get_display(cur_section)
         merges.append({'row': 0, 'start_col': sec_start, 'end_col': n, 'value': display})
     if cur_subsection:
-        sub_display = SUBSECTION_DISPLAY_NAMES.get(cur_subsection, cur_subsection.title())
+        sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
         merges.append({'row': 1, 'start_col': sub_start, 'end_col': n, 'value': sub_display})
 
     # ---- Merge column header (row 2) across stat + companion pairs ----
@@ -1130,7 +1124,7 @@ def format_section_header(section: str, years_config: Optional[dict] = None,
     """
     _MODE_LABELS = {
         'per_game': 'per Game',
-        PER_MINUTE_MODE: f"per {int(STAT_CONSTANTS.get('default_per_minutes', 48))} Mins",
+        f"per_{int(STAT_CONSTANTS.get('default_per_minute', 36))}": f"per {int(STAT_CONSTANTS.get('default_per_minute', 36))} Mins",
         'per_100': 'per 100 Poss',
     }
 

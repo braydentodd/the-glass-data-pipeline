@@ -28,8 +28,8 @@ shift
 LEAGUE=$(echo "$LEAGUE" | tr '[:upper:]' '[:lower:]')
 
 case "$LEAGUE" in
-    nba)  RUNNER="runners.nba_etl";  LABEL="NBA"  ;;
-    ncaa) RUNNER="runners.ncaa_etl"; LABEL="NCAA" ;;
+    nba)  RUNNER="etl.nba.runner";  LABEL="NBA"  ;;
+    ncaa) RUNNER="etl.ncaa.runner"; LABEL="NCAA" ;;
     *)    echo "Unknown league: $LEAGUE (use nba or ncaa)"; exit 1 ;;
 esac
 
@@ -67,6 +67,8 @@ else
 fi
 
 # Main restart loop
+export PYTHONPATH="$REPO_ROOT/src:$PYTHONPATH"
+
 while [ $RESTART_COUNT -lt $MAX_RESTARTS ]; do
     echo -e "${YELLOW}[$(date +%H:%M:%S)]${NC} Starting ${LABEL} ETL (Attempt $(($RESTART_COUNT + 1)))..."
     echo ""

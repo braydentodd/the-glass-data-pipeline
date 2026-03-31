@@ -4,9 +4,10 @@
 # Uses SSH ControlMaster so you only enter your passphrase once.
 #
 # Deploys these Python packages:
-#   config/   - Shared + per-league configuration
-#   lib/      - Shared engine, orchestrator, sync, API, DB, ETL libs
-#   runners/  - CLI entry points (api, nba_etl, nba_sheets, ncaa_etl, ncaa_sheets)
+#   api/      - Flask API and endpoints
+#   db/       - Database connections and models
+#   etl/      - Data extraction and parsing
+#   sheets/   - Google Sheets generation and syncing
 #
 # Usage: scripts/deploy_api.sh
 
@@ -38,25 +39,25 @@ SSH="ssh -S $CTRL_SOCKET"
 SCP="scp -o ControlPath=$CTRL_SOCKET"
 
 # ---- Upload Python packages ----
-PACKAGES="config lib runners"
+PACKAGES="api db etl sheets"
 echo "Uploading Python packages..."
 $SSH $SERVER "cd $REMOTE_DIR && for d in $PACKAGES; do [ -d \$d ] && cp -r \$d \$d.backup || true; done"
 
 echo "  - Creating archive..."
-tar czf /tmp/deploy.tar.gz --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' --exclude='*.bak' -C . config/ lib/ runners/
+tar czf /tmp/deploy.tar.gz --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' --exclude='*.bak' -C . api/ db/ etl/ sheets/
 
 echo "  - Uploading archive..."
 $SCP /tmp/deploy.tar.gz $SERVER:$REMOTE_DIR/
 
 echo "  - Extracting on server..."
-$SSH $SERVER "cd $REMOTE_DIR && rm -rf config lib runners && tar xzf deploy.tar.gz && rm deploy.tar.gz"
+$SSH $SERVER "cd $REMOTE_DIR && rm -rf api db etl sheets && tar xzf deploy.tar.gz && rm deploy.tar.gz"
 
 echo "  - Verifying update timestamps..."
-$SSH $SERVER "stat -c '%n %y' $REMOTE_DIR/lib/api.py $REMOTE_DIR/lib/sheets_engine.py $REMOTE_DIR/config/nba_sheets.py"
+$SSH $SERVER "stat -c '%n %y' $REMOTE_DIR/api/runner.py $REMOTE_DIR/sheets/runner.py"
 
 # Verify critical files are present
 echo "  - Verifying upload..."
-FILE_COUNT=$($SSH $SERVER "find $REMOTE_DIR/config $REMOTE_DIR/lib $REMOTE_DIR/runners -name '*.py' 2>/dev/null | wc -l")
+FILE_COUNT=$($SSH $SERVER "find $REMOTE_DIR/api $REMOTE_DIR/db $REMOTE_DIR/etl $REMOTE_DIR/sheets -name '*.py' 2>/dev/null | wc -l")
 if [ "$FILE_COUNT" -lt 15 ]; then
     echo "ERROR: Critical files missing ($FILE_COUNT found, expected 15+)! Restoring backups..."
     $SSH $SERVER "cd $REMOTE_DIR && for d in $PACKAGES; do rm -rf \$d && [ -d \$d.backup ] && mv \$d.backup \$d || true; done"
