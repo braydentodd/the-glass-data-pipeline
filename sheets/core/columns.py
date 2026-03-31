@@ -1787,32 +1787,3 @@ SHEETS_COLUMNS: Dict[str, Any] = {
     },
 }
 
-
-def resolve_columns_for_league(league):
-    """Resolve fully expanded SHEETS_COLUMNS into a league-specific flat dict."""
-    from sheets.core.config import WIDTH_CLASSES
-    resolved = {}
-
-    for col_key, col_def in SHEETS_COLUMNS.items():
-        leagues = col_def.get('leagues', ['nba', 'ncaa'])
-        if league not in leagues:
-            continue
-
-        entry = {}
-        _SKIP = {'leagues', 'formulas', 'width_class', 'width'}
-        for k, v in col_def.items():
-            if k not in _SKIP:
-                entry[k] = v
-
-        formulas = col_def.get('formulas', {})
-        entry['player_formula'] = formulas.get('player')
-        entry['team_formula'] = formulas.get('team')
-        entry['opponents_formula'] = formulas.get('opponents')
-
-        wc = col_def.get('width_class', 'auto')
-        pw = WIDTH_CLASSES.get(wc)
-        entry['minimum_width'] = pw if pw is not None else 'auto'
-
-        resolved[col_key] = entry
-
-    return resolved
