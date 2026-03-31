@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 import sheets.ncaa.lib as ncaa_lib
 import etl.ncaa.lib as lib
 from etl.ncaa.config import NCAA_CONFIG
-from sheets.core.ncaa_sheets import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
+from sheets.ncaa_sheets import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
 
 from lib.sheets_orchestrator import LeagueSyncContext, sync_all_teams, build_timeframe_configs
 

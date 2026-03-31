@@ -11,16 +11,24 @@ from sheets.config.config import WIDTH_CLASSES
 # COLUMN DEFINITIONS
 # ============================================================================
 
+MINUTES_FIELD_MAP: Dict[str, str] = {
+    'none': 'minutes_x10',
+    'basic': 'minutes_x10',
+    'tracking': 'tr_minutes_x10',
+    'hustle': 'h_minutes_x10',
+}
+
 SHEETS_COLUMNS: Dict[str, Any] = {
     'names': {
         'stat_category': 'none',
-        'display_name': None,
-        'description': 'Team / Player Names',
+        'display_name': 'Team / Player Names',
+        'description': None,
         'section': ['entities'],
         'subsection': None,
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -31,9 +39,11 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': None,
         'nullable': True,
         'formulas': {
-            'player': 'name',
-            'team': 'TEAM',
-            'opponents': 'OPPONENTS',
+            'all': {
+                'player': 'name',
+                'team': 'TEAM',
+                'opponents': 'OPPONENTS',
+            }
         },
     },
     'team': {
@@ -45,6 +55,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_players'],
         'stat_mode': 'both',
         'has_percentile': False,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -55,8 +66,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': None,
         'nullable': True,
         'formulas': {
-            'player': 'abbr',
-        }
+            'nba': {
+                'player': 'abbr',
+            },
+            'ncaa': {
+                'player': 'abbr',
+            },
+        },
     },
     'jersey': {
         'stat_category': 'none',
@@ -67,6 +83,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -77,8 +94,10 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': None,
         'nullable': True,
         'formulas': {
-            'player': 'jersey_number',
-        }
+            'all': {
+                'player': 'jersey_number',
+            },
+        },
     },
     'experience': {
         'stat_category': 'none',
@@ -89,6 +108,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -97,11 +117,18 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'average',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'years_experience',
-            'team': 'years_experience',
-        }
+            'nba': {
+                'player': 'years_experience',
+                'team': 'years_experience',
+            },
+            'ncaa': {
+                'player': 'years_experience',
+                'team': 'years_experience',
+            },
+        },
     },
     'age': {
         'stat_category': 'none',
@@ -112,6 +139,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -120,9 +148,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'average',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'age',
+                'team': 'age',
+            },
         },
     },
     'height': {
@@ -134,6 +166,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -142,11 +175,14 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'measurement',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'average',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'height_inches',
-            'team': 'height_inches',
-        }
+            'all': {
+                'player': 'height_inches',
+                'team': 'height_inches',
+            },
+        },
     },
     'weight': {
         'stat_category': 'none',
@@ -157,6 +193,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -165,11 +202,14 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'average',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'weight_lbs',
-            'team': 'weight_lbs',
-        }
+            'all': {
+                'player': 'weight_lbs',
+                'team': 'weight_lbs',
+            },
+        },
     },
     'wingspan': {
         'stat_category': 'none',
@@ -180,6 +220,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -188,11 +229,14 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'measurement',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'average',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'wingspan_inches',
-            'team': 'wingspan_inches',
-        }
+            'all': {
+                'player': 'wingspan_inches',
+                'team': 'wingspan_inches',
+            },
+        },
     },
     'hand': {
         'stat_category': 'none',
@@ -203,6 +247,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
+        'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -211,10 +256,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'two_char',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': None,
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'hand',
-        }
+            'all': {
+                'player': 'hand',
+            },
+        },
     },
     'notes': {
         'stat_category': 'none',
@@ -225,6 +273,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
+        'is_stat': False,
         'editable': True,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -233,11 +282,14 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'auto',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': None,
-        'nullable': False,
+        'nullable': None,
+        'width': 500,
         'formulas': {
-            'player': 'notes',
-            'team': 'notes',
-        }
+            'all': {
+                'player': 'notes',
+                'team': 'notes',
+            },
+        },
     },
     'years': {
         'stat_category': 'none',
@@ -248,6 +300,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -257,10 +310,17 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
         'nullable': False,
+        'width': None,
         'formulas': {
-            'player': 'season',
-            'team': 'season',
-        }
+            'nba': {
+                'player': 'season',
+                'team': 'season',
+            },
+            'ncaa': {
+                'player': 'season',
+                'team': 'season',
+            },
+        },
     },
     'games': {
         'stat_category': 'none',
@@ -271,6 +331,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -280,9 +341,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
         'nullable': False,
+        'width': None,
         'formulas': {
-            'player': 'games / years',
-            'team': 'games / years',
+            'all': {
+                'player': 'games / years',
+                'team': 'games / years',
+            }
         },
     },
     'minutes': {
@@ -294,6 +358,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': 'per_game_only',
@@ -302,11 +367,14 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'minutes_x10 / 10',
-            'team': 'minutes_x10 / 10',
-        }
+            'all': {
+                'player': 'minutes_x10 / 10',
+                'team': 'minutes_x10 / 10',
+            },
+        },
     },
     'pace': {
         'stat_category': 'basic',
@@ -317,6 +385,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -325,11 +394,18 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': '(48 / (minutes_x10 / 10)) * possessions',
-            'team': '(48 / (minutes_x10 / 10)) * possessions',
-        }
+            'nba': {
+                'player': '(48 / (minutes_x10 / 10)) * possessions',
+                'team': '(48 / (minutes_x10 / 10)) * possessions',
+            },
+            'ncaa': {
+                'player': '(40 / (minutes_x10 / 10)) * possessions',
+                'team': '(40 / (minutes_x10 / 10)) * possessions',
+            },
+        },
     },
     'points': {
         'stat_category': 'basic',
@@ -340,6 +416,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -348,12 +425,15 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': '(2fgm * 2) + (3fgm * 3) + ftm',
-            'team': '(2fgm * 2) + (3fgm * 3) + ftm',
-            'opponents': '(opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm',
-        }
+            'all': {
+                'player': '(2fgm * 2) + (3fgm * 3) + ftm',
+                'team': '(2fgm * 2) + (3fgm * 3) + ftm',
+                'opponents': '(opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm',
+            },
+        },
     },
     'true_points_per_shot_attempt': {
         'stat_category': 'basic',
@@ -364,6 +444,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -372,12 +453,15 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': '((2fgm * 2) + (3fgm * 3) + ftm) / (2fga + 3fga + 0.44 * fta)',
-            'team': '((2fgm * 2) + (3fgm * 3) + ftm) / (2fga + 3fga + 0.44 * fta)',
-            'opponents': '((opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm) / (opp_2fga + opp_3fga + 0.44 * opp_fta)',
-        }
+            'all': {
+                'player': '((2fgm * 2) + (3fgm * 3) + ftm) / (2fga + 3fga + 0.44 * fta)',
+                'team': '((2fgm * 2) + (3fgm * 3) + ftm) / (2fga + 3fga + 0.44 * fta)',
+                'opponents': '((opp_2fgm * 2) + (opp_3fgm * 3) + opp_ftm) / (opp_2fga + opp_3fga + 0.44 * opp_fta)',
+            },
+        },
     },
     '2fga': {
         'stat_category': 'basic',
@@ -388,6 +472,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -396,12 +481,20 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': '2fga',
-            'team': '2fga',
-            'opponents': 'opp_2fga',
-        }
+            'nba': {
+                'player': '2fga',
+                'team': '2fga',
+                'opponents': 'opp_2fga',
+            },
+            'ncaa': {
+                'player': '2fga',
+                'team': '2fga',
+                'opponents': 'opp_2fga',
+            },
+        },
     },
     'Points_Per_Two_attempt': {
         'stat_category': 'basic',
@@ -412,6 +505,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -420,12 +514,20 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': '2 * (2fgm / 2fga)',
-            'team': '2 * (2fgm / 2fga)',
-            'opponents': '2 * (opp_2fgm / opp_2fga)',
-        }
+            'nba': {
+                'player': '2 * (2fgm / 2fga)',
+                'team': '2 * (2fgm / 2fga)',
+                'opponents': '2 * (opp_2fgm / opp_2fga)',
+            },
+            'ncaa': {
+                'player': '2 * (2fgm / 2fga)',
+                'team': '2 * (2fgm / 2fga)',
+                'opponents': '2 * (opp_2fgm / opp_2fga)',
+            },
+        },
     },
     'cont_close_2fga': {
         'stat_category': 'tracking',
@@ -436,6 +538,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -444,9 +547,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'cont_close_2fga',
+                'team': 'cont_close_2fga',
+            },
         },
     },
     'Points_Per_cont_close_2fga': {
@@ -458,6 +565,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -466,9 +574,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '2 * (cont_close_2fgm / cont_close_2fga)',
+                'team': '2 * (cont_close_2fgm / cont_close_2fga)',
+            },
         },
     },
     'open_close_2fga': {
@@ -480,6 +592,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -488,9 +601,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'open_close_2fga',
+                'team': 'open_close_2fga',
+            },
         },
     },
     'Points_Per_open_close_2fga': {
@@ -502,6 +619,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -510,9 +628,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '2 * (open_close_2fgm / open_close_2fga)',
+                'team': '2 * (open_close_2fgm / open_close_2fga)',
+            },
         },
     },
     'cont_long_2fga': {
@@ -524,6 +646,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -532,9 +655,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'cont_2fga - cont_close_2fga',
+                'team': 'cont_2fga - cont_close_2fga',
+            },
         },
     },
     'points_per_cont_long_2fga': {
@@ -546,6 +673,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -554,9 +682,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
+                'team': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
+            },
         },
     },
     'open_long_2fga': {
@@ -568,6 +700,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -576,9 +709,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'open_2fga - open_close_2fga',
+                'team': 'open_2fga - open_close_2fga',
+            },
         },
     },
     'points_per_open_long_2fga': {
@@ -590,6 +727,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -598,9 +736,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
+                'team': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
+            },
         },
     },
     '3fga': {
@@ -612,6 +754,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -620,12 +763,20 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': '3fga',
-            'team': '3fga',
-            'opponents': 'opp_3fga',
-        }
+            'nba': {
+                'player': '3fga',
+                'team': '3fga',
+                'opponents': 'opp_3fga',
+            },
+            'ncaa': {
+                'player': '3fga',
+                'team': '3fga',
+                'opponents': 'opp_3fga',
+            },
+        },
     },
     'Points_Per_Three_attempt': {
         'stat_category': 'basic',
@@ -636,6 +787,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -644,12 +796,20 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': '3 * (3fgm / 3fga)',
-            'team': '3 * (3fgm / 3fga)',
-            'opponents': '3 * (opp_3fgm / opp_3fga)',
-        }
+            'nba': {
+                'player': '3 * (3fgm / 3fga)',
+                'team': '3 * (3fgm / 3fga)',
+                'opponents': '3 * (opp_3fgm / opp_3fga)',
+            },
+            'ncaa': {
+                'player': '3 * (3fgm / 3fga)',
+                'team': '3 * (3fgm / 3fga)',
+                'opponents': '3 * (opp_3fgm / opp_3fga)',
+            },
+        },
     },
     'cont_3fga': {
         'stat_category': 'tracking',
@@ -660,6 +820,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -668,9 +829,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'cont_3fga',
+                'team': 'cont_3fga',
+            },
         },
     },
     'points_per_cont_3fga': {
@@ -682,6 +847,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -690,9 +856,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '3 * (cont_3fgm / cont_3fga)',
+                'team': '3 * (cont_3fgm / cont_3fga)',
+            },
         },
     },
     'open_3fga': {
@@ -704,6 +874,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -712,9 +883,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'open_3fga',
+                'team': 'open_3fga',
+            },
         },
     },
     'points_per_open_3fga': {
@@ -726,6 +901,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -734,9 +910,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '3 * (open_3fgm / open_3fga)',
+                'team': '3 * (open_3fgm / open_3fga)',
+            },
         },
     },
     'free_throw_rate': {
@@ -748,6 +928,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -756,12 +937,15 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'fta / (2fga + 3fga)',
-            'team': 'fta / (2fga + 3fga)',
-            'opponents': 'opp_fta / (opp_2fga + opp_3fga)',
-        }
+            'all': {
+                'player': 'fta / (2fga + 3fga)',
+                'team': 'fta / (2fga + 3fga)',
+                'opponents': 'opp_fta / (opp_2fga + opp_3fga)',
+            },
+        },
     },
     'points_per_ft': {
         'stat_category': 'basic',
@@ -772,6 +956,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -780,12 +965,15 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'ftm / fta',
-            'team': 'ftm / fta',
-            'opponents': 'opp_ftm / opp_fta',
-        }
+            'all': {
+                'player': 'ftm / fta',
+                'team': 'ftm / fta',
+                'opponents': 'opp_ftm / opp_fta',
+            },
+        },
     },
     'dunks': {
         'stat_category': 'tracking',
@@ -796,6 +984,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -804,9 +993,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'dunks',
+                'team': 'dunks',
+            },
         },
     },
     'assists': {
@@ -818,6 +1011,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -826,12 +1020,20 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'assists',
-            'team': 'assists',
-            'opponents': 'opp_assists',
-        }
+            'nba': {
+                'player': 'assists',
+                'team': 'assists',
+                'opponents': 'opp_assists',
+            },
+            'ncaa': {
+                'player': 'assists',
+                'team': 'assists',
+                'opponents': 'opp_assists',
+            },
+        },
     },
     'potential_assists': {
         'stat_category': 'tracking',
@@ -842,6 +1044,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -850,9 +1053,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'pot_assists',
+                'team': 'pot_assists',
+            },
         },
     },
     'secondary_assists': {
@@ -864,6 +1071,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -872,9 +1080,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'sec_assists',
+                'team': 'sec_assists',
+            },
         },
     },
     'passes': {
@@ -886,6 +1098,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -894,9 +1107,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'passes',
+                'team': 'passes',
+            },
         },
     },
     'touches': {
@@ -908,6 +1125,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -916,9 +1134,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'touches',
+                'team': 'touches',
+            },
         },
     },
     'seconds_per_touch': {
@@ -930,6 +1152,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -938,9 +1161,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '(60 * time_on_ball) / touches',
+                'team': '(60 * time_on_ball) / touches',
+            },
         },
     },
     'dribbles_per_touch': {
@@ -952,6 +1179,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -960,9 +1188,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'dribbles / touches',
+                'team': 'dribbles / touches',
+            },
         },
     },
     'pct_touches_shots': {
@@ -974,6 +1206,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -982,9 +1215,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '((2fga + 3fga + (0.44 * fta)) / touches) * 100',
+                'team': '((2fga + 3fga + (0.44 * fta)) / touches) * 100',
+            },
         },
     },
     'pct_touches_passes': {
@@ -996,6 +1233,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1004,9 +1242,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '(passes / touches) * 100',
+                'team': '(passes / touches) * 100',
+            },
         },
     },
     'pct_touches_turnovers': {
@@ -1018,6 +1260,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1026,9 +1269,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '(turnovers / touches) * 100',
+                'team': '(turnovers / touches) * 100',
+            },
         },
     },
     'turnovers': {
@@ -1040,6 +1287,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': True,
@@ -1048,12 +1296,15 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'turnovers',
-            'team': 'turnovers',
-            'opponents': 'opp_turnovers',
-        }
+            'all': {
+                'player': 'turnovers',
+                'team': 'turnovers',
+                'opponents': 'opp_turnovers',
+            },
+        },
     },
     'oreb_pct': {
         'stat_category': 'basic',
@@ -1064,6 +1315,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1072,11 +1324,18 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'o_rebound_pct_x1000 / 10',
-            'team': 'o_rebound_pct_x1000 / 10',
-        }
+            'nba': {
+                'player': 'o_rebound_pct_x1000 / 10',
+                'team': 'o_rebound_pct_x1000 / 10',
+            },
+            'ncaa': {
+                'player': 'o_rebound_pct_x1000 / 10000',
+                'team': 'o_rebound_pct_x1000 / 1000',
+            },
+        },
     },
     'dreb_pct': {
         'stat_category': 'basic',
@@ -1087,6 +1346,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1095,11 +1355,18 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'd_rebound_pct_x1000 / 10',
-            'team': 'd_rebound_pct_x1000 / 10',
-        }
+            'nba': {
+                'player': 'd_rebound_pct_x1000 / 10',
+                'team': 'd_rebound_pct_x1000 / 10',
+            },
+            'ncaa': {
+                'player': 'd_rebound_pct_x1000 / 10',
+                'team': 'd_rebound_pct_x1000 / 10',
+            },
+        },
     },
     'cont_oreb_pct': {
         'stat_category': 'tracking',
@@ -1110,6 +1377,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1118,9 +1386,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '(cont_o_rebs / o_rebounds) * 100',
+                'team': '(cont_o_rebs / o_rebounds) * 100',
+            },
         },
     },
     'cont_dreb_pct': {
@@ -1132,6 +1404,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1140,9 +1413,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '(cont_d_rebs / d_rebounds) * 100',
+                'team': '(cont_d_rebs / d_rebounds) * 100',
+            },
         },
     },
     'putbacks': {
@@ -1154,6 +1431,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1162,9 +1440,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'putbacks',
+                'team': 'putbacks',
+            },
         },
     },
     'def_close_2fga': {
@@ -1176,6 +1458,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1184,9 +1467,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'd_close_2fga',
+                'team': 'd_close_2fga',
+            },
         },
     },
     'points_per_def_close_2fga': {
@@ -1198,6 +1485,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1206,9 +1494,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '2 * (d_close_2fgm / d_close_2fga)',
+                'team': '2 * (d_close_2fgm / d_close_2fga)',
+            },
         },
     },
     'def_long_2fga': {
@@ -1220,6 +1512,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1228,9 +1521,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'd_2fga - d_close_2fga',
+            },
         },
     },
     'points_per_def_long_2fga': {
@@ -1242,6 +1538,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1250,9 +1547,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
+                'team': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
+            },
         },
     },
     'def_3fga': {
@@ -1264,6 +1565,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1272,9 +1574,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'd_3fga',
+                'team': 'd_3fga',
+            },
         },
     },
     'points_per_def_3fga': {
@@ -1286,6 +1592,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1294,9 +1601,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '3 * (d_3fgm / d_3fga)',
+                'team': '3 * (d_3fgm / d_3fga)',
+            },
         },
     },
     'real_def_pct': {
@@ -1308,6 +1619,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1316,9 +1628,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'real_d_fg_pct_x1000 / 10',
+                'team': 'real_d_fg_pct_x1000 / 10',
+            },
         },
     },
     'real_def_close_2_pct': {
@@ -1330,6 +1646,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1338,9 +1655,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'real_d_close_2fg_pct_x1000 / 10',
+                'team': 'real_d_close_2fg_pct_x1000 / 10',
+            },
         },
     },
     'real_def_2fg_pct': {
@@ -1352,6 +1673,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1360,9 +1682,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'real_d_2fg_pct_x1000 / 10',
+                'team': 'real_d_2fg_pct_x1000 / 10',
+            },
         },
     },
     'real_def_3fg_pct': {
@@ -1374,6 +1700,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1382,9 +1709,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'real_d_3fg_pct_x1000 / 10',
+                'team': 'real_d_3fg_pct_x1000 / 10',
+            },
         },
     },
     'blocks': {
@@ -1396,6 +1727,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1404,12 +1736,15 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'blocks',
-            'team': 'blocks',
-            'opponents': 'opp_blocks',
-        }
+            'all': {
+                'player': 'blocks',
+                'team': 'blocks',
+                'opponents': 'opp_blocks',
+            },
+        },
     },
     'contests': {
         'stat_category': 'hustle',
@@ -1420,6 +1755,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1428,9 +1764,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'contests',
+                'team': 'contests',
+            },
         },
     },
     'steals_plus_charges': {
@@ -1442,6 +1782,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1450,9 +1791,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'steals + charges_drawn',
+                'team': 'steals + charges_drawn',
+            },
         },
     },
     'deflections': {
@@ -1464,6 +1809,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1472,9 +1818,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'deflections',
+                'team': 'deflections',
+            },
         },
     },
     'fouls': {
@@ -1486,6 +1836,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': True,
@@ -1494,12 +1845,15 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'fouls',
-            'team': 'fouls',
-            'opponents': 'opp_fouls',
-        }
+            'all': {
+                'player': 'fouls',
+                'team': 'fouls',
+                'opponents': 'opp_fouls',
+            },
+        },
     },
     'off_distance': {
         'stat_category': 'tracking',
@@ -1510,6 +1864,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1518,9 +1873,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'o_dist_x10 / 10',
+            },
         },
     },
     'def_distance': {
@@ -1532,6 +1890,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'advanced',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1540,9 +1899,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'd_dist_x10 / 10',
+            },
         },
     },
     'o_rating': {
@@ -1554,6 +1916,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1562,12 +1925,20 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'o_rating_x10 / 10',
-            'team': 'o_rating_x10 / 10',
-            'subsection': 'onoff',
-        }
+            'nba': {
+                'player': 'o_rating_x10 / 10',
+                'team': 'o_rating_x10 / 10',
+                'subsection': 'onoff',
+            },
+            'ncaa': {
+                'team': 'o_rating_x10 / 10',
+                'subsection': 'onoff',
+                'sheets': ['all_teams', 'teams'],
+            },
+        },
     },
     'd_rating': {
         'stat_category': 'basic',
@@ -1578,6 +1949,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1586,12 +1958,20 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
-            'player': 'd_rating_x10 / 10',
-            'team': 'd_rating_x10 / 10',
-            'subsection': 'onoff',
-        }
+            'nba': {
+                'player': 'd_rating_x10 / 10',
+                'team': 'd_rating_x10 / 10',
+                'subsection': 'onoff',
+            },
+            'ncaa': {
+                'team': 'd_rating_x10 / 10',
+                'subsection': 'onoff',
+                'sheets': ['all_teams', 'teams'],
+            },
+        },
     },
     'net_off_o_rating': {
         'stat_category': 'basic',
@@ -1602,6 +1982,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1610,9 +1991,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '(o_rating_x10 / 10) - (off_o_rating_x10 / 10)',
+            },
         },
     },
     'net_off_d_rating': {
@@ -1624,6 +2008,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1632,9 +2017,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': '(d_rating_x10 / 10) - (off_d_rating_x10 / 10)',
+            },
         },
     },
     'nba_id': {
@@ -1646,6 +2034,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1654,9 +2043,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width_class': 'auto',
         'leagues': ['nba'],
         'team_row_calc': 'team_value',
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'nba': {
                 'player': 'player_id',
+                'team': 'team_id',
+            },
         },
     },
     'conference': {
@@ -1668,6 +2061,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': [],
         'stat_mode': 'both',
         'has_percentile': False,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1675,9 +2069,13 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'decimal_places': 0,
         'width_class': 'auto',
         'leagues': ['ncaa'],
-        'nullable': False,
+        'nullable': None,
+        'width': 45,
         'formulas': {
+            'ncaa': {
                 'player': 'conference',
+                'team': 'conference',
+            },
         },
     },
     'wins': {
@@ -1689,6 +2087,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1696,9 +2095,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'decimal_places': 0,
         'width_class': 'two_char',
         'leagues': ['ncaa'],
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'ncaa': {
                 'team': 'wins',
+            },
         },
     },
     'losses': {
@@ -1710,6 +2112,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': True,
         'scale_with_mode': False,
@@ -1717,9 +2120,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'decimal_places': 0,
         'width_class': 'two_char',
         'leagues': ['ncaa'],
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'ncaa': {
                 'team': 'losses',
+            },
         },
     },
     'steals': {
@@ -1731,6 +2137,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': True,
@@ -1738,9 +2145,14 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'decimal_places': 1,
         'width_class': 'three_char_dec',
         'leagues': ['ncaa'],
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'ncaa': {
                 'player': 'steals',
+                'team': 'steals',
+                'opponents': 'opp_steals',
+            },
         },
     },
     'win_pct': {
@@ -1752,6 +2164,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'teams'],
         'stat_mode': 'both',
         'has_percentile': True,
+        'is_stat': True,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1759,9 +2172,12 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'decimal_places': 3,
         'width_class': 'three_char_dec',
         'leagues': ['ncaa'],
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'ncaa': {
                 'team': 'wins / (wins + losses)',
+            },
         },
     },
     'ncaa_id': {
@@ -1773,6 +2189,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'sheets': ['all_teams', 'all_players', 'teams'],
         'stat_mode': 'both',
         'has_percentile': False,
+        'is_stat': False,
         'editable': False,
         'reverse_percentile': False,
         'scale_with_mode': False,
@@ -1780,10 +2197,78 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'decimal_places': 0,
         'width_class': 'auto',
         'leagues': ['ncaa'],
-        'nullable': False,
+        'nullable': None,
+        'width': None,
         'formulas': {
+            'ncaa': {
                 'player': 'player_id',
+                'team': 'team_id',
+            },
         },
     },
 }
 
+def resolve_columns_for_league(league):
+    """Resolve fully expanded SHEETS_COLUMNS into a league-specific flat dict.
+
+    Since we no longer use COLUMN_DEFAULTS, this simply:
+      1. Filters out columns not belonging to the given league.
+      2. Resolves formulas: picks league-specific or 'all' fallback.
+      3. Applies per-league property overrides from the formulas block.
+      4. Deep-merges mode_overrides if the league block has overrides.
+      5. Resolves width_class / width into minimum_width.
+
+    Returns a dict in the exact shape sheets_engine.init_engine() expects.
+    """
+    resolved = {}
+
+    for col_key, col_def in SHEETS_COLUMNS.items():
+        leagues = col_def.get('leagues', ['nba', 'ncaa'])
+        if league not in leagues:
+            continue
+
+        # Start from base explicitly defined keys
+        entry = {}
+
+        # Overlay shared properties (skip unflattened keys)
+        _SKIP = {'leagues', 'formulas', 'width_class', 'width'}
+        for k, v in col_def.items():
+            if k not in _SKIP:
+                entry[k] = v
+
+        # Resolve formulas
+        formulas = col_def.get('formulas', {})
+        league_block = formulas.get(league, formulas.get('all', {}))
+
+        entry['player_formula'] = league_block.get('player')
+        entry['team_formula'] = league_block.get('team')
+        entry['opponents_formula'] = league_block.get('opponents')
+
+        # Per-league property overrides (stat_mode, description, etc.)
+        _FORMULA_KEYS = {'player', 'team', 'opponents', 'mode_overrides'}
+        for k, v in league_block.items():
+            if k not in _FORMULA_KEYS:
+                entry[k] = v
+
+        # Deep-merge mode_overrides
+        if 'mode_overrides' in league_block:
+            base = dict(entry.get('mode_overrides', {}) or {})
+            for mode_key, mode_vals in league_block['mode_overrides'].items():
+                if mode_key in base:
+                    base[mode_key] = {**base[mode_key], **mode_vals}
+                else:
+                    base[mode_key] = mode_vals
+            entry['mode_overrides'] = base
+
+        # Resolve width
+        explicit = col_def.get('width')
+        if explicit is not None:
+            entry['minimum_width'] = explicit
+        else:
+            wc = col_def.get('width_class', 'auto')
+            pw = WIDTH_CLASSES.get(wc)
+            entry['minimum_width'] = pw if pw is not None else 'auto'
+
+        resolved[col_key] = entry
+
+    return resolved

@@ -261,4 +261,3 @@ MINUTES_FIELD_MAP = {
     'tracking': 'tr_minutes_x10',
     'hustle': 'h_minutes_x10',
 }
-

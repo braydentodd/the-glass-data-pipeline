@@ -24,7 +24,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from etl.ncaa.config import DB_CONFIG, DB_SCHEMA, NCAA_CONFIG
-from sheets.core.ncaa_sheets import (
+from sheets.ncaa_sheets import (
     COLORS, COLOR_THRESHOLDS,
     DEFAULT_STAT_MODE,
     GOOGLE_SHEETS_CONFIG, SERVER_CONFIG,

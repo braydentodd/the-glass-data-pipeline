@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 import sheets.nba.lib as nba_lib
 import etl.nba.lib as lib
 from etl.nba.config import NBA_CONFIG
-from sheets.core.nba_sheets import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
+from sheets.nba_sheets import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
 
 from lib.sheets_orchestrator import LeagueSyncContext, sync_all_teams, build_timeframe_configs
 

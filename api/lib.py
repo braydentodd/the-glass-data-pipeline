@@ -20,7 +20,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from etl.nba.config import DB_CONFIG, NBA_CONFIG
-from sheets.core.nba_sheets import API_CONFIG, SERVER_CONFIG
+from sheets.nba_sheets import API_CONFIG, SERVER_CONFIG
 from etl.nba.lib import get_table_name, get_teams_from_db
 from sheets.nba.lib import (
     calculate_entity_stats,

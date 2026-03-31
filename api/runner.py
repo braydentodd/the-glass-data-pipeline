@@ -13,7 +13,7 @@ import logging
 
 from dotenv import load_dotenv
 
-from sheets.core.nba_sheets import API_CONFIG
+from sheets.nba_sheets import API_CONFIG
 from api.lib import app
 
 load_dotenv()

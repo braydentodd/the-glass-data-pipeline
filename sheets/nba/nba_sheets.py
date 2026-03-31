@@ -20,7 +20,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from etl.nba.config import DB_CONFIG, DB_SCHEMA, NBA_CONFIG
-from sheets.core.nba_sheets import (
+from sheets.nba_sheets import (
     COLORS, COLOR_THRESHOLDS,
     DEFAULT_STAT_MODE,
     GOOGLE_SHEETS_CONFIG, SERVER_CONFIG,
