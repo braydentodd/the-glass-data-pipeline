@@ -23,13 +23,13 @@ import logging
 from typing import Optional
 from psycopg2.extras import execute_values
 
-from config.ncaa_etl import (
+from etl.ncaa.config import (
     NCAA_CONFIG, CBBD_ENDPOINTS, DB_SCHEMA, TABLES_CONFIG, DB_COLUMNS,
     SEASON_TYPE_CONFIG,
     season_to_display, season_int_to_display, display_to_season_int,
     get_table_name,
 )
-from lib.ncaa_etl import (
+from etl.ncaa.lib import (
     CBBDClient,
     db_connection, get_db_connection,
     extract_entity_data, extract_stats_data,
@@ -37,7 +37,7 @@ from lib.ncaa_etl import (
     generate_schema_ddl,
     get_season_player_count,
 )
-from lib.db import ensure_schema
+from db.lib import ensure_schema
 
 # Configure logging
 logging.basicConfig(

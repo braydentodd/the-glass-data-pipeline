@@ -36,8 +36,18 @@ GOOGLE_SHEETS_CONFIG = {
 # STAT CALCULATION CONSTANTS
 # ============================================================================
 
+LEAGUE_CONSTANTS = {
+    'nba': {
+        'game_length_minutes': 48.0,
+        'per_minute_mode': 'per_36',
+    },
+    'ncaa': {
+        'game_length_minutes': 40.0,
+        'per_minute_mode': 'per_40',
+    }
+}
+
 STAT_CONSTANTS = {
-    'default_per_minutes': 48.0,        # Per 48 Min (standardized across leagues)
     'default_per_possessions': 100.0,   # Default possessions for per-possession stats
     'cache_ttl_seconds': 300,           # API response cache TTL
 }
@@ -193,6 +203,7 @@ SUBSECTIONS = [
     'movement',       # Offensive/Defensive distance traveled
     'defense',        # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
     'opponent',       # All opponent stats (Teams sheet only, between defense and on/off)
+    'efficiency',     # Efficiency metrics
     'onoff',          # Offensive/Defensive Rating, Off-court ratings
 ]
 
@@ -205,6 +216,7 @@ SUBSECTION_DISPLAY_NAMES = {
     'movement': 'Movement',
     'defense': 'Defense',
     'opponent': 'Opponent',
+    'efficiency': 'Efficiency',
     'onoff': 'On/Off',
 }
 
@@ -238,3 +250,15 @@ SERVER_CONFIG = {
     'remote_dir': os.getenv('REMOTE_DIR', ''),
     'systemd_service': os.getenv('SYSTEMD_SERVICE', 'flask-api'),
 }
+
+# ============================================================================
+# COLUMN HELPERS & PROFILES
+# ============================================================================
+
+MINUTES_FIELD_MAP = {
+    'none': 'minutes_x10',
+    'basic': 'minutes_x10',
+    'tracking': 'tr_minutes_x10',
+    'hustle': 'h_minutes_x10',
+}
+

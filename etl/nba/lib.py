@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import all config data at module level (no circular dependency)
-from config.nba_etl import (
+from etl.nba.config import (
     TABLES_CONFIG, ENDPOINTS_CONFIG, DB_COLUMNS, DB_SCHEMA,
     RETRY_CONFIG, API_CONFIG, DB_CONFIG, DB_OPERATIONS, NBA_CONFIG,
     DATA_INTEGRITY_RULES, ENDPOINT_PARAMS, PARAM_KEYS,
@@ -1385,7 +1385,7 @@ def get_source_endpoint_for_column(col_name: str, entity: Literal['player', 'tea
         get_source_endpoint_for_column('cont_o_rebs', 'player') → 'playerdashptreb'
         get_source_endpoint_for_column('3fgm', 'player') → 'leaguedashplayerstats'
     """
-    from config.nba_etl import DB_COLUMNS
+    from etl.nba.config import DB_COLUMNS
     
     col_config = DB_COLUMNS.get(col_name)
     if not col_config:
@@ -2322,7 +2322,7 @@ def ensure_endpoint_tracker_coverage(start_season: str, end_season: Optional[str
     Returns:
         Number of new rows inserted
     """
-    from config.nba_etl import ENDPOINTS_CONFIG, SEASON_TYPE_CONFIG
+    from etl.nba.config import ENDPOINTS_CONFIG, SEASON_TYPE_CONFIG
     from psycopg2.extras import execute_values
     import json
 
@@ -2466,7 +2466,7 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None, current_s
     Returns:
         None (prints status to console)
     """
-    from config.nba_etl import NBA_CONFIG
+    from etl.nba.config import NBA_CONFIG
     
     with db_connection() as conn:
         cursor = conn.cursor()
@@ -2476,7 +2476,7 @@ def mark_backfill_complete(earliest_rookie_year: Optional[str] = None, current_s
             # Only check from earliest_rookie_year onwards if provided
             # Resolve current_season if not passed in
             if current_season is None:
-                from config.nba_etl import NBA_CONFIG as _NBA_CONFIG
+                from etl.nba.config import NBA_CONFIG as _NBA_CONFIG
                 current_season = _NBA_CONFIG['current_season']
 
             if earliest_rookie_year:
@@ -2648,7 +2648,7 @@ def get_active_teams() -> List[int]:
     Returns:
         List of team IDs (30 teams)
     """
-    from config.nba_etl import TEAM_IDS
+    from etl.nba.config import TEAM_IDS
     return list(TEAM_IDS.values())
 
 
@@ -2716,7 +2716,7 @@ def build_endpoint_params(
     Raises:
         ValueError: If endpoint not configured or entity type not supported
     """
-    from config.nba_etl import API_CONFIG
+    from etl.nba.config import API_CONFIG
     
     # Get endpoint configuration
     endpoint_config = get_endpoint_config(endpoint_name)
@@ -2903,7 +2903,7 @@ def _fetch_api_data_per_team(ctx: Any, endpoint_name: str, season: str,
                              season_type_name: str, entity: str,
                              custom_params: Optional[Dict[str, Any]] = None) -> List[Any]:
     """Fetch data from per-team endpoint (30 API calls, one per team)."""
-    from config.nba_etl import TEAM_IDS
+    from etl.nba.config import TEAM_IDS
     
     EndpointClass = get_endpoint_class(endpoint_name)
     base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity, custom_params=custom_params)
@@ -2973,7 +2973,7 @@ def _fetch_api_data_per_player(ctx: Any, endpoint_name: str, season: str,
                                custom_params: Optional[Dict[str, Any]] = None,
                                player_ids: Optional[List[int]] = None) -> List[Any]:
     """Fetch data from per-player endpoint (hundreds/thousands of API calls)."""
-    from config.nba_etl import SEASON_TYPE_CONFIG
+    from etl.nba.config import SEASON_TYPE_CONFIG
     
     # Get season_type code from name
     season_type = SEASON_TYPE_CONFIG.get(season_type_name, {}).get('season_code', 1)

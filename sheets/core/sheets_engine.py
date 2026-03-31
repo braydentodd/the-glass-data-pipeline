@@ -6,13 +6,13 @@ Contains all formatting, row/header building, percentile display,
 column selection, and stat calculation logic.
 
 Usage (from league-specific wrapper):
-    from lib.sheets_engine import init_engine
+    from sheets.core.sheets_engine import init_engine
     init_engine(
         sheets_columns=MY_SHEETS_COLUMNS,
         section_config=MY_SECTION_CONFIG,
         ...
     )
-    from lib.sheets_engine import build_sheet_columns, build_headers, ...
+    from sheets.core.sheets_engine import build_sheet_columns, build_headers, ...
 """
 
 import re
@@ -233,7 +233,7 @@ def evaluate_formula(col_key: str, entity_data: dict,
                 return 0
             return None
         # Non-stat columns (notes, hand, etc.) should show empty, not 0
-        if not col_def.get('is_stat', False):
+        if col_def.get('stat_category', 'none') == 'none':
             return ''
         return 0
 
@@ -520,7 +520,6 @@ def _make_companion_def(base_def: dict, base_key: str,
         'subsection': base_def.get('subsection'),
         'stat_mode': base_def.get('stat_mode', 'both'),
         'has_percentile': False,
-        'is_stat': base_def.get('is_stat', False),
         'editable': False,
         'reverse_percentile': base_def.get('reverse_percentile', False),
         'scale_with_mode': False,
@@ -675,7 +674,7 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
                 visible = False
 
             fkey = f'{col_entity}_formula'
-            if not (col_def.get('is_stat', False) or col_def.get(fkey) is not None):
+            if not (col_def.get('stat_category', 'none') != 'none' or col_def.get(fkey) is not None):
                 visible = False
 
             all_columns.append((col_key, col_def, visible, section))
@@ -707,7 +706,7 @@ def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
     for entry in columns:
         col_key, col_def, vis, ctx = entry
         is_stats = SECTION_CONFIG.get(ctx, {}).get('is_stats_section', False)
-        if not is_stats or not col_def.get('is_stat') or col_def.get('is_generated_percentile'):
+        if not is_stats or col_def.get('stat_category', 'none') == 'none' or col_def.get('is_generated_percentile'):
             continue
         opp_formula = col_def.get('opponents_formula')
         if not opp_formula:
@@ -1038,7 +1037,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             continue
 
         # Info column (non-stat) — simple field lookup
-        if not col_def.get('is_stat', False):
+        if col_def.get('stat_category', 'none') == 'none':
             use_entity = sec_entity if section_data and is_stats_section else primary_entity
             value = evaluate_formula(col_key, use_entity, entity_type, mode)
             if value is None:
@@ -1760,7 +1759,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
         # Non-stat columns without a formula for this entity get hidden
-        if not col_def.get('is_stat', False) and col_def.get(fkey) is None:
+        if col_def.get('stat_category', 'none') == 'none' and col_def.get(fkey) is None:
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -2271,7 +2270,7 @@ def build_summary_rows(columns_list: List[Tuple],
                 continue
 
             # Non-stat, non-percentile, no-has_percentile columns are blank
-            if (not col_def.get('is_stat', False)
+            if (col_def.get('stat_category', 'none') == 'none'
                     and not col_def.get('is_generated_percentile', False)
                     and not col_def.get('has_percentile', False)):
                 row.append('')
@@ -2407,7 +2406,7 @@ def get_config_for_export(league: str,
     league_teams = {abbr: team_id for team_id, (abbr, name) in teams_from_db.items()}
 
     # --- Stat columns list -----------------------------------------------
-    stat_columns = [k for k, v in SHEETS_COLUMNS.items() if v.get('is_stat', False)]
+    stat_columns = [k for k, v in SHEETS_COLUMNS.items() if v.get('stat_category', 'none') != 'none']
 
     # --- Build full column lists for all sheet types --------------------
     team_columns = build_sheet_columns(
@@ -2538,7 +2537,7 @@ def get_config_for_export(league: str,
         fkey = f'{entity_type}_formula'
         hidden = []
         for i, (ck, cd, v, cx) in enumerate(cols):
-            if not cd.get('is_stat', False) and cd.get(fkey) is None:
+            if cd.get('stat_category', 'none') == 'none' and cd.get(fkey) is None:
                 hidden.append(i + 1)
         return hidden
 
@@ -2607,7 +2606,7 @@ def get_config_for_export(league: str,
     team_col_idx = get_column_index('team', league_columns)
     stats_start = None
     for i, entry in enumerate(team_columns):
-        if entry[1].get('is_stat', False):
+        if entry[1].get('stat_category', 'none') != 'none':
             stats_start = i + 1
             break
 

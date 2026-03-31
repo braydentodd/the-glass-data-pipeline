@@ -19,10 +19,10 @@ from flask_cors import CORS
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from config.nba_etl import DB_CONFIG, NBA_CONFIG
-from config.nba_sheets import API_CONFIG, SERVER_CONFIG
-from lib.nba_etl import get_table_name, get_teams_from_db
-from lib.nba_sheets import (
+from etl.nba.config import DB_CONFIG, NBA_CONFIG
+from sheets.core.nba_sheets import API_CONFIG, SERVER_CONFIG
+from etl.nba.lib import get_table_name, get_teams_from_db
+from sheets.nba.lib import (
     calculate_entity_stats,
     get_reverse_stats,
     get_editable_fields,
@@ -47,7 +47,7 @@ REVERSE_STATS = get_reverse_stats()
 EDITABLE_FIELDS = get_editable_fields()
 
 # Stat columns for percentile calculation
-STAT_COLUMNS = [k for k, v in SHEETS_COLUMNS.items() if v.get('is_stat', False)]
+STAT_COLUMNS = [k for k, v in SHEETS_COLUMNS.items() if v.get('stat_category', 'none') != 'none']
 
 app = Flask(__name__)
 
