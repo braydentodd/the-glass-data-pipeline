@@ -7,7 +7,7 @@ so runners/sheets.py can build generic instances.
 import importlib
 
 from config.sheets import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
-from lib.sheets import get_db_table_columns
+from lib.sheets_data import get_db_table_columns
 from config.columns import resolve_columns_for_league
 
 def get_league_profile(league: str) -> dict:
@@ -17,10 +17,10 @@ def get_league_profile(league: str) -> dict:
         player_fields = get_db_table_columns(DB_CONFIG, 'nba', 'players', set())
         team_fields = get_db_table_columns(DB_CONFIG, 'nba', 'teams', set())
         season_year_key = 'current_season_year'
-        team_abbr_field = 'team_abbr'
+        team_abbr_field = 'abbr'
         include_hist_post_players = True
         season_type = LEAGUE_CONFIG['season_type']
-        season_col = 'year'
+        season_col = 'season'
         player_join_type = 'LEFT JOIN'
         player_group_extras = ['p.birthdate']
         age_expr = 'EXTRACT(YEAR FROM AGE(CURRENT_DATE, p.birthdate))::int AS "age"'

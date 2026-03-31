@@ -67,7 +67,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': True,
         'formulas': {
             'nba': {
-                'player': 'team_abbr',
+                'player': 'abbr',
             },
             'ncaa': {
                 'player': 'abbr',
@@ -313,8 +313,8 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'width': None,
         'formulas': {
             'nba': {
-                'player': 'year',
-                'team': 'year',
+                'player': 'season',
+                'team': 'season',
             },
             'ncaa': {
                 'player': 'season',
