@@ -2,7 +2,6 @@ import re
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 from bisect import bisect_left, bisect_right
-import sheets.lib.state as state
 from src.sheets.config import SHEETS_COLUMNS
 from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
 class SheetsConfigurationError(Exception):
@@ -133,7 +132,7 @@ def evaluate_formula(col_key: str, entity_data: dict,
         # Field absent for stat columns → 0 → safe default for calculations
         # Field absent for non-stat columns → '' → empty cell (e.g., notes on teams)
         if compiled in entity_data:
-            # Non-nullable columns (games, years) → 0 instead of None
+            # Non-nullable columns (games, seasons) → 0 instead of None
             if not col_def.get('nullable', True):
                 return 0
             return None
@@ -291,13 +290,8 @@ def _quote_col(col: str) -> str:
     return f'"{col}"'
 
 
-def _year_to_season(year: int) -> str:
-    """Convert end-year integer to season string: 2026 → '2025-26'."""
-    return f"{year - 1}-{str(year)[2:]}"
-
-
-# _build_year_filter lives in league-specific wrappers because SQL column
-# names differ (NBA uses 'year', NCAA uses 'season').
+# _build_season_filter lives in league-specific wrappers because SQL column
+# names differ (NBA uses 'season', NCAA uses 'season').
 
 
 def calculate_all_percentiles(all_entities: List[dict], entity_type: str,

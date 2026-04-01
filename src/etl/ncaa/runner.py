@@ -206,7 +206,7 @@ def sync_team_stats(client: CBBDClient, conn, season_int: int,
 
 def sync_roster(client: CBBDClient, conn, season_int: int) -> int:
     """
-    Sync roster data (height, weight, jersey, years_experience) for players in a given season.
+    Sync roster data (height, weight, jersey, seasons_experience) for players in a given season.
 
     Fetches ALL rosters in a single API call (the roster endpoint returns
     every team when called with just a season parameter), then UPDATEs
@@ -248,13 +248,13 @@ def sync_roster(client: CBBDClient, conn, season_int: int) -> int:
                 jersey_val = int(jersey) if jersey is not None else None
             except (ValueError, TypeError):
                 jersey_val = None
-            years_exp = None
+            seasons_exp = None
             if start_season is not None:
                 ye = season_int - int(start_season)
                 if ye >= 0:
-                    years_exp = ye
+                    seasons_exp = ye
 
-            player_map[player_id] = (player_id, height_val, weight_val, jersey_val, years_exp)
+            player_map[player_id] = (player_id, height_val, weight_val, jersey_val, seasons_exp)
 
     rows = list(player_map.values())
 
@@ -269,13 +269,13 @@ def sync_roster(client: CBBDClient, conn, season_int: int) -> int:
                 player_id   INTEGER PRIMARY KEY,
                 height_inches SMALLINT,
                 weight_lbs    SMALLINT,
-                jersey_number SMALLINT,
-                years_experience SMALLINT
+                jersey_num SMALLINT,
+                seasons_exp SMALLINT
             )
         """)
         execute_values(
             cur,
-            "INSERT INTO _tmp_roster (player_id, height_inches, weight_lbs, jersey_number, years_experience) VALUES %s",
+            "INSERT INTO _tmp_roster (player_id, height_inches, weight_lbs, jersey_num, seasons_exp) VALUES %s",
             rows,
             page_size=1000
         )
@@ -283,8 +283,8 @@ def sync_roster(client: CBBDClient, conn, season_int: int) -> int:
             UPDATE {entity_table} p
             SET height_inches    = COALESCE(t.height_inches, p.height_inches),
                 weight_lbs       = COALESCE(t.weight_lbs, p.weight_lbs),
-                jersey_number    = COALESCE(t.jersey_number, p.jersey_number),
-                years_experience = COALESCE(t.years_experience, p.years_experience)
+                jersey_num       = COALESCE(t.jersey_num, p.jersey_num),
+                seasons_exp        = COALESCE(t.seasons_exp, p.seasons_exp)
             FROM _tmp_roster t
             WHERE p.player_id = t.player_id
         """)

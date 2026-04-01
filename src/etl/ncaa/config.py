@@ -234,7 +234,7 @@ DB_COLUMNS = {
         'opp_source': None,
     },
 
-    'jersey_number': {
+    'jersey_num': {
         'table': 'entity',
         'type': 'SMALLINT',
         'nullable': True,
@@ -261,7 +261,7 @@ DB_COLUMNS = {
         'opp_source': None,
     },
 
-    'years_experience': {
+    'seasons_exp': {
         'table': 'entity',
         'type': 'SMALLINT',
         'nullable': True,
@@ -624,7 +624,7 @@ def get_entity_columns(entity_type: str) -> list:
         elif col in ('notes', 'backfilled', 'created_at', 'updated_at'):
             result.append(col)
         elif entity_type == 'player' and col in (
-            'wingspan_inches', 'birthdate', 'hand', 'years_experience',
+            'wingspan_inches', 'birthdate', 'hand', 'seasons_exp',
         ):
             result.append(col)
     return result

@@ -347,7 +347,7 @@ DB_COLUMNS = {
         'opponent_source': None
     },
     
-    'jersey_number': {
+    'jersey_num': {
         'table': 'entity',
         'type': 'SMALLINT',
         'nullable': True,
@@ -364,7 +364,7 @@ DB_COLUMNS = {
         'opponent_source': None
     },
     
-    'years_experience': {
+    'seasons_exp': {
         'table': 'entity',
         'type': 'SMALLINT',
         'nullable': True,

@@ -459,7 +459,7 @@ def generate_schema_ddl() -> str:
             continue
         if (meta.get('player_source') is not None or
             col in ('team_id', 'wingspan_inches', 'birthdate', 'hand',
-                     'years_experience', 'notes', 'backfilled',
+                     'seasons_exp', 'notes', 'backfilled',
                      'created_at', 'updated_at')):
             player_cols.append(_col_def(col, meta))
     player_cols.append("  PRIMARY KEY (player_id)")

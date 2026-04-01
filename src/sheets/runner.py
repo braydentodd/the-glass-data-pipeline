@@ -4,7 +4,7 @@ THE GLASS - Universal Google Sheets Sync
 Unified runner for synchronizing league data to Google Sheets.
 
 Entry point:
-    python -m sheets.runner --league ncaa [--team DUKE] [--mode per_game|per_36|per_100]
+    python -m src.sheets.runner --league nba [--tab BOS] [--mode per_game|per_36|per_100]
 """
 
 import argparse
@@ -12,60 +12,212 @@ import os
 
 from dotenv import load_dotenv
 
+import logging
+import time
+from collections import defaultdict
+
+from src.db import get_db_connection
+from src.sheets.lib.db import fetch_all_players, fetch_all_teams
+from src.sheets.lib.calculations import calculate_all_percentiles
+from src.sheets.lib.google import get_sheets_client
+from src.sheets.lib.tabs.teams import sync_teams_sheet
+from src.sheets.lib.tabs.team import sync_team_sheet
+from src.sheets.lib.tabs.players import sync_players_sheet
+
+logger = logging.getLogger(__name__)
+
 from src.sheets.config import STAT_MODES, DEFAULT_STAT_MODE
-from src.sheets.lib.publisher import sync_all_teams, build_timeframe_configs
 
 load_dotenv()
 
-# ============================================================================
-# ENTRY POINT
-# ============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description='Sync league data to Google Sheets')
     parser.add_argument('--league', choices=['nba', 'ncaa'], required=True,
                         help='The league to sync')
-    parser.add_argument('--team', metavar='ABBR',
-                        help='Sync this team first (e.g. BOS or DUKE)')
+    parser.add_argument('--tab', metavar='NAME',
+                        help='Sync this tab first (team abbr like BOS, or "players"/"teams")')
     parser.add_argument('--mode',
                         choices=STAT_MODES,
                         default=None,
                         help=f'Stats display mode (default: {DEFAULT_STAT_MODE})')
-    parser.add_argument('--percentiles', action='store_true',
-                        help='Show percentile rank columns')
     parser.add_argument('--hist-seasons', type=int, default=None,
                         help='Number of historical seasons to include')
     parser.add_argument('--include-current', action='store_true',
                         help='Include current season within the historical seasons count')
-    parser.add_argument('--data-only', action='store_true',
+    parser.add_argument('--partial-update', action='store_true',
                         help='Fast sync: skip structural formatting, only update data + colors')
     args = parser.parse_args()
 
     # Priority: CLI arg > env var > hardcoded default
     league = args.league.lower()
     mode = args.mode or os.environ.get('STATS_MODE', DEFAULT_STAT_MODE)
-    show_percentiles = args.percentiles or os.environ.get('SHOW_PERCENTILES') == 'true'
     show_advanced = os.environ.get('SHOW_ADVANCED') == 'true'
-    
-    priority_team = args.team or os.environ.get('PRIORITY_TEAM_ABBR')
-    data_only = args.data_only or os.environ.get('DATA_ONLY_SYNC') == 'true'
+    priority_tab = args.tab or os.environ.get('PRIORITY_TAB')
+    partial_update = args.partial_update or os.environ.get('PARTIAL_UPDATE') == 'true'
+    sync_section = os.environ.get('SYNC_SECTION')
 
-    historical_config, postseason_config = build_timeframe_configs(
-        hist_seasons_arg=args.hist_seasons,
-        post_years_arg=args.hist_seasons,
-        default_mode='years',
-    )
+    # Build historical config (postseason always reuses the same config)
+    hist_mode = os.environ.get('HISTORICAL_MODE', 'seasons')
+    include_current = os.environ.get('INCLUDE_CURRENT_SEASON', 'false') == 'true'
 
-    sync_all_teams(
-        league=league,
-        mode=mode,
-        show_percentiles=show_percentiles,
-        show_advanced=show_advanced,
-        historical_config=historical_config,
-        postseason_config=postseason_config,
-        priority_team=priority_team,
-        data_only=data_only,
-    )
+    if hist_mode == 'career':
+        historical_config = {'mode': 'career', 'include_current': include_current}
+    elif hist_mode == 'seasons':
+        season_str = os.environ.get('HISTORICAL_SEASONS', '')
+        seasons = [s.strip() for s in season_str.split(',') if s.strip()]
+        historical_config = {'mode': 'seasons', 'value': seasons, 'include_current': include_current}
+    else:
+        num_seasons = args.hist_seasons or int(os.environ.get('HISTORICAL_SEASONS_COUNT', '3'))
+        historical_config = {'mode': 'seasons', 'value': num_seasons, 'include_current': include_current}
+
+    # ---- Build context ----
+    class Context: pass
+    ctx = Context()
+    ctx.league = league
+    from src.sheets.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
+    from src.sheets.config import SHEETS_COLUMNS
+    ctx.google_sheets_config = GOOGLE_SHEETS_CONFIG
+    ctx.sheet_formatting = SHEET_FORMATTING
+    ctx.season_key = 'current_season'
+    ctx.team_abbr_field = 'abbr'
+    ctx.include_hist_post_players = True
+    ctx.wrap_opp_pct = lambda vals: sorted(vals)
+
+    if league == 'nba':
+        import etl.nba.lib as etl_lib
+        from etl.nba.config import NBA_CONFIG as league_config
+    else:
+        import etl.ncaa.lib as etl_lib
+        from etl.ncaa.config import NCAA_CONFIG as league_config
+
+    ctx.etl_lib = etl_lib
+    ctx.league_config = league_config
+
+    ctx.player_entity_table = etl_lib.get_table_name('player_entity')
+    ctx.team_entity_table = etl_lib.get_table_name('team_entity')
+    ctx.player_stats_table = etl_lib.get_table_name('player_stats')
+    ctx.team_stats_table = etl_lib.get_table_name('team_stats')
+
+    ctx.player_entity_fields = {
+        'player_id', 'name', 'team_id', 'height_inches', 'weight_lbs',
+        'wingspan_inches', 'seasons_exp', 'age', 'jersey_num',
+        'hand', 'notes', 'birthdate', 'updated_at',
+    }
+    ctx.team_entity_fields = {
+        'team_id', 'abbr', 'team_name', 'notes', 'updated_at',
+    }
+
+    all_cols = {k for k, v in SHEETS_COLUMNS.items() if league in v.get('leagues', []) and v.get('stat_category') != 'none'}
+    ctx.stat_fields = {c for c in (all_cols - ctx.player_entity_fields - ctx.team_entity_fields) if not c[0].isupper()}
+    ctx.team_stat_fields = {c for c in (all_cols - ctx.team_entity_fields) if not c[0].isupper()}
+    ctx.team_abbr_col = 'abbr'
+    ctx.primary_minutes_col = 'minutes_x10' if 'minutes_x10' in ctx.stat_fields else 'minutes'
+    ctx.season_format_fn = str
+
+    logger.info('Starting %s sync...', 'partial update' if partial_update else 'full')
+    delay = 0.5 if partial_update else ctx.sheet_formatting.get('sync_delay_seconds', 3)
+
+    client = get_sheets_client(ctx.google_sheets_config)
+    spreadsheet = client.open_by_key(ctx.google_sheets_config['spreadsheet_id'])
+
+    sync_kwargs = dict(mode=mode,
+                       show_advanced=show_advanced,
+                       historical_config=historical_config,
+                       partial_update=partial_update)
+
+    # ---- Pre-compute league-wide percentile populations ONCE ----
+    logger.info('  Pre-computing league-wide percentile populations...')
+    conn = get_db_connection()
+    try:
+        all_players_curr = fetch_all_players(conn, 'current_stats')
+        all_players_hist = fetch_all_players(
+            conn, 'historical_stats', historical_config)
+        all_players_post = fetch_all_players(
+            conn, 'postseason_stats', historical_config)
+        all_teams_curr = fetch_all_teams(conn, 'current_stats')
+        all_teams_hist = fetch_all_teams(
+            conn, 'historical_stats', historical_config)
+        all_teams_post = fetch_all_teams(
+            conn, 'postseason_stats', historical_config)
+
+        pct_curr = calculate_all_percentiles(all_players_curr, 'player', mode)
+        pct_hist = calculate_all_percentiles(all_players_hist, 'player', mode)
+        pct_post = calculate_all_percentiles(all_players_post, 'player', mode)
+        pct_team_curr = calculate_all_percentiles(
+            all_teams_curr['teams'], 'team', mode)
+        pct_opp_curr = calculate_all_percentiles(
+            all_teams_curr['opponents'], 'opponents', mode)
+        pct_team_hist = calculate_all_percentiles(
+            all_teams_hist['teams'], 'team', mode)
+        pct_opp_hist = calculate_all_percentiles(
+            all_teams_hist['opponents'], 'opponents', mode)
+        pct_team_post = calculate_all_percentiles(
+            all_teams_post['teams'], 'team', mode)
+        pct_opp_post = calculate_all_percentiles(
+            all_teams_post['opponents'], 'opponents', mode)
+
+        precomputed = {
+            'pct_curr': pct_curr,
+            'pct_hist': pct_hist,
+            'pct_post': pct_post,
+            'pct_team_curr': pct_team_curr,
+            'pct_opp_curr': pct_opp_curr,
+            'pct_team_hist': pct_team_hist,
+            'pct_opp_hist': pct_opp_hist,
+            'pct_team_post': pct_team_post,
+            'pct_opp_post': pct_opp_post,
+        }
+        logger.info('  Percentile populations ready')
+    finally:
+        conn.close()
+
+    # ---- Build team list ----
+    teams_db = ctx.etl_lib.get_teams_from_db()
+    team_names = {abbr: name for _, (abbr, name) in teams_db.items()}
+    abbrs = sorted(team_names.keys())
+
+    if priority_tab:
+        pt = priority_tab.upper()
+        if pt in abbrs:
+            abbrs = [pt] + [a for a in abbrs if a != pt]
+
+    # ---- Sync individual team sheets ----
+    for abbr in abbrs:
+        try:
+            sync_team_sheet(
+                ctx, client, spreadsheet, abbr,
+                team_name=team_names.get(abbr, abbr),
+                precomputed=precomputed,
+                **sync_kwargs,
+            )
+        except Exception as exc:
+            logger.error(f'  {abbr} failed: {exc}', exc_info=True)
+
+        logger.info(f'  Rate limit pause ({delay}s)...')
+        time.sleep(delay)
+
+    # ---- Sync aggregate sheets (Players then Teams) ----
+    # If priority_tab is an aggregate sheet name, sync it first
+    aggregate_order = ['players', 'teams']
+    if priority_tab and priority_tab.lower() in aggregate_order:
+        first = priority_tab.lower()
+        aggregate_order = [first] + [s for s in aggregate_order if s != first]
+
+    for sheet_name in aggregate_order:
+        try:
+            if sheet_name == 'players':
+                sync_players_sheet(ctx, client, spreadsheet, **sync_kwargs)
+            else:
+                sync_teams_sheet(ctx, client, spreadsheet, **sync_kwargs)
+        except Exception as exc:
+            logger.error(f'  {sheet_name.title()} sheet failed: {exc}', exc_info=True)
+
+        logger.info(f'  Rate limit pause ({delay}s)...')
+        time.sleep(delay)
+
+    logger.info('Sync complete.')
+
 
 if __name__ == '__main__':
     main()

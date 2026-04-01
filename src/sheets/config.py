@@ -297,7 +297,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': None,
         'nullable': True,
         'formulas': {
-            'player': 'jersey_number',
+            'player': 'jersey_num',
         }
     },
     'experience': {
@@ -319,8 +319,8 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'average',
         'nullable': False,
         'formulas': {
-            'player': 'years_experience',
-            'team': 'years_experience',
+            'player': 'seasons_exp',
+            'team': 'seasons_exp',
         }
     },
     'age': {
@@ -342,7 +342,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'average',
         'nullable': False,
         'formulas': {
-                'player': 'age',
+            'player': 'age',
         },
     },
     'height': {
@@ -459,9 +459,9 @@ SHEETS_COLUMNS: Dict[str, Any] = {
             'team': 'notes',
         }
     },
-    'years': {
+    'seasons': {
         'stat_category': 'none',
-        'display_name': 'Yrs',
+        'display_name': 'Szns',
         'description': 'Number of seasons in range',
         'section': ['historical_stats', 'postseason_stats'],
         'subsection': 'rates',
@@ -501,8 +501,8 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-            'player': 'games / years',
-            'team': 'games / years',
+            'player': 'games / seasons',
+            'team': 'games / seasons',
         },
     },
     'minutes': {
@@ -666,7 +666,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'cont_close_2fga',
+            'player': 'cont_close_2fga',
         }
     },
     'Points_Per_cont_close_2fga': {
@@ -688,7 +688,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '2 * (cont_close_2fgm / cont_close_2fga)',
+            'player': '2 * (cont_close_2fgm / cont_close_2fga)',
         }
     },
     'open_close_2fga': {
@@ -710,7 +710,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'open_close_2fga',
+            'player': 'open_close_2fga',
         }
     },
     'Points_Per_open_close_2fga': {
@@ -732,7 +732,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '2 * (open_close_2fgm / open_close_2fga)',
+            'player': '2 * (open_close_2fgm / open_close_2fga)',
         }
     },
     'cont_long_2fga': {
@@ -754,7 +754,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'cont_2fga - cont_close_2fga',
+            'player': 'cont_2fga - cont_close_2fga',
         }
     },
     'points_per_cont_long_2fga': {
@@ -776,7 +776,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
+            'player': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
         }
     },
     'open_long_2fga': {
@@ -798,7 +798,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'open_2fga - open_close_2fga',
+            'player': 'open_2fga - open_close_2fga',
         }
     },
     'points_per_open_long_2fga': {
@@ -820,7 +820,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
+            'player': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
         }
     },
     '3fga': {
@@ -890,7 +890,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'cont_3fga',
+            'player': 'cont_3fga',
         }
     },
     'points_per_cont_3fga': {
@@ -912,7 +912,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '3 * (cont_3fgm / cont_3fga)',
+            'player': '3 * (cont_3fgm / cont_3fga)',
         }
     },
     'open_3fga': {
@@ -934,7 +934,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'open_3fga',
+            'player': 'open_3fga',
         }
     },
     'points_per_open_3fga': {
@@ -956,7 +956,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '3 * (open_3fgm / open_3fga)',
+            'player': '3 * (open_3fgm / open_3fga)',
         }
     },
     'free_throw_rate': {
@@ -1026,7 +1026,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'dunks',
+            'player': 'dunks',
         }
     },
     'assists': {
@@ -1072,7 +1072,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'pot_assists',
+            'player': 'pot_assists',
         }
     },
     'secondary_assists': {
@@ -1094,7 +1094,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'sec_assists',
+            'player': 'sec_assists',
         }
     },
     'passes': {
@@ -1116,7 +1116,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'passes',
+            'player': 'passes',
         }
     },
     'touches': {
@@ -1138,7 +1138,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'touches',
+            'player': 'touches',
         }
     },
     'seconds_per_touch': {
@@ -1160,7 +1160,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '(60 * time_on_ball) / touches',
+            'player': '(60 * time_on_ball) / touches',
         }
     },
     'dribbles_per_touch': {
@@ -1182,7 +1182,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'dribbles / touches',
+            'player': 'dribbles / touches',
         }
     },
     'pct_touches_shots': {
@@ -1204,7 +1204,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '((2fga + 3fga + (0.44 * fta)) / touches) * 100',
+            'player': '((2fga + 3fga + (0.44 * fta)) / touches) * 100',
         }
     },
     'pct_touches_passes': {
@@ -1226,7 +1226,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '(passes / touches) * 100',
+            'player': '(passes / touches) * 100',
         }
     },
     'pct_touches_turnovers': {
@@ -1248,7 +1248,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '(turnovers / touches) * 100',
+            'player': '(turnovers / touches) * 100',
         }
     },
     'turnovers': {
@@ -1340,7 +1340,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '(cont_o_rebs / o_rebounds) * 100',
+            'player': '(cont_o_rebs / o_rebounds) * 100',
         }
     },
     'cont_dreb_pct': {
@@ -1362,7 +1362,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '(cont_d_rebs / d_rebounds) * 100',
+            'player': '(cont_d_rebs / d_rebounds) * 100',
         }
     },
     'putbacks': {
@@ -1384,7 +1384,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'putbacks',
+            'player': 'putbacks',
         }
     },
     'def_close_2fga': {
@@ -1406,7 +1406,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'd_close_2fga',
+            'player': 'd_close_2fga',
         }
     },
     'points_per_def_close_2fga': {
@@ -1428,7 +1428,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '2 * (d_close_2fgm / d_close_2fga)',
+            'player': '2 * (d_close_2fgm / d_close_2fga)',
         }
     },
     'def_long_2fga': {
@@ -1450,7 +1450,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'd_2fga - d_close_2fga',
+            'player': 'd_2fga - d_close_2fga',
         }
     },
     'points_per_def_long_2fga': {
@@ -1472,7 +1472,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
+            'player': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
         }
     },
     'def_3fga': {
@@ -1494,7 +1494,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'd_3fga',
+            'player': 'd_3fga',
         }
     },
     'points_per_def_3fga': {
@@ -1516,7 +1516,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '3 * (d_3fgm / d_3fga)',
+            'player': '3 * (d_3fgm / d_3fga)',
         }
     },
     'real_def_pct': {
@@ -1538,7 +1538,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'real_d_fg_pct_x1000 / 10',
+            'player': 'real_d_fg_pct_x1000 / 10',
         }
     },
     'real_def_close_2_pct': {
@@ -1560,7 +1560,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'real_d_close_2fg_pct_x1000 / 10',
+            'player': 'real_d_close_2fg_pct_x1000 / 10',
         }
     },
     'real_def_2fg_pct': {
@@ -1582,7 +1582,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'real_d_2fg_pct_x1000 / 10',
+            'player': 'real_d_2fg_pct_x1000 / 10',
         }
     },
     'real_def_3fg_pct': {
@@ -1604,7 +1604,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'real_d_3fg_pct_x1000 / 10',
+            'player': 'real_d_3fg_pct_x1000 / 10',
         }
     },
     'blocks': {
@@ -1650,7 +1650,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'contests',
+            'player': 'contests',
         }
     },
     'steals_plus_charges': {
@@ -1672,7 +1672,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'steals + charges_drawn',
+            'player': 'steals + charges_drawn',
         }
     },
     'deflections': {
@@ -1694,7 +1694,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'deflections',
+            'player': 'deflections',
         }
     },
     'fouls': {
@@ -1740,7 +1740,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'o_dist_x10 / 10',
+            'player': 'o_dist_x10 / 10',
         }
     },
     'def_distance': {
@@ -1762,7 +1762,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'd_dist_x10 / 10',
+            'player': 'd_dist_x10 / 10',
         }
     },
     'o_rating': {
@@ -1832,7 +1832,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '(o_rating_x10 / 10) - (off_o_rating_x10 / 10)',
+            'player': '(o_rating_x10 / 10) - (off_o_rating_x10 / 10)',
         }
     },
     'net_off_d_rating': {
@@ -1854,7 +1854,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': '(d_rating_x10 / 10) - (off_d_rating_x10 / 10)',
+            'player': '(d_rating_x10 / 10) - (off_d_rating_x10 / 10)',
         }
     },
     'nba_id': {
@@ -1876,7 +1876,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'team_row_calc': 'team_value',
         'nullable': False,
         'formulas': {
-                'player': 'player_id',
+            'player': 'player_id',
         }
     },
     'conference': {
@@ -1897,7 +1897,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['ncaa'],
         'nullable': False,
         'formulas': {
-                'player': 'conference',
+            'player': 'conference',
         }
     },
     'wins': {
@@ -1918,7 +1918,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['ncaa'],
         'nullable': False,
         'formulas': {
-                'team': 'wins',
+            'team': 'wins',
         }
     },
     'losses': {
@@ -1939,7 +1939,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['ncaa'],
         'nullable': False,
         'formulas': {
-                'team': 'losses',
+            'team': 'losses',
         }
     },
     'steals': {
@@ -1960,7 +1960,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['ncaa'],
         'nullable': False,
         'formulas': {
-                'player': 'steals',
+            'player': 'steals',
         }
     },
     'win_pct': {
@@ -1981,7 +1981,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['ncaa'],
         'nullable': False,
         'formulas': {
-                'team': 'wins / (wins + losses)',
+            'team': 'wins / (wins + losses)',
         }
     },
     'ncaa_id': {
@@ -2002,7 +2002,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['ncaa'],
         'nullable': False,
         'formulas': {
-                'player': 'player_id',
+            'player': 'player_id',
         }
     }
 }

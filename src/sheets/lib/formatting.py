@@ -1,12 +1,18 @@
 import logging
 from typing import Dict, List, Optional, Any, Tuple
-import sheets.lib.state as state
 from src.sheets.config import SHEETS_COLUMNS
 from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
+
+
+def _format_season_label(season_year: int) -> str:
+    """Convert end-year integer to season string: 2026 -> '2025-26'."""
+    return f"{season_year - 1}-{str(season_year)[2:]}"
+
+
 def format_stat_value(value: Any, col_def: dict) -> Any:
     """Format a stat value for display according to column definition."""
     if value is None:
-        # Non-nullable columns (games, years) show 0 instead of blank
+        # Non-nullable columns (games, seasons) show 0 instead of blank
         if not col_def.get('nullable', True):
             return 0
         return ''
@@ -41,8 +47,8 @@ def format_height(inches: Any) -> str:
     return f"{feet}'{remaining:.1f}\""
 
 
-def format_section_header(section: str, years_config: Optional[dict] = None,
-                          current_year: int = 0,
+def format_section_header(section: str, historical_config: Optional[dict] = None,
+                          current_season: int = 0,
                           is_postseason: bool = False,
                           mode: Optional[str] = None) -> str:
     """
@@ -54,8 +60,8 @@ def format_section_header(section: str, years_config: Optional[dict] = None,
 
     Args:
         section: 'current_stats', 'historical_stats', or 'postseason_stats'
-        years_config: {mode, value, include_current} for hist/post
-        current_year: End-year integer (e.g. 2026 for 2025-26 season)
+        historical_config: {mode, value, include_current} for hist/post
+        current_season: End-year integer (e.g. 2026 for the 2025-26 season)
         is_postseason: True for postseason sections
         mode: Stats display mode ('per_game', 'per_48', 'per_100')
     """
@@ -69,15 +75,15 @@ def format_section_header(section: str, years_config: Optional[dict] = None,
 
     # Current stats: just "YYYY-YY Regular Season Stats (mode)"
     if section == 'current_stats':
-        season_str = _year_to_season(current_year)
+        season_str = _format_season_label(current_season)
         header = f"{season_str} {season_label} Stats"
         mode_label = _MODE_LABELS.get(mode, '')
         return f"{header} {mode_label}" if mode_label else header
 
     # Historical / Postseason sections
-    mode_cfg = (years_config or {}).get('mode', 'years')
-    value = (years_config or {}).get('value', 3)
-    include_current = (years_config or {}).get('include_current', False)
+    mode_cfg = (historical_config or {}).get('mode', 'seasons')
+    value = (historical_config or {}).get('value', 3)
+    include_current = (historical_config or {}).get('include_current', False)
 
     previous = '' if include_current else ' Previous'
     mode_label = _MODE_LABELS.get(mode, '')
@@ -85,18 +91,17 @@ def format_section_header(section: str, years_config: Optional[dict] = None,
 
     if mode_cfg == 'career':
         return f"Career{previous} {season_label} Stats{mode_suffix}"
-    elif mode_cfg == 'years':
+    elif mode_cfg == 'seasons' and isinstance(value, int):
         start = 0 if include_current else 1
-        end_year = current_year - start
-        start_year = current_year - (start + value - 1)
-        range_str = f" ({_year_to_season(start_year)} to {_year_to_season(end_year)})"
+        end_season = current_season - start
+        start_season = current_season - (start + value - 1)
+        range_str = f" ({_format_season_label(start_season)} to {_format_season_label(end_season)})"
         return f"Last {value}{previous} {season_label} Stats{range_str}{mode_suffix}"
-    elif mode_cfg == 'seasons':
-        seasons = value if isinstance(value, list) else []
-        if seasons:
-            n = len(seasons)
-            first = min(seasons)
-            last = max(seasons)
+    elif mode_cfg == 'seasons' and isinstance(value, list):
+        if value:
+            n = len(value)
+            first = min(value)
+            last = max(value)
             range_str = f" ({first} to {last})"
             return f"Last {n}{previous} {season_label} Stats{range_str}{mode_suffix}"
         return f"{season_label} Stats{mode_suffix}"
@@ -104,28 +109,28 @@ def format_section_header(section: str, years_config: Optional[dict] = None,
         return f"{season_label} Stats{mode_suffix}"
 
 
-def format_years_range(years_config: Optional[dict], current_year: int) -> str:
+def format_seasons_range(historical_config: Optional[dict], current_season: int) -> str:
     """
     Legacy wrapper — returns a prefix string for section headers.
     Kept for backward compatibility; prefer format_section_header() for full headers.
     """
-    if not years_config:
-        return 'Last 3 Years'
-    mode = years_config.get('mode', 'years')
+    if not historical_config:
+        return 'Last 3 Seasons'
+    mode = historical_config.get('mode', 'seasons')
     if mode == 'career':
         return 'Career'
-    elif mode == 'years':
-        value = years_config.get('value', 3)
-        return f'Last {value} Year{"s" if value != 1 else ""}'
+    elif mode == 'seasons':
+        value = historical_config.get('value', 3)
+        return f'Last {value} Season{"s" if value != 1 else ""}'
     elif mode == 'since_season':
-        season = years_config.get('season', years_config.get('value', ''))
+        season = historical_config.get('season', historical_config.get('value', ''))
         return f'Since {season}'
     elif mode == 'seasons':
-        years = years_config.get('value', [])
-        if years:
-            first = min(years)
-            last = max(years)
-            return f"{_year_to_season(first)} – {_year_to_season(last)}"
+        seasons = historical_config.get('value', [])
+        if seasons:
+            first = min(seasons)
+            last = max(seasons)
+            return f"{_format_season_label(first)} – {_format_season_label(last)}"
         return ''
     return ''
 
@@ -184,8 +189,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               n_player_rows: int = 0,
                               sheet_type: str = 'team',
                               show_advanced: bool = False,
-                              show_percentiles: bool = False,
-                              data_only: bool = False) -> list:
+                              partial_update: bool = False) -> list:
     """
     Build ALL Google Sheets batch_update requests for a worksheet.
     100% config-driven from SHEET_FORMATTING.
@@ -203,7 +207,6 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         n_player_rows: Number of player rows (for filter range; team/opp excluded)
         sheet_type: 'team', 'players', or 'teams'
         show_advanced: If True, keep advanced columns visible (override config)
-        show_percentiles: If True, show percentile columns and hide base values
 
     Returns:
         List of request dicts for spreadsheet.batch_update
@@ -220,12 +223,11 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
 
     # Respect current toggle state: override config defaults
     hide_advanced = not show_advanced if show_advanced else fmt.get('hide_advanced_columns', True)
-    hide_percentiles = not show_percentiles if show_percentiles else fmt.get('hide_percentile_columns', True)
     hide_subsection_row = hide_advanced  # subsection row visibility matches advanced state
 
-    # --- Fast path for data-only sync (mode / timeframe changes) ---------
-    # Skip all structural formatting; only reapply data-dependent pieces.
-    if data_only:
+    # --- Fast path for partial update (mode / timeframe changes) ---------
+    # Skip all structural formatting, resize, and widths; only reapply data-dependent pieces.
+    if partial_update:
         fast = []
         # Banding (row count may have changed)
         if n_data_rows > 0:
@@ -257,47 +259,6 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             fast.extend(_build_null_formula_bg_requests(
                 ws_id, columns_list, data_start, n_player_rows, n_data_rows
             ))
-        # Grid resize
-        fast.append({
-            'updateSheetProperties': {
-                'properties': {
-                    'sheetId': ws_id,
-                    'gridProperties': {
-                        'rowCount': total_rows,
-                        'columnCount': n_cols,
-                    },
-                },
-                'fields': 'gridProperties(rowCount,columnCount)',
-            }
-        })
-        # Column widths (needed even in data_only mode for correct sizing)
-        for idx, entry in enumerate(columns_list):
-            col_def = entry[1]
-            min_width = col_def.get('minimum_width')
-            if min_width == 'auto':
-                fast.append({
-                    'autoResizeDimensions': {
-                        'dimensions': {
-                            'sheetId': ws_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': idx,
-                            'endIndex': idx + 1,
-                        },
-                    }
-                })
-            elif isinstance(min_width, (int, float)):
-                fast.append({
-                    'updateDimensionProperties': {
-                        'range': {
-                            'sheetId': ws_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': idx,
-                            'endIndex': idx + 1,
-                        },
-                        'properties': {'pixelSize': int(min_width)},
-                        'fields': 'pixelSize',
-                    }
-                })
         return fast
 
     requests = []
@@ -634,26 +595,22 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         # Advanced visible → hide basic stat columns (swap behavior)
         requests.extend(_build_hide_basic_requests(ws_id, columns_list))
 
-    # ---- 17. Hide percentile columns (respects current toggle state) ----
-    if hide_percentiles:
-        requests.extend(_build_hide_percentile_requests(ws_id, columns_list))
-    # When percentiles are visible, hide the base value columns instead
-    if not hide_percentiles:
-        for idx, entry in enumerate(columns_list):
-            col_def = entry[1]
-            if col_def.get('has_percentile', False) and not col_def.get('is_generated_percentile', False):
-                requests.append({
-                    'updateDimensionProperties': {
-                        'range': {
-                            'sheetId': ws_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': idx,
-                            'endIndex': idx + 1,
-                        },
-                        'properties': {'hiddenByUser': True},
-                        'fields': 'hiddenByUser',
-                    }
-                })
+    # ---- 17. Hide base value columns (percentile companion columns are always visible) ----
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        if col_def.get('has_percentile', False) and not col_def.get('is_generated_percentile', False):
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'hiddenByUser': True},
+                    'fields': 'hiddenByUser',
+                }
+            })
 
     # ---- 18. Hide subsection row (tied to advanced stats state) ----
     if hide_subsection_row:
@@ -865,27 +822,6 @@ def _build_hide_basic_requests(ws_id: int, columns_list: List[Tuple]) -> list:
     return requests
 
 
-def _build_hide_percentile_requests(ws_id: int, columns_list: List[Tuple]) -> list:
-    """Build requests to hide all generated percentile columns."""
-    requests = []
-    for idx, entry in enumerate(columns_list):
-        col_def = entry[1]
-        if col_def.get('is_generated_percentile', False):
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': ws_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': idx,
-                        'endIndex': idx + 1,
-                    },
-                    'properties': {'hiddenByUser': True},
-                    'fields': 'hiddenByUser',
-                }
-            })
-    return requests
-
-
 def _build_tooltip_requests(ws_id: int, columns_list: List[Tuple],
                             header_row: int) -> list:
     """Build requests to set notes (tooltips) on column header cells.
@@ -1006,7 +942,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                             pct_curr: dict, pct_hist: dict, pct_post: dict,
                             entity_type: str = 'player',
                             mode: str = 'per_game',
-                            hist_years: str = '', post_years: str = '',
+                            hist_seasons: str = '', post_seasons: str = '',
                             opp_percentiles: Optional[dict] = None) -> Tuple[list, List[dict]]:
     """
     Build a single merged data row with current + historical + postseason stats.
@@ -1018,9 +954,9 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
     if current_data:
         section_data['current_stats'] = (current_data, pct_curr, '')
     if historical_data:
-        section_data['historical_stats'] = (historical_data, pct_hist, hist_years)
+        section_data['historical_stats'] = (historical_data, pct_hist, hist_seasons)
     if postseason_data:
-        section_data['postseason_stats'] = (postseason_data, pct_post, post_years)
+        section_data['postseason_stats'] = (postseason_data, pct_post, post_seasons)
 
     primary_entity = current_data or historical_data or postseason_data or {}
 
@@ -1345,16 +1281,13 @@ def get_config_for_export(league: str,
 
     # --- Build full column lists for all sheet types --------------------
     team_columns = build_sheet_columns(
-        entity='player', stat_mode='both',
-        show_percentiles=True, sheet_type='team'
+        entity='player', stat_mode='both', sheet_type='team'
     )
     league_columns = build_sheet_columns(
-        entity='player', stat_mode='both',
-        show_percentiles=True, sheet_type='players'
+        entity='player', stat_mode='both', sheet_type='players'
     )
     teams_columns = build_sheet_columns(
-        entity='team', stat_mode='both',
-        show_percentiles=True, sheet_type='teams'
+        entity='team', stat_mode='both', sheet_type='teams'
     )
 
     # --- Helper: find contiguous ranges of matching column indices --------

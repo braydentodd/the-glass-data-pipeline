@@ -77,19 +77,20 @@ def db_connection():
 # ============================================================================
 
 def get_current_season_year() -> int:
-    """Current season end-year (calendar year of spring semester).
+    """End-year of the current season.
 
-    After August we're already in the next season (e.g. September 2024 → 2025).
-    Both NBA and NCAA share this convention.
+    Uses July 1st as the boundary: from July 1 2026 onward we are in the
+    2026-27 season (end-year 2027). Before July 1 2026 we are still in
+    2025-26 (end-year 2026). Shared by both NBA and NCAA.
     """
     now = datetime.now()
-    return now.year + 1 if now.month > 8 else now.year
+    return now.year + 1 if now.month >= 7 else now.year
 
 
 def get_current_season() -> str:
-    """Current season as a display string, e.g. '2024-25'."""
-    year = get_current_season_year()
-    return f"{year - 1}-{str(year)[-2:]}"
+    """Current season as a display string, e.g. '2025-26'."""
+    end_year = get_current_season_year()
+    return f"{end_year - 1}-{str(end_year)[-2:]}"
 
 
 # ============================================================================

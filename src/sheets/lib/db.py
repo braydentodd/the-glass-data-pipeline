@@ -19,41 +19,41 @@ def _quote_col(col: str) -> str:
     return col
 
 
-def _build_season_filter(years_config: Optional[dict], current_year: int,
-                         season_type: str, season_col: str, year_to_season_fn) -> Tuple[str, tuple]:
+def _build_season_filter(historical_config: Optional[dict], current_season_year: int,
+                         season_type: str, season_col: str, season_format_fn) -> Tuple[str, tuple]:
     """
-    Build SQL season/year filter clause and params tuple.
-    Takes a parser function (year_to_season_fn) to handle formatting disparities.
+    Build SQL season filter clause and params tuple.
+    Takes a format function (season_format_fn) to handle formatting disparities.
     """
-    if not years_config:
-        seasons = tuple(year_to_season_fn(current_year - i) for i in range(1, 4))
+    if not historical_config:
+        seasons = tuple(season_format_fn(current_season_year - i) for i in range(1, 4))
         return f"AND s.{season_col} IN %s", (seasons,)
 
-    mode = years_config.get('mode', 'years')
-    value = years_config.get('value', 3)
-    include_current = years_config.get('include_current', False)
+    mode = historical_config.get('mode', 'seasons')
+    value = historical_config.get('value', 3)
+    include_current = historical_config.get('include_current', False)
 
     if mode == 'career':
         if not include_current:
-            seasons = tuple(year_to_season_fn(current_year - i) for i in range(1, 10)) # Arbitrary large lookback
+            seasons = tuple(season_format_fn(current_season_year - i) for i in range(1, 10))
             return f"AND s.{season_col} IN %s", (seasons,)
         return "", ()
         
-    elif mode == 'years':
+    elif mode == 'seasons' and isinstance(value, int):
         start = 0 if include_current else 1
-        seasons = tuple(year_to_season_fn(current_year - i) for i in range(start, start + value))
+        seasons = tuple(season_format_fn(current_season_year - i) for i in range(start, start + value))
         return f"AND s.{season_col} IN %s", (seasons,)
         
-    elif mode == 'seasons':
+    elif mode == 'seasons' and isinstance(value, list):
         return f"AND s.{season_col} IN %s", (tuple(value),)
     else:
         return "", ()
 
 
 def fetch_players_for_team(conn, team_abbr: str, section: str,
-                           years_config: Optional[dict],
+                           historical_config: Optional[dict],
                            ctx, # The LeagueSyncContext holding dynamic properties
-                           current_season: str, current_year: int, season_type_val,
+                           current_season: str, current_season_year: int, season_type_val,
                            season_col_name: str = 'season') -> List[dict]:
     """Fetch player data for a team with all stats needed for formula evaluation."""
     
@@ -94,7 +94,7 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
         # Historical / Postseason aggregation
         st = 1 if section == 'historical_stats' else '2, 3'
         season_filter, params = _build_season_filter(
-            years_config, current_year, st, season_col_name, ctx.year_format_fn
+            historical_config, current_season_year, st, season_col_name, ctx.season_format_fn
         )
 
         s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(ctx.stat_fields)]
@@ -124,8 +124,8 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
             return [dict(r) for r in cur.fetchall()]
 
 
-def fetch_all_players(conn, section: str, years_config: Optional[dict],
-                      ctx, current_season: str, current_year: int, season_type_val,
+def fetch_all_players(conn, section: str, historical_config: Optional[dict],
+                      ctx, current_season: str, current_season_year: int, season_type_val,
                       season_col_name: str = 'season') -> List[dict]:
     """Fetch all players across the entire league for percentile calculations."""
     players_tbl = ctx.player_entity_table
@@ -151,7 +151,7 @@ def fetch_all_players(conn, section: str, years_config: Optional[dict],
     else:
         st = 1 if section == 'historical_stats' else '2, 3'
         season_filter, params = _build_season_filter(
-            years_config, current_year, st, season_col_name, ctx.year_format_fn
+            historical_config, current_season_year, st, season_col_name, ctx.season_format_fn
         )
 
         s_sums = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(ctx.stat_fields)]
@@ -173,8 +173,8 @@ def fetch_all_players(conn, section: str, years_config: Optional[dict],
             return [dict(r) for r in cur.fetchall()]
 
 
-def fetch_team_stats(conn, team_abbr: str, section: str, years_config: Optional[dict],
-                     ctx, current_season: str, current_year: int, season_type_val,
+def fetch_team_stats(conn, team_abbr: str, section: str, historical_config: Optional[dict],
+                     ctx, current_season: str, current_season_year: int, season_type_val,
                      season_col_name: str = 'season') -> dict:
     """Fetch aggregated team data and opponent data."""
     teams_tbl = ctx.team_entity_table
@@ -199,7 +199,7 @@ def fetch_team_stats(conn, team_abbr: str, section: str, years_config: Optional[
     else:
         st = 1 if section == 'historical_stats' else '2, 3'
         season_filter, params = _build_season_filter(
-            years_config, current_year, st, season_col_name, ctx.year_format_fn
+            historical_config, current_season_year, st, season_col_name, ctx.season_format_fn
         )
 
         s_sums = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(ctx.team_stat_fields)]
@@ -235,8 +235,8 @@ def fetch_team_stats(conn, team_abbr: str, section: str, years_config: Optional[
     }
 
 
-def fetch_all_teams(conn, section: str, years_config: Optional[dict],
-                    ctx, current_season: str, current_year: int, season_type_val,
+def fetch_all_teams(conn, section: str, historical_config: Optional[dict],
+                    ctx, current_season: str, current_season_year: int, season_type_val,
                     season_col_name: str = 'season') -> dict:
     """Fetch all teams' aggregated stats (used for team pacing and percentiles)."""
     teams_tbl = ctx.team_entity_table
@@ -259,7 +259,7 @@ def fetch_all_teams(conn, section: str, years_config: Optional[dict],
     else:
         st = 1 if section == 'historical_stats' else '2, 3'
         season_filter, params = _build_season_filter(
-            years_config, current_year, st, season_col_name, ctx.year_format_fn
+            historical_config, current_season_year, st, season_col_name, ctx.season_format_fn
         )
 
         s_sums = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(ctx.team_stat_fields)]

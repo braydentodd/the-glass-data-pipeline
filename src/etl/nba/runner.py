@@ -1285,7 +1285,7 @@ def update_player_rosters(ctx: ETLContext) -> Tuple[int, int, List[int]]:
     """
     FAST daily roster update:
     1. Fetch player stats (current + last season) - 2 API calls, very fast
-    2. Fetch team rosters to get team_id + jersey_number - 30 API calls, ~30 seconds
+    2. Fetch team rosters to get team_id + jersey_num - 30 API calls, ~30 seconds
     3. Only fetch height/weight/birthdate for NEW players (rare)
     
     This completes in ~2-3 minutes instead of 20 minutes.
@@ -1347,12 +1347,12 @@ def update_player_rosters(ctx: ETLContext) -> Tuple[int, int, List[int]]:
                     player_name = player_row['PLAYER']
                     
                     # Add player from roster (SOURCE OF TRUTH)
-                    # Use DB column names from config (jersey_number not jersey)
+                    # Use DB column names from config (jersey_num not jersey)
                     all_players[player_id] = {
                         'player_id': player_id,
                         'team_id': team_id,  # Use team from roster
                         'name': player_name,
-                        'jersey_number': safe_int(player_row.get('NUM')),  # SMALLINT column — safe_int handles NaN → None
+                        'jersey_num': safe_int(player_row.get('NUM')),  # SMALLINT column — safe_int handles NaN → None
                         'weight_lbs': None,  # Will get from annual ETL or commonplayerinfo for new players
                         'age': None
                     }
@@ -1537,31 +1537,31 @@ def update_player_rosters(ctx: ETLContext) -> Tuple[int, int, List[int]]:
         update_players_data = []
         
         players_table = get_table_name('player', 'entity')
-        cursor.execute(f"SELECT player_id, team_id, jersey_number FROM {players_table}")
-        existing_players = {row[0]: {'team_id': row[1], 'jersey_number': row[2]} for row in cursor.fetchall()}
+        cursor.execute(f"SELECT player_id, team_id, jersey_num FROM {players_table}")
+        existing_players = {row[0]: {'team_id': row[1], 'jersey_num': row[2]} for row in cursor.fetchall()}
         
         for player_id, player_data in all_players.items():
             if player_id in existing_players and player_id not in new_player_ids:
                 existing = existing_players[player_id]
                 # Check if team or jersey number changed
                 if (existing['team_id'] != player_data['team_id'] or
-                        existing['jersey_number'] != player_data.get('jersey_number')):
+                        existing['jersey_num'] != player_data.get('jersey_num')):
                     players_updated += 1
                 
-                # Update team_id and jersey_number — both come from commonteamroster
+                # Update team_id and jersey_num — both come from commonteamroster
                 # and can change (trades, number changes). Other detail fields
                 # (rookie_year, height, etc.) are stable and handled by the annual ETL.
                 update_players_data.append((
                     player_data['team_id'],
-                    player_data.get('jersey_number'),
+                    player_data.get('jersey_num'),
                     player_id
                 ))
         
-        # Bulk update existing players (team_id + jersey_number)
+        # Bulk update existing players (team_id + jersey_num)
         if update_players_data:
             update_sql = f"""
                 UPDATE {players_table}
-                SET team_id = %s, jersey_number = %s, updated_at = NOW()
+                SET team_id = %s, jersey_num = %s, updated_at = NOW()
                 WHERE player_id = %s
             """
             cursor.executemany(update_sql, update_players_data)

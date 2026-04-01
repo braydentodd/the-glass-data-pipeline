@@ -35,7 +35,7 @@ function getLeagueConfig() {
       playersRangeKey:     'ncaa_sheet',
       editColIndexKey:     'ncaa_col_index',
       apiPrefix:           '/api/ncaa',
-      syncEndpoint:        '/api/ncaa/update-sheets',
+      syncEndpoint:        '/api/update-sheets',
       hasAdvancedStats:    false,
       hasWingspan:         false,
     };
@@ -541,7 +541,7 @@ function triggerSync(mode, options) {
   var payload = {
     stats_mode:    statsMode,
     priority_team: options.priorityTeam || null,
-    data_only:     !advancedToggled,
+    partial_update:     !advancedToggled,
   };
 
   // Keep document properties in sync with UI
@@ -551,6 +551,7 @@ function triggerSync(mode, options) {
   payload.years           = parseInt(props.getProperty('HIST_YEARS') || '3');
   payload.include_current = props.getProperty('HIST_INCLUDE_CURRENT') === 'true';
   payload.show_advanced   = showAdvanced;
+  payload.league          = league.name.toLowerCase();
 
   var histSeason = props.getProperty('HIST_SEASON') || null;
   if (histSeason) payload.seasons = [histSeason];

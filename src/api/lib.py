@@ -21,19 +21,25 @@ from psycopg2.extras import RealDictCursor
 
 from etl.nba.config import NBA_CONFIG
 from etl.nba.lib import get_table_name, get_teams_from_db
-from sheets.nba.lib import (
+from src.db import get_db_connection as _get_db_conn
+from src.sheets.config import SHEETS_COLUMNS
+from src.sheets.lib.calculations import (
     calculate_entity_stats,
-    get_reverse_stats,
-    get_editable_fields,
-    get_config_for_export,
+    calculate_all_percentiles,
+)
+from src.sheets.lib.db import (
     fetch_players_for_team,
     fetch_all_players,
     fetch_team_stats,
-    calculate_all_percentiles,
+)
+from src.sheets.lib.formatting import (
+    get_reverse_stats,
+    get_editable_fields,
+    get_config_for_export,
+)
+from src.sheets.lib.layout import (
     build_entity_row,
     build_sheet_columns,
-    get_db_connection as _get_db_conn,
-    SHEETS_COLUMNS,
 )
 
 # Load NBA teams from DB at startup (team_id -> (abbr, name))
@@ -73,64 +79,59 @@ def update_sheets():
     
     Request body:
     {
-        "mode": "years"|"seasons"|"career",
-        "years": 3,  // for years mode
+        "mode": "seasons"|"career",
         "seasons": ["2024-25", "2023-24"],  // for seasons mode
+        "seasons_count": 3,  // alternative: number of recent seasons
         "include_current": true|false
     }
     """
     try:
         data = request.json
-        mode = data.get('mode', 'years')
-        years = data.get('years', 3)
+        mode = data.get('mode', 'seasons')
         seasons = data.get('seasons', [])
+        seasons_count = data.get('seasons_count', 3)
         include_current = data.get('include_current', False)
-        stats_mode = data.get('stats_mode', 'per_100')  # Get stats mode from request
-        show_percentiles = data.get('show_percentiles', False)  # Current percentile toggle state
-        show_advanced = data.get('show_advanced', False)  # Current advanced stats toggle state
-        priority_team = data.get('priority_team')  # Optional: team to process first
-        sync_section = data.get('sync_section')  # Optional: 'historical', 'postseason', or None for full sync (default: None)
-        data_only_sync = data.get('data_only', True)  # Default to data-only for mode/timeframe switches
+        stats_mode = data.get('stats_mode', 'per_100')
+        show_advanced = data.get('show_advanced', False)
+        priority_tab = data.get('priority_tab')
+        sync_section = data.get('sync_section')
+        partial_update_sync = data.get('partial_update', True)
         
         # Build environment variables for sync script
         env = os.environ.copy()
         env['HISTORICAL_MODE'] = mode
-        env['INCLUDE_CURRENT_YEAR'] = 'true' if include_current else 'false'
+        env['INCLUDE_CURRENT_SEASON'] = 'true' if include_current else 'false'
         env['STATS_MODE'] = stats_mode
-        env['SHOW_PERCENTILES'] = 'true' if show_percentiles else 'false'
         env['SHOW_ADVANCED'] = 'true' if show_advanced else 'false'
-        env['DATA_ONLY_SYNC'] = 'true' if data_only_sync else 'false'
+        env['PARTIAL_UPDATE'] = 'true' if partial_update_sync else 'false'
         
-        # Only set SYNC_SECTION if explicitly requested (for partial syncs)
         if sync_section:
             env['SYNC_SECTION'] = sync_section
         
-        if priority_team:
-            env['PRIORITY_TEAM_ABBR'] = priority_team.upper()
+        if priority_tab:
+            env['PRIORITY_TAB'] = priority_tab
         
-        # Handle both 'season' (singular) and 'seasons' (plural) for compatibility
+        # Handle seasons mode
         if mode == 'season' or mode == 'seasons':
-            env['HISTORICAL_MODE'] = 'seasons'  # Normalize to plural
-            env['HISTORICAL_SEASONS'] = ','.join(str(s) for s in seasons)  # Convert all to strings
+            env['HISTORICAL_MODE'] = 'seasons'
+            env['HISTORICAL_SEASONS'] = ','.join(str(s) for s in seasons)
         else:
-            env['HISTORICAL_YEARS'] = str(years)
+            env['HISTORICAL_SEASONS_COUNT'] = str(seasons_count)
         
         # Get the project root directory
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        # Build command arguments - run as module to ensure imports work
-        cmd = [sys.executable, '-m', 'runners.nba_sheets']
+        # Determine the league from the payload
+        league = data.get('league', 'nba')
         
-        # Add priority team as CLI argument if specified
-        if priority_team:
-            cmd += ['--team', priority_team.upper()]
+        cmd = [sys.executable, '-m', 'src.sheets.runner', '--league', league]
         
-        # Ensure DB_PASSWORD is in environment (required by sync script)
+        if priority_tab:
+            cmd += ['--tab', priority_tab]
+        
         if 'DB_PASSWORD' not in env:
             env['DB_PASSWORD'] = os.environ.get('DB_PASSWORD', '')
         
-        # Run sync in background thread so the API responds immediately.
-        # This makes mode switching feel instant — sheets update in background.
         def _run_sync_bg(bg_cmd, bg_env, bg_cwd):
             try:
                 result = subprocess.run(
@@ -172,56 +173,49 @@ def sync_postseason_stats():
     
     Request body:
     {
-        "mode": "years"|"seasons"|"career",
-        "years": 3,  // for years mode
-        "seasons": ["2024-25", "2023-24"],  // for seasons mode
-        "stats_mode": "per_36",
-        "show_percentiles": true|false
+        "mode": "seasons"|"career",
+        "seasons": ["2024-25", "2023-24"],
+        "seasons_count": 25,
+        "include_current": true|false,
+        "stats_mode": "per_36"
     }
     """
     try:
         data = request.json
         mode = data.get('mode', 'career')
-        years = data.get('years', 25)
+        seasons_count = data.get('seasons_count', 25)
         seasons = data.get('seasons', [])
+        include_current = data.get('include_current', False)
         stats_mode = data.get('stats_mode', 'per_100')
-        # Note: show_percentiles is parsed from sheet header, not passed as parameter
-        priority_team = data.get('priority_team')
+        priority_tab = data.get('priority_tab')
         
-        # Build environment variables for sync script
         env = os.environ.copy()
         env['HISTORICAL_MODE'] = mode
-        env['INCLUDE_CURRENT_YEAR'] = 'false'  # Postseason never includes current
+        env['INCLUDE_CURRENT_SEASON'] = 'true' if include_current else 'false'
         env['STATS_MODE'] = stats_mode
-        env['SEASON_TYPE'] = '2,3'  # 2 = Playoffs, 3 = Play-in
-        env['SHOW_PERCENTILES'] = 'true' if data.get('show_percentiles', False) else 'false'
+        env['SEASON_TYPE'] = '2,3'
         env['SHOW_ADVANCED'] = 'true' if data.get('show_advanced', False) else 'false'
-        env['SYNC_SECTION'] = 'postseason'  # Tell sync script to write to postseason columns
+        env['SYNC_SECTION'] = 'postseason'
         
-        if priority_team:
-            env['PRIORITY_TEAM_ABBR'] = priority_team.upper()
+        if priority_tab:
+            env['PRIORITY_TAB'] = priority_tab
         
-        # Handle both 'season' (singular) and 'seasons' (plural)
         if mode == 'season' or mode == 'seasons':
             env['HISTORICAL_MODE'] = 'seasons'
-            env['HISTORICAL_SEASONS'] = ','.join(str(s) for s in seasons)  # Convert all to strings
+            env['HISTORICAL_SEASONS'] = ','.join(str(s) for s in seasons)
         else:
-            env['HISTORICAL_YEARS'] = str(years)
+            env['HISTORICAL_SEASONS_COUNT'] = str(seasons_count)
         
-        # Get the project root directory
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        league = data.get('league', 'nba')
+        cmd = [sys.executable, '-m', 'src.sheets.runner', '--league', league]
         
-        # Build command arguments
-        cmd = [sys.executable, '-m', 'runners.nba_sheets']
+        if priority_tab:
+            cmd += ['--tab', priority_tab]
         
-        if priority_team:
-            cmd += ['--team', priority_team.upper()]
-        
-        # Ensure DB_PASSWORD is in environment
         if 'DB_PASSWORD' not in env:
             env['DB_PASSWORD'] = os.environ.get('DB_PASSWORD', '')
         
-        # Run sync in background thread for speed
         def _run_post_sync(bg_cmd, bg_env, bg_cwd):
             try:
                 result = subprocess.run(
@@ -242,7 +236,7 @@ def sync_postseason_stats():
 
         return jsonify({
             'success': True,
-            'message': 'Postseason sync started \u2014 sheets will update shortly'
+            'message': 'Postseason sync started — sheets will update shortly'
         }), 202
     except Exception as e:
         return jsonify({
@@ -324,7 +318,7 @@ def calculate_stats():
         percentile_pops = calculate_all_percentiles(all_players, 'player', mode)
 
         # Build column list (for context_section blanking)
-        columns = build_sheet_columns(entity='player', stat_mode='both', show_percentiles=False)
+        columns = build_sheet_columns(entity='player', stat_mode='both')
 
         # Build rows using lib.sheets (same as sync path)
         player_rows = []

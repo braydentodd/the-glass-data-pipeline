@@ -57,8 +57,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
                            percentile_cells: list, n_player_rows: int,
                            sheet_type: str = 'team',
                            show_advanced: bool = False,
-                           show_percentiles: bool = False,
-                           data_only: bool = False,
+                           partial_update: bool = False,
                            build_fn: Optional[Callable] = None):
     """
     Apply ALL Google Sheets formatting via batch API requests.
@@ -72,9 +71,9 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
     For large sheets (500+ players), requests are chunded to stay under
     the Google Sheets API ~10 MB request size limit.
 
-    When data_only=True, skips structural formatting (fonts, borders, widths,
+    When partial_update=True, skips structural formatting (fonts, borders, widths,
     column visibility) and only applies banding, percentile shading, and
-    grid resize.  Used for fast mode/timeframe switches.
+    filters.  Used for fast mode/timeframe switches.
 
     Args:
         build_fn: League-specific build_formatting_requests callable.
@@ -109,7 +108,6 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
         n_player_rows=n_player_rows,
         sheet_type=sheet_type,
         show_advanced=show_advanced,
-        show_percentiles=show_percentiles,
         data_only=data_only,
     )
     # Prepend deleteBanding so old banding is removed before new is added
@@ -125,3 +123,56 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
         chunk = all_requests[i:i + CHUNK_SIZE]
         if chunk:
             worksheet.spreadsheet.batch_update({'requests': chunk})
+
+
+# ============================================================================
+# DATA WRITING & WORKSHEET POSITION
+# ============================================================================
+
+def write_and_format(worksheet, columns, headers, data_rows,
+                      percentile_cells, n_entity_rows,
+                      team_name, sheet_type, show_advanced,
+                      data_only, build_fn):
+    """Resize worksheet, write values, and apply formatting."""
+    n_cols = len(columns)
+    filter_row = [''] * n_cols
+    all_rows = [headers['row1'], headers['row2'], headers['row3'],
+                filter_row] + data_rows
+
+    # Pad rows to full width
+    all_rows = [r + [''] * (n_cols - len(r)) for r in all_rows]
+
+    total_rows = len(all_rows)
+    worksheet.resize(rows=total_rows, cols=n_cols)
+    worksheet.update(range_name='A1', values=all_rows,
+                     value_input_option='USER_ENTERED')
+
+    apply_sheet_formatting(
+        worksheet, columns,
+        header_merges=headers['merges'],
+        n_data_rows=len(data_rows),
+        team_name=team_name,
+        percentile_cells=percentile_cells,
+        n_player_rows=n_entity_rows,
+        sheet_type=sheet_type,
+        show_advanced=show_advanced,
+        data_only=data_only,
+        build_fn=build_fn,
+    )
+
+
+def move_sheet_to_position(worksheet, index):
+    """Move a worksheet to a specific tab position in the workbook."""
+    try:
+        worksheet.spreadsheet.batch_update({'requests': [{
+            'updateSheetProperties': {
+                'properties': {
+                    'sheetId': worksheet.id,
+                    'index': index,
+                },
+                'fields': 'index',
+            }
+        }]})
+    except Exception as e:
+        logger.warning(f'  Could not move sheet to position {index}: {e}')
+

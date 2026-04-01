@@ -1,10 +1,9 @@
 import logging
 from typing import Dict, List, Optional, Any, Tuple
-import sheets.lib.state as state
 from src.sheets.config import SHEETS_COLUMNS
 from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
 from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats
-from .formatting import format_section_header, format_stat_value, get_color_for_percentile, get_color_for_raw, format_years_range
+from .formatting import format_section_header, format_stat_value, get_color_for_percentile, get_color_for_raw, format_seasons_range
 def generate_percentile_columns() -> dict:
     """Auto-generate percentile companion column defs for all columns with has_percentile=True.
 
@@ -127,7 +126,6 @@ def get_columns_for_section_and_entity(section: str, entity: str,
 
 def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
                         league_key: str = 'nba',
-                        show_percentiles: bool = False,
                         sheet_type: str = 'team') -> List[Tuple]:
     """
     Build complete column structure for a sheet.
@@ -202,21 +200,19 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
             pct_key = f"{col_key}_pct"
             if col_def.get('has_percentile') and pct_key in pct_columns:
                 pct_def = pct_columns[pct_key]
-                pct_visible = show_percentiles
-                all_columns.append((pct_key, pct_def, pct_visible, section))
+                all_columns.append((pct_key, pct_def, True, section))
 
     # --- Teams sheet: insert opponent columns ---
     if sheet_type == 'teams':
         all_columns = _insert_opponent_columns(
-            all_columns, pct_columns, hide_advanced, show_percentiles
+            all_columns, pct_columns, hide_advanced
         )
 
     return all_columns
 
 
 def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
-                             hide_advanced: bool,
-                             show_percentiles: bool) -> List[Tuple]:
+                             hide_advanced: bool) -> List[Tuple]:
     """Insert opponent stat columns as a single 'opponent' subsection on the Teams sheet.
 
     Collects opponent columns per section and inserts them between defense and onoff.
@@ -314,9 +310,8 @@ def get_column_index(column_key: str, columns_list: List[Tuple],
 
 def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
                   team_name: str = '',
-                  current_year: int = 0,
+                  current_season: int = 0,
                   historical_config: Optional[dict] = None,
-                  postseason_config: Optional[dict] = None,
                   hist_timeframe: str = '',
                   post_timeframe: str = '') -> dict:
     """
@@ -330,18 +325,18 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
     # Pre-build section header text for the current mode
     _section_headers = {}
     _section_headers['current_stats'] = (
-        format_section_header('current_stats', current_year=current_year, mode=mode)
-        if current_year else SECTION_CONFIG.get('current_stats', {}).get('display_name', 'Current Stats')
+        format_section_header('current_stats', current_season=current_season, mode=mode)
+        if current_season else SECTION_CONFIG.get('current_stats', {}).get('display_name', 'Current Stats')
     )
     _section_headers['historical_stats'] = (
-        format_section_header('historical_stats', years_config=historical_config,
-                              current_year=current_year, is_postseason=False, mode=mode)
-        if current_year else SECTION_CONFIG.get('historical_stats', {}).get('display_name', 'Historical Stats')
+        format_section_header('historical_stats', historical_config=historical_config,
+                              current_season=current_season, is_postseason=False, mode=mode)
+        if current_season else SECTION_CONFIG.get('historical_stats', {}).get('display_name', 'Historical Stats')
     )
     _section_headers['postseason_stats'] = (
-        format_section_header('postseason_stats', years_config=postseason_config,
-                              current_year=current_year, is_postseason=True, mode=mode)
-        if current_year else SECTION_CONFIG.get('postseason_stats', {}).get('display_name', 'Postseason Stats')
+        format_section_header('postseason_stats', historical_config=historical_config,
+                              current_season=current_season, is_postseason=True, mode=mode)
+        if current_season else SECTION_CONFIG.get('postseason_stats', {}).get('display_name', 'Postseason Stats')
     )
 
     row1, row2, row3 = [], [], []
@@ -451,7 +446,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
 
 def build_entity_row(entity_data: dict, columns_list: List[Tuple],
                      percentiles: dict, entity_type: str = 'player',
-                     mode: str = 'per_game', years_str: str = '',
+                     mode: str = 'per_game', seasons_str: str = '',
                      row_section: Optional[str] = None,
                      section_data: Optional[dict] = None) -> list:
     """
@@ -464,14 +459,14 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
     1. Legacy single-section mode (row_section set):
        Uses entity_data + percentiles for matching section, blanks others.
     2. Merged multi-section mode (section_data set):
-       section_data = {section_name: (entity_data, percentiles, years_str)}
+       section_data = {section_name: (entity_data, percentiles, seasons_str)}
        Fills each stats-section column from its corresponding data.
        Non-stats columns use the first available entity_data.
     """
     if section_data:
         # Merged mode — pre-calculate stats per section (supports composite keys like 'current_stats__per_100')
         calculated_by_section = {}
-        for sec_name, (sec_entity, sec_pcts, sec_years) in section_data.items():
+        for sec_name, (sec_entity, sec_pcts, sec_seasons) in section_data.items():
             # Extract mode from composite key: 'current_stats__per_100' → 'per_100'
             if '__' in sec_name:
                 sec_mode = sec_name.split('__')[1]
@@ -484,12 +479,12 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         first_section = next(iter(section_data))
         primary_entity = section_data[first_section][0]
         primary_calculated = calculated_by_section[first_section]
-        primary_years = section_data[first_section][2]
+        primary_seasons = section_data[first_section][2]
     else:
         # Legacy single-section mode
         primary_entity = entity_data
         primary_calculated = calculate_entity_stats(entity_data, entity_type, mode)
-        primary_years = years_str
+        primary_seasons = seasons_str
 
     row = []
 
@@ -504,10 +499,10 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         if section_data and is_stats_section:
             # Pick the right data for this section
             if col_ctx in section_data:
-                sec_entity, sec_pcts, sec_years = section_data[col_ctx]
+                sec_entity, sec_pcts, sec_seasons = section_data[col_ctx]
                 calculated = calculated_by_section[col_ctx]
                 pcts = sec_pcts
-                ystr = sec_years
+                ystr = sec_seasons
             else:
                 row.append('')
                 continue
@@ -521,7 +516,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             pcts = percentiles if not section_data else (
                 section_data[first_section][1] if section_data else percentiles
             )
-            ystr = primary_years
+            ystr = primary_seasons
             sec_entity = primary_entity
 
         if is_pct:
@@ -538,21 +533,21 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             continue
 
         # Non-percentile column
-        # Years column: show count of distinct years (already COUNT(DISTINCT s.year) from SQL)
-        if col_key == 'years':
-            # In merged mode, get the year count from the section's entity data
+        # Seasons column: show count of distinct seasons (already COUNT(DISTINCT s.season) from SQL)
+        if col_key == 'seasons':
+            # In merged mode, get the season count from the section's entity data
             if section_data and is_stats_section and col_ctx in section_data:
-                year_count = section_data[col_ctx][0].get('season')
+                season_count = section_data[col_ctx][0].get('season')
             elif not section_data:
-                year_count = entity_data.get('season')
+                season_count = entity_data.get('season')
             else:
-                year_count = None
-            # year count is already an integer from COUNT(DISTINCT s.year)
+                season_count = None
+            # season count is already an integer from COUNT(DISTINCT s.season)
             # Non-nullable: show 0 when missing (with percentile color)
-            if year_count is None or year_count == '':
+            if season_count is None or season_count == '':
                 row.append(0 if not col_def.get('nullable', True) else '')
             else:
-                row.append(year_count)
+                row.append(season_count)
             continue
 
         # Info column (non-stat) — simple field lookup
