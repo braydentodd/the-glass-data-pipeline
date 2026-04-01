@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Import all config data at module level (no circular dependency)
 from etl.nba.config import (
     TABLES_CONFIG, ENDPOINTS_CONFIG, DB_COLUMNS, DB_SCHEMA,
-    RETRY_CONFIG, API_CONFIG, DB_CONFIG, DB_OPERATIONS, NBA_CONFIG,
+    RETRY_CONFIG, API_CONFIG, DB_OPERATIONS, NBA_CONFIG,
     DATA_INTEGRITY_RULES, ENDPOINT_PARAMS, PARAM_KEYS,
     get_table_name, get_stats_table_names, get_entity_table_names,
 )
@@ -71,15 +71,16 @@ def get_connection_pool() -> pool.ThreadedConnectionPool:
     """Get or create the database connection pool"""
     global _connection_pool
     if _connection_pool is None:
+        import os
         try:
             _connection_pool = pool.ThreadedConnectionPool(
                 minconn=2,
                 maxconn=10,
-                host=DB_CONFIG['host'],
-                port=DB_CONFIG['port'],
-                database=DB_CONFIG['database'],
-                user=DB_CONFIG['user'],
-                password=DB_CONFIG['password']
+                host=os.getenv('DB_HOST', 'localhost'),
+                port=int(os.getenv('DB_PORT', '5432')),
+                database=os.getenv('DB_NAME', ''),
+                user=os.getenv('DB_USER', ''),
+                password=os.getenv('DB_PASSWORD', '')
             )
             logger.info("Database connection pool created (min=2, max=10)")
         except Exception as e:
@@ -390,24 +391,15 @@ def extract_filter_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 # DATABASE QUERY HELPERS
 # ============================================================================
 
-def get_teams_from_db(db_config: Optional[Dict[str, Any]] = None) -> Dict[int, Tuple[str, str]]:
+from src.db import get_db_connection, db_connection
+
+def get_teams_from_db() -> Dict[int, Tuple[str, str]]:
     """Fetch teams from database."""
-    if db_config is None:
-        db_config = DB_CONFIG
-    
     teams_table = get_table_name('team', 'entity')
-    conn = psycopg2.connect(
-        host=db_config['host'],
-        database=db_config['database'],
-        user=db_config['user'],
-        password=db_config['password'],
-        port=db_config['port']
-    )
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT team_id, team_abbr, team_name FROM {teams_table} ORDER BY team_id")
-    teams = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
-    cursor.close()
-    return_db_connection(conn)
+    with db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(f"SELECT team_id, team_abbr, team_name FROM {teams_table} ORDER BY team_id")
+            teams = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
     return teams
 
 

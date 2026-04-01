@@ -19,12 +19,12 @@ from contextlib import contextmanager
 from typing import Dict, List, Optional, Any, Tuple
 
 from etl.ncaa.config import (
-    DB_CONFIG, CBBD_API_CONFIG, CBBD_ENDPOINTS,
+    CBBD_API_CONFIG, CBBD_ENDPOINTS,
     NCAA_CONFIG, DB_COLUMNS, DB_SCHEMA, TABLES_CONFIG,
     get_table_name, get_columns_for_endpoint, get_stats_columns, get_entity_columns,
     season_to_display, season_int_to_display,
 )
-from db.lib import db_connection, get_db_connection, quote_col as _quote
+from src.db import db_connection, get_db_connection, quote_col as _quote
 
 logger = logging.getLogger(__name__)
 

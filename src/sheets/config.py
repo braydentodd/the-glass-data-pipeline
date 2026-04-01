@@ -1,11 +1,231 @@
 """
-The Glass - Unified Columns Configuration
+The Glass - Shared Sheets Configuration
 
-Single source of truth for every column across all leagues.
+Single source of truth for display logic, calculations, formatting, percentiles,
+and spreadsheet settings across all leagues.
 """
 
+import os
 from typing import Any, Dict
-from sheets.config.settings import WIDTH_CLASSES
+
+# ============================================================================
+# GOOGLE SHEETS CONFIGURATION
+# ============================================================================
+
+GOOGLE_SHEETS_CONFIG = {
+    'nba': {
+        'credentials_file': os.getenv('GOOGLE_CREDENTIALS_FILE'),
+        'spreadsheet_id': os.getenv('NBA_SPREADSHEET_ID'),
+        'spreadsheet_name': os.getenv('NBA_SPREADSHEET_NAME', 'The Glass'),
+        'scopes': [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ],
+    },
+    'ncaa': {
+        'credentials_file': os.getenv('GOOGLE_CREDENTIALS_FILE'),
+        'spreadsheet_id': os.getenv('NCAA_SPREADSHEET_ID'),
+        'spreadsheet_name': os.getenv('NCAA_SPREADSHEET_NAME', 'The Glass NCAA'),
+        'scopes': [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ],
+    }
+}
+
+# ============================================================================
+# STAT CALCULATION CONSTANTS
+# ============================================================================
+
+STAT_CONSTANTS = {
+    'default_per_minute': 36.0,         # Default minutes for per-minute stats across all leagues
+    'default_per_possessions': 100.0,   # Default possessions for per-possession stats
+    'cache_ttl_seconds': 300,           # API response cache TTL
+}
+
+# ============================================================================
+# STAT MODE CONFIGURATION
+# ============================================================================
+
+_pm = int(STAT_CONSTANTS['default_per_minute'])
+_pp = int(STAT_CONSTANTS['default_per_possessions'])
+
+STAT_MODES = [f'per_{_pp}', 'per_game', f'per_{_pm}']
+DEFAULT_STAT_MODE = f'per_{_pp}'
+
+# ============================================================================
+# COLORS & PERCENTILES
+# ============================================================================
+
+COLORS = {
+    'red': {'red': 0.933, 'green': 0.294, 'blue': 0.169},
+    'yellow': {'red': 0.988, 'green': 0.961, 'blue': 0.373},
+    'green': {'red': 0.298, 'green': 0.733, 'blue': 0.090},
+    'black': {'red': 0, 'green': 0, 'blue': 0},
+    'white': {'red': 1, 'green': 1, 'blue': 1},
+    'light_gray': {'red': 0.95, 'green': 0.95, 'blue': 0.95},
+    'dark_gray': {'red': 67/255, 'green': 67/255, 'blue': 67/255},
+    'row_alt': {'red': 0.94, 'green': 0.94, 'blue': 0.94},
+}
+
+COLOR_THRESHOLDS = {
+    'low': 0,    # 0% = pure red
+    'mid': 50,   # 50% = pure yellow
+    'high': 100, # 100% = pure green
+}
+
+# ============================================================================
+# SHEET FORMATTING CONFIG
+# ============================================================================
+
+HEADER_ROW_COUNT = 4
+
+SHEET_FORMATTING = {
+    # Fonts
+    'header_font': 'Staatliches',
+    'data_font': 'Sofia Sans',
+
+    # Font sizes
+    'section_header_size': 12,
+    'team_name_size': 15,
+    'subsection_header_size': 11,
+    'column_header_size': 10,
+    'data_size': 10,
+
+    # Header styling
+    'header_bg': 'black',
+    'header_fg': 'white',
+    'header_description_mode': 'whiteout',
+    'header_description_spacer_count': 750,
+
+    # Data row alternating colors (uses addBanding so colors survive sorting)
+    'row_even_bg': 'white',
+    'row_odd_bg': 'row_alt',
+
+    # Borders
+    'border_weight': 2,
+    'subsection_border_weight': 1,
+    'header_border_color': 'white',
+    'data_border_color': 'black',
+
+    # Alignment
+    'default_h_align': 'CENTER',
+    'default_v_align': 'MIDDLE',
+    'left_align_columns': ['names', 'notes'],
+    'bold_columns': ['names'],
+
+    # Overflow handling
+    'wrap_strategy': 'CLIP',
+
+    # Default visibility
+    'hide_advanced_columns': True,
+    'hide_subsection_row': True,
+    'hide_identity_section': True,
+
+    # Percentile companion column formatting
+    'percentile_companion_width': 10,      # pixels
+    'percentile_companion_font_size': 5,   # pt
+
+    # Layout — 4 header rows
+    'section_header_row': 0,
+    'subsection_header_row': 1,
+    'column_header_row': 2,
+    'filter_row': 3,
+    'data_start_row': HEADER_ROW_COUNT,
+    'header_row_count': HEADER_ROW_COUNT,
+
+    # Freeze
+    'frozen_rows': HEADER_ROW_COUNT,
+    'frozen_cols': 1,
+
+    # Row sections
+    'row_sections': ['current_players', 'team_opponent'],
+
+    # Rate limiting
+    'sync_delay_seconds': 3,
+}
+
+# ============================================================================
+# SECTION AND SUBSECTION DEFINITIONS
+# ============================================================================
+
+SECTION_CONFIG = {
+    'entities': {
+        'display_name': 'Names',
+        'is_stats_section': False,
+    },
+    'player_info': {
+        'display_name': 'Player Info',
+        'is_stats_section': False,
+    },
+    'analysis': {
+        'display_name': 'Analysis',
+        'is_stats_section': False,
+    },
+    'current_stats': {
+        'display_name': 'Current Stats',
+        'is_stats_section': True,
+    },
+    'historical_stats': {
+        'display_name': 'Historical Stats',
+        'is_stats_section': True,
+    },
+    'postseason_stats': {
+        'display_name': 'Postseason Stats',
+        'is_stats_section': True,
+    },
+    'identity': {
+        'display_name': 'ID',
+        'is_stats_section': False,
+    },
+}
+
+# Section order — left-to-right column layout
+SECTIONS = [
+    'entities',
+    'player_info',
+    'analysis',
+    'current_stats',
+    'historical_stats',
+    'postseason_stats',
+    'identity',
+]
+
+# Stat subsections and their display names (used in Row 2 subsection headers)
+SUBSECTIONS = {
+    'rates': 'Rates',                 # Games, Minutes, Possessions
+    'scoring': 'Scoring',             # Points, TS%, 2fg/3, Rim/Mid/3PT tracking, FT
+    'ball_management': 'Ball Management', # Touches, Assists, Potential Assists, Turnovers
+    'rebounding': 'Rebounding',       # OREB%, DREB%, Contested OREB/DREB%, Putbacks
+    'movement': 'Movement',           # Offensive/Defensive distance traveled
+    'defense': 'Defense',             # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
+    'opponent': 'Opponent',           # All opponent stats (Teams sheet only, between defense and on/off)
+    'onoff': 'On/Off',                # Offensive/Defensive Rating, Off-court ratings
+}
+
+# ============================================================================
+# COLUMN WIDTH CLASSES
+# ============================================================================
+
+WIDTH_CLASSES = {
+    'auto': None,
+    'measurement': 38,
+    'four_char_dec': 32,
+    'three_char_dec': 26,
+    'two_char': 18,
+}
+
+# ============================================================================
+# COLUMN HELPERS & PROFILES
+# ============================================================================
+
+MINUTES_FIELD_MAP = {
+    'none': 'minutes_x10',
+    'basic': 'minutes_x10',
+    'tracking': 'tr_minutes_x10',
+    'hustle': 'h_minutes_x10',
+    'onoff': 'off_minutes_x10',
+}
 
 # ============================================================================
 # COLUMN DEFINITIONS
@@ -18,7 +238,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Team / Player Names',
         'section': ['entities'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': False,
         'editable': False,
@@ -34,7 +254,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
             'player': 'name',
             'team': 'TEAM',
             'opponents': 'OPPONENTS',
-        },
+        }
     },
     'team': {
         'stat_category': 'none',
@@ -42,7 +262,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'team abbreviation',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_players'],
+        'sheets': ['players'],
         'stat_mode': 'both',
         'has_percentile': False,
         'editable': False,
@@ -64,7 +284,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'jersey number',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_players', 'teams'],
+        'sheets': ['players', 'team'],
         'stat_mode': 'both',
         'has_percentile': False,
         'editable': False,
@@ -86,7 +306,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': None,
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -109,7 +329,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'player age',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -131,7 +351,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'height',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -154,7 +374,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'weight',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -177,7 +397,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'wingspan',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': True,
@@ -200,7 +420,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'handedness',
         'section': ['player_info'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': False,
         'editable': True,
@@ -222,7 +442,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Scouting notes (editable)',
         'section': ['analysis'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': False,
         'editable': True,
@@ -245,7 +465,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Number of seasons in range',
         'section': ['historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -268,7 +488,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Games played',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -291,7 +511,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Minutes played',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -314,7 +534,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': None,
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -337,7 +557,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Total points scored',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -361,7 +581,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per true shot attempt (2FGA + 3FGA + 0.44*FTA)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -385,7 +605,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Two-point field goal attempts',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -409,7 +629,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per two-point attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -433,7 +653,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Contested close two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -447,7 +667,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'cont_close_2fga',
-        },
+        }
     },
     'Points_Per_cont_close_2fga': {
         'stat_category': 'tracking',
@@ -455,7 +675,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per contested close two attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -469,7 +689,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '2 * (cont_close_2fgm / cont_close_2fga)',
-        },
+        }
     },
     'open_close_2fga': {
         'stat_category': 'tracking',
@@ -477,7 +697,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Open close two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -491,7 +711,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'open_close_2fga',
-        },
+        }
     },
     'Points_Per_open_close_2fga': {
         'stat_category': 'tracking',
@@ -499,7 +719,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per open close two attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -513,7 +733,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '2 * (open_close_2fgm / open_close_2fga)',
-        },
+        }
     },
     'cont_long_2fga': {
         'stat_category': 'tracking',
@@ -521,7 +741,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Contested long two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -535,7 +755,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'cont_2fga - cont_close_2fga',
-        },
+        }
     },
     'points_per_cont_long_2fga': {
         'stat_category': 'tracking',
@@ -543,7 +763,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per contested long two attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -557,7 +777,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '2 * ((cont_2fgm - cont_close_2fgm) / (cont_2fga - cont_close_2fga))',
-        },
+        }
     },
     'open_long_2fga': {
         'stat_category': 'tracking',
@@ -565,7 +785,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Open long two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -579,7 +799,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'open_2fga - open_close_2fga',
-        },
+        }
     },
     'points_per_open_long_2fga': {
         'stat_category': 'tracking',
@@ -587,7 +807,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per open long two attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -601,7 +821,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '2* ((open_2fgm - open_close_2fgm) / (open_2fga - open_close_2fga))',
-        },
+        }
     },
     '3fga': {
         'stat_category': 'basic',
@@ -609,7 +829,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Three-point field goal attempts',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -633,7 +853,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per three-point attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -657,7 +877,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Contested three-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -671,7 +891,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'cont_3fga',
-        },
+        }
     },
     'points_per_cont_3fga': {
         'stat_category': 'tracking',
@@ -679,7 +899,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per contested three attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -693,7 +913,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '3 * (cont_3fgm / cont_3fga)',
-        },
+        }
     },
     'open_3fga': {
         'stat_category': 'tracking',
@@ -701,7 +921,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Open three-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -715,7 +935,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'open_3fga',
-        },
+        }
     },
     'points_per_open_3fga': {
         'stat_category': 'tracking',
@@ -723,7 +943,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per open three attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -737,7 +957,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '3 * (open_3fgm / open_3fga)',
-        },
+        }
     },
     'free_throw_rate': {
         'stat_category': 'basic',
@@ -745,7 +965,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Free throw attempts per field goal attempt',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -769,7 +989,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points per free throw',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -793,7 +1013,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Dunks',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -807,7 +1027,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'dunks',
-        },
+        }
     },
     'assists': {
         'stat_category': 'basic',
@@ -815,7 +1035,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': None,
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -839,7 +1059,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Potential assists (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -853,7 +1073,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'pot_assists',
-        },
+        }
     },
     'secondary_assists': {
         'stat_category': 'tracking',
@@ -861,7 +1081,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Secondary assists (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -875,7 +1095,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'sec_assists',
-        },
+        }
     },
     'passes': {
         'stat_category': 'tracking',
@@ -883,7 +1103,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Total passes made (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -897,7 +1117,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'passes',
-        },
+        }
     },
     'touches': {
         'stat_category': 'tracking',
@@ -905,7 +1125,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Total touches (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -919,7 +1139,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'touches',
-        },
+        }
     },
     'seconds_per_touch': {
         'stat_category': 'tracking',
@@ -927,7 +1147,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Average seconds per touch (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -941,7 +1161,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '(60 * time_on_ball) / touches',
-        },
+        }
     },
     'dribbles_per_touch': {
         'stat_category': 'tracking',
@@ -949,7 +1169,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Average dribbles per touch (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -963,7 +1183,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'dribbles / touches',
-        },
+        }
     },
     'pct_touches_shots': {
         'stat_category': 'tracking',
@@ -971,7 +1191,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Percentage of touches that result in a shot (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -985,7 +1205,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '((2fga + 3fga + (0.44 * fta)) / touches) * 100',
-        },
+        }
     },
     'pct_touches_passes': {
         'stat_category': 'tracking',
@@ -993,7 +1213,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Percentage of touches that result in a pass (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1007,7 +1227,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '(passes / touches) * 100',
-        },
+        }
     },
     'pct_touches_turnovers': {
         'stat_category': 'tracking',
@@ -1015,7 +1235,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Percentage of touches that result in a turnover (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1029,7 +1249,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '(turnovers / touches) * 100',
-        },
+        }
     },
     'turnovers': {
         'stat_category': 'basic',
@@ -1037,7 +1257,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Turnovers',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1061,7 +1281,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Offensive rebound percentage',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1084,7 +1304,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Defensive rebound percentage',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1107,7 +1327,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Contested offensive rebound % (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1121,7 +1341,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '(cont_o_rebs / o_rebounds) * 100',
-        },
+        }
     },
     'cont_dreb_pct': {
         'stat_category': 'tracking',
@@ -1129,7 +1349,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Contested defensive rebound % (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1143,7 +1363,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '(cont_d_rebs / d_rebounds) * 100',
-        },
+        }
     },
     'putbacks': {
         'stat_category': 'tracking',
@@ -1151,7 +1371,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Putbacks per offensive rebound % (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1165,7 +1385,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'putbacks',
-        },
+        }
     },
     'def_close_2fga': {
         'stat_category': 'tracking',
@@ -1173,7 +1393,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Defended close two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1187,7 +1407,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'd_close_2fga',
-        },
+        }
     },
     'points_per_def_close_2fga': {
         'stat_category': 'tracking',
@@ -1195,7 +1415,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points allowed per defended close two',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1209,7 +1429,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '2 * (d_close_2fgm / d_close_2fga)',
-        },
+        }
     },
     'def_long_2fga': {
         'stat_category': 'tracking',
@@ -1217,7 +1437,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Defended long two-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1231,7 +1451,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'd_2fga - d_close_2fga',
-        },
+        }
     },
     'points_per_def_long_2fga': {
         'stat_category': 'tracking',
@@ -1239,7 +1459,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points allowed per defended long two',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1253,7 +1473,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '2 * ((d_2fgm - d_close_2fgm) / (d_2fga - d_close_2fga))',
-        },
+        }
     },
     'def_3fga': {
         'stat_category': 'tracking',
@@ -1261,7 +1481,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Defended three-point attempts (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1275,7 +1495,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'd_3fga',
-        },
+        }
     },
     'points_per_def_3fga': {
         'stat_category': 'tracking',
@@ -1283,7 +1503,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Points allowed per defended three',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1297,7 +1517,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '3 * (d_3fgm / d_3fga)',
-        },
+        }
     },
     'real_def_pct': {
         'stat_category': 'tracking',
@@ -1305,7 +1525,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Real defensive FG% (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1319,7 +1539,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'real_d_fg_pct_x1000 / 10',
-        },
+        }
     },
     'real_def_close_2_pct': {
         'stat_category': 'tracking',
@@ -1327,7 +1547,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Real defensive close two FG% +/- (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1341,7 +1561,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'real_d_close_2fg_pct_x1000 / 10',
-        },
+        }
     },
     'real_def_2fg_pct': {
         'stat_category': 'tracking',
@@ -1349,7 +1569,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Real defensive 2pt FG% +/- (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1363,7 +1583,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'real_d_2fg_pct_x1000 / 10',
-        },
+        }
     },
     'real_def_3fg_pct': {
         'stat_category': 'tracking',
@@ -1371,7 +1591,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Real defensive 3pt FG% +/- (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1385,7 +1605,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'real_d_3fg_pct_x1000 / 10',
-        },
+        }
     },
     'blocks': {
         'stat_category': 'basic',
@@ -1393,7 +1613,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Blocks',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1417,7 +1637,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Shot contests (hustle)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1431,7 +1651,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'contests',
-        },
+        }
     },
     'steals_plus_charges': {
         'stat_category': 'basic',
@@ -1439,7 +1659,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'steals plus charges drawn',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1453,7 +1673,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'steals + charges_drawn',
-        },
+        }
     },
     'deflections': {
         'stat_category': 'hustle',
@@ -1461,7 +1681,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Deflections (hustle)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1475,7 +1695,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'deflections',
-        },
+        }
     },
     'fouls': {
         'stat_category': 'basic',
@@ -1483,7 +1703,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Personal fouls',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1507,7 +1727,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Offensive distance traveled in miles (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1521,7 +1741,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'o_dist_x10 / 10',
-        },
+        }
     },
     'def_distance': {
         'stat_category': 'tracking',
@@ -1529,7 +1749,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Defensive distance traveled in miles (tracking)',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'advanced',
         'has_percentile': True,
         'editable': False,
@@ -1543,7 +1763,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'd_dist_x10 / 10',
-        },
+        }
     },
     'o_rating': {
         'stat_category': 'basic',
@@ -1551,7 +1771,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Offensive rating per 100 possessions',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1575,7 +1795,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Defensive rating per 100 possessions',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1599,7 +1819,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Net Offensive on/off Team Rating',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1613,7 +1833,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '(o_rating_x10 / 10) - (off_o_rating_x10 / 10)',
-        },
+        }
     },
     'net_off_d_rating': {
         'stat_category': 'basic',
@@ -1621,7 +1841,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Net Defensive on/off Team Rating',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1635,7 +1855,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': '(d_rating_x10 / 10) - (off_d_rating_x10 / 10)',
-        },
+        }
     },
     'nba_id': {
         'stat_category': 'none',
@@ -1643,7 +1863,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'NBA.com player/team ID',
         'section': ['identity'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': False,
         'editable': False,
@@ -1657,7 +1877,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'player_id',
-        },
+        }
     },
     'conference': {
         'stat_category': 'none',
@@ -1678,7 +1898,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'conference',
-        },
+        }
     },
     'wins': {
         'stat_category': 'basic',
@@ -1686,7 +1906,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Wins',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'sheets': ['all_teams'],
+        'sheets': ['teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1699,7 +1919,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'team': 'wins',
-        },
+        }
     },
     'losses': {
         'stat_category': 'basic',
@@ -1707,7 +1927,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Losses',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'sheets': ['all_teams'],
+        'sheets': ['teams'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1720,7 +1940,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'team': 'losses',
-        },
+        }
     },
     'steals': {
         'stat_category': 'basic',
@@ -1728,7 +1948,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Steals',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1741,7 +1961,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'steals',
-        },
+        }
     },
     'win_pct': {
         'stat_category': 'basic',
@@ -1749,7 +1969,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'Win percentage',
         'section': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'onoff',
-        'sheets': ['all_teams', 'teams'],
+        'sheets': ['teams', 'team'],
         'stat_mode': 'both',
         'has_percentile': True,
         'editable': False,
@@ -1762,7 +1982,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'team': 'wins / (wins + losses)',
-        },
+        }
     },
     'ncaa_id': {
         'stat_category': 'none',
@@ -1770,7 +1990,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'description': 'NCAA player/team ID',
         'section': ['identity'],
         'subsection': None,
-        'sheets': ['all_teams', 'all_players', 'teams'],
+        'sheets': ['teams', 'players', 'team'],
         'stat_mode': 'both',
         'has_percentile': False,
         'editable': False,
@@ -1783,6 +2003,6 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'nullable': False,
         'formulas': {
                 'player': 'player_id',
-        },
-    },
+        }
+    }
 }

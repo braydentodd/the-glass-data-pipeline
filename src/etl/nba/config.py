@@ -8,8 +8,7 @@ import os
 from typing import Dict, Optional
 from dotenv import load_dotenv
 
-from db.config import DB_CONFIG
-from db.lib import get_current_season, get_current_season_year
+from src.db import get_current_season, get_current_season_year
 
 load_dotenv()
 
@@ -114,7 +113,7 @@ def _get_team_ids() -> Dict[str, int]:
     
     if _team_ids_cache is None:
         from etl.nba.lib import get_teams_from_db
-        teams = get_teams_from_db(DB_CONFIG)
+        teams = get_teams_from_db()
         _team_ids_cache = {abbr: tid for tid, (abbr, name) in teams.items()}
     
     return _team_ids_cache

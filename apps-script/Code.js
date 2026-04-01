@@ -2,13 +2,12 @@
  * apps-script/Code.js
  *
  * Unified, config-driven UI layer for The Glass stats spreadsheets.
- * Supports NBA and NCAA via a separate LeagueConfig.js file.
+ * Supports NBA and NCAA dynamically via spreadsheet name detection.
  * ALL data calculations are performed by the Python backend.
  *
  * Deployment:
- *   1. Copy this file + the league's config file (config/NBA.js or config/NCAA.js)
- *      to the Apps Script project
- *   2. Code.js is IDENTICAL for both leagues — never edit it per-league
+ *   1. Copy this file into the Apps Script project for both NBA and NCAA sheets.
+ *   2. Code.js is IDENTICAL for both leagues — never edit it per-league.
  *
  * Responsibilities:
  *   - Load config from the API (single source of truth)
@@ -25,12 +24,38 @@
 // ============================================================
 // LEAGUE CONFIG
 // ============================================================
-//
-// The LEAGUE global is defined in a separate LeagueConfig.js file
-// (NbaLeagueConfig.js or NcaaLeagueConfig.js). Apps Script loads
-// all project files into one shared scope, so Code.js sees it
-// automatically. This file is IDENTICAL across both deployments.
-//
+function getLeagueConfig() {
+  var ssName = SpreadsheetApp.getActiveSpreadsheet().getName();
+  if (ssName.indexOf('NCAA') !== -1) {
+    return {
+      name:                'NCAA',
+      configEndpoint:      '/api/ncaa/config',
+      teamsKey:            'ncaa_teams',
+      playersSheetNames:   ['NCAA', 'PLAYERS'],
+      playersRangeKey:     'ncaa_sheet',
+      editColIndexKey:     'ncaa_col_index',
+      apiPrefix:           '/api/ncaa',
+      syncEndpoint:        '/api/ncaa/update-sheets',
+      hasAdvancedStats:    false,
+      hasWingspan:         false,
+    };
+  } else {
+    return {
+      name:                'NBA',
+      configEndpoint:      '/api/config',
+      teamsKey:            'nba_teams',
+      playersSheetNames:   ['NBA', 'PLAYERS'],
+      playersRangeKey:     'nba_sheet',
+      editColIndexKey:     'nba_col_index',
+      apiPrefix:           '/api',
+      syncEndpoint:        '/api/update-sheets',
+      hasAdvancedStats:    true,
+      hasWingspan:         true,
+    };
+  }
+}
+
+var LEAGUE = getLeagueConfig();
 
 // ============================================================
 // CONFIG
@@ -488,19 +513,39 @@ function triggerSync(mode, options) {
     if (!statsMode) statsMode = 'per_100';
   }
 
+  // Historical timeframe — always read from document properties
+  // Reliably detect advanced stats state directly from the sheet UI
+  var config = loadConfig();
+  var subRow = config.subsection_row_index || 2;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var checkSheet = ss.getActiveSheet();
+  
+  // If the subsection row is visible, advanced stats are shown. If it throws, default to property.
+  var actuallyVisible = true;
+  try {
+      actuallyVisible = !checkSheet.isRowHiddenByUser(subRow);
+  } catch(e) {
+      actuallyVisible = (props.getProperty('SHOW_ADVANCED') === 'true');
+  }
+
+  var showAdvanced = league.hasAdvancedStats
+    ? ((options.showAdvanced !== undefined)
+        ? options.showAdvanced
+        : actuallyVisible)
+    : false;
+
+  var previousAdvanced = (props.getProperty('SHOW_ADVANCED') === 'true');
+  var advancedToggled = (showAdvanced !== previousAdvanced);
+
   // Build sync payload — league-aware
   var payload = {
     stats_mode:    statsMode,
     priority_team: options.priorityTeam || null,
-    data_only:     true,
+    data_only:     !advancedToggled,
   };
 
-  // Historical timeframe — always read from document properties
-  var showAdvanced = league.hasAdvancedStats
-    ? ((options.showAdvanced !== undefined)
-        ? options.showAdvanced
-        : (props.getProperty('SHOW_ADVANCED') === 'true'))
-    : false;
+  // Keep document properties in sync with UI
+  props.setProperty('SHOW_ADVANCED', showAdvanced ? 'true' : 'false');
 
   payload.mode            = props.getProperty('HIST_MODE') || 'years';
   payload.years           = parseInt(props.getProperty('HIST_YEARS') || '3');
@@ -753,20 +798,22 @@ function _applyVerticalBorders(sheet, sheetType, showAdv) {
   var maxRows    = sheet.getMaxRows();
   var maxCols    = sheet.getMaxColumns();
 
-  function _setBoundaryBorder(baseCol, startRow, shouldShow) {
+  function _setBoundaryBorder(baseCol, startRow, shouldShow, isSectionBorder) {
     if (baseCol > maxCols) return;
     var firstDataRow = headerRows + 1;
+    var borderWeight = isSectionBorder ? SpreadsheetApp.BorderStyle.SOLID_MEDIUM : SpreadsheetApp.BorderStyle.SOLID;
+    
     try {
       if (shouldShow) {
         if (startRow <= headerRows && baseCol <= maxCols) {
           sheet.getRange(startRow, baseCol, headerRows - startRow + 1, 1)
                .setBorder(null, true, null, null, null, null,
-                          '#FFFFFF', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+                          '#FFFFFF', borderWeight);
         }
         if (maxRows >= firstDataRow && baseCol <= maxCols) {
           sheet.getRange(firstDataRow, baseCol, maxRows - firstDataRow + 1, 1)
                .setBorder(null, true, null, null, null, null,
-                          '#000000', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+                          '#000000', borderWeight);
         }
       } else {
         sheet.getRange(startRow, baseCol, maxRows - startRow + 1, 1)
@@ -779,14 +826,27 @@ function _applyVerticalBorders(sheet, sheetType, showAdv) {
 
   // Section borders — always present, full height (row 1 through maxRows)
   var secBounds = (config.section_boundaries || {})[rangeKey] || [];
+  var secBoundCols = [];
   for (var s = 0; s < secBounds.length; s++) {
-    _setBoundaryBorder(secBounds[s].col, 1, true);
+    secBoundCols.push(secBounds[s].col);
+    _setBoundaryBorder(secBounds[s].col, 1, true, true);
   }
 
   // Subsection borders — only when advanced is visible, starts at subRow
   var subBounds = (config.subsection_boundaries || {})[rangeKey] || [];
   for (var b = 0; b < subBounds.length; b++) {
-    _setBoundaryBorder(subBounds[b].col, subRow, showAdv);
+    var col = subBounds[b].col;
+    if (showAdv) {
+      // Don't draw a subsection border if a section border already exists here
+      if (secBoundCols.indexOf(col) === -1) {
+        _setBoundaryBorder(col, subRow, true, false);
+      }
+    } else {
+      // When hiding advanced stats, if there is no section border here, we must clear the orphaned border
+      if (secBoundCols.indexOf(col) === -1) {
+        _setBoundaryBorder(col, subRow, false, false);
+      }
+    }
   }
 }
 

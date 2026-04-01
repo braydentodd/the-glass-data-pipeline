@@ -37,7 +37,7 @@ from etl.ncaa.lib import (
     generate_schema_ddl,
     get_season_player_count,
 )
-from db.lib import ensure_schema
+from src.db import ensure_schema
 
 # Configure logging
 logging.basicConfig(

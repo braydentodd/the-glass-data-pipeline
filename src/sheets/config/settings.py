@@ -49,7 +49,7 @@ STAT_CONSTANTS = {
 _pm = int(STAT_CONSTANTS['default_per_minute'])
 _pp = int(STAT_CONSTANTS['default_per_possessions'])
 
-STAT_MODES = [f'per_{_pp}', 'per_game', f'per_{_pm}', 'totals']
+STAT_MODES = [f'per_{_pp}', 'per_game', f'per_{_pm}']
 DEFAULT_STAT_MODE = f'per_{_pp}'
 
 # ============================================================================
@@ -103,6 +103,7 @@ SHEET_FORMATTING = {
 
     # Borders
     'border_weight': 2,
+    'subsection_border_weight': 1,
     'header_border_color': 'white',
     'data_border_color': 'black',
 

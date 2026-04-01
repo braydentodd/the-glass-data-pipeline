@@ -1,8 +1,8 @@
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 import sheets.lib.state as state
-from sheets.config.columns import SHEETS_COLUMNS
-from sheets.config.settings import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
+from src.sheets.config import SHEETS_COLUMNS
+from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
 from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats
 from .formatting import format_section_header, format_stat_value, get_color_for_percentile, get_color_for_raw, format_years_range
 def generate_percentile_columns() -> dict:
@@ -451,8 +451,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
 
 def build_entity_row(entity_data: dict, columns_list: List[Tuple],
                      percentiles: dict, entity_type: str = 'player',
-                     mode: str = 'per_game', custom_value: Any = None,
-                     years_str: str = '',
+                     mode: str = 'per_game', years_str: str = '',
                      row_section: Optional[str] = None,
                      section_data: Optional[dict] = None) -> list:
     """
@@ -479,7 +478,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             else:
                 sec_mode = mode
             calculated_by_section[sec_name] = calculate_entity_stats(
-                sec_entity, entity_type, sec_mode, custom_value
+                sec_entity, entity_type, sec_mode
             )
         # For non-stats columns, use the first section's entity data
         first_section = next(iter(section_data))
@@ -489,7 +488,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
     else:
         # Legacy single-section mode
         primary_entity = entity_data
-        primary_calculated = calculate_entity_stats(entity_data, entity_type, mode, custom_value)
+        primary_calculated = calculate_entity_stats(entity_data, entity_type, mode)
         primary_years = years_str
 
     row = []
@@ -586,6 +585,3 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         row.append(formatted if formatted is not None else '')
 
     return row
-
-
-# ============================================================================

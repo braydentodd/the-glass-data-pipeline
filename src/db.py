@@ -13,13 +13,12 @@ heavy NBA pipeline. This module is the canonical connection source for
 NCAA and lightweight shared callers.
 """
 import logging
+import os
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict
 
 import psycopg2
-
-from db.config import DB_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,13 @@ def get_db_connection():
     Caller is responsible for calling conn.close().
     Prefer using db_connection() context manager for short operations.
     """
-    return psycopg2.connect(**DB_CONFIG)
+    return psycopg2.connect(
+        host=os.getenv('DB_HOST', 'localhost'),
+        port=int(os.getenv('DB_PORT', '5432')),
+        database=os.getenv('DB_NAME', ''),
+        user=os.getenv('DB_USER', ''),
+        password=os.getenv('DB_PASSWORD', '')
+    )
 
 
 @contextmanager

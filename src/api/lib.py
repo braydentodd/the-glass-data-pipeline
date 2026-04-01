@@ -19,8 +19,7 @@ from flask_cors import CORS
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from etl.nba.config import DB_CONFIG, NBA_CONFIG
-from sheets.config.settings import API_CONFIG, SERVER_CONFIG
+from etl.nba.config import NBA_CONFIG
 from etl.nba.lib import get_table_name, get_teams_from_db
 from sheets.nba.lib import (
     calculate_entity_stats,
@@ -52,7 +51,7 @@ STAT_COLUMNS = [k for k, v in SHEETS_COLUMNS.items() if v.get('stat_category', '
 app = Flask(__name__)
 
 # Enable CORS if configured
-if API_CONFIG['cors_enabled']:
+if os.getenv('API_CORS_ENABLED', 'True').lower() == 'true':
     CORS(app)
 
 
@@ -67,8 +66,8 @@ def health_check():
     return jsonify({'status': 'healthy', 'service': 'nba-stats-api'})
 
 
-@app.route('/api/sync-historical-stats', methods=['POST'])
-def sync_historical_stats():
+@app.route('/api/update-sheets', methods=['POST'])
+def update_sheets():
     """
     Trigger historical stats sync with configuration from Apps Script.
     
@@ -87,7 +86,6 @@ def sync_historical_stats():
         seasons = data.get('seasons', [])
         include_current = data.get('include_current', False)
         stats_mode = data.get('stats_mode', 'per_100')  # Get stats mode from request
-        stats_custom_value = data.get('stats_custom_value')  # Get custom value if present
         show_percentiles = data.get('show_percentiles', False)  # Current percentile toggle state
         show_advanced = data.get('show_advanced', False)  # Current advanced stats toggle state
         priority_team = data.get('priority_team')  # Optional: team to process first
@@ -106,9 +104,6 @@ def sync_historical_stats():
         # Only set SYNC_SECTION if explicitly requested (for partial syncs)
         if sync_section:
             env['SYNC_SECTION'] = sync_section
-        
-        if stats_custom_value:
-            env['STATS_CUSTOM_VALUE'] = str(stats_custom_value)
         
         if priority_team:
             env['PRIORITY_TEAM_ABBR'] = priority_team.upper()
@@ -181,7 +176,6 @@ def sync_postseason_stats():
         "years": 3,  // for years mode
         "seasons": ["2024-25", "2023-24"],  // for seasons mode
         "stats_mode": "per_36",
-        "stats_custom_value": 75,  // optional
         "show_percentiles": true|false
     }
     """
@@ -191,7 +185,6 @@ def sync_postseason_stats():
         years = data.get('years', 25)
         seasons = data.get('seasons', [])
         stats_mode = data.get('stats_mode', 'per_100')
-        stats_custom_value = data.get('stats_custom_value')
         # Note: show_percentiles is parsed from sheet header, not passed as parameter
         priority_team = data.get('priority_team')
         
@@ -204,9 +197,6 @@ def sync_postseason_stats():
         env['SHOW_PERCENTILES'] = 'true' if data.get('show_percentiles', False) else 'false'
         env['SHOW_ADVANCED'] = 'true' if data.get('show_advanced', False) else 'false'
         env['SYNC_SECTION'] = 'postseason'  # Tell sync script to write to postseason columns
-        
-        if stats_custom_value:
-            env['STATS_CUSTOM_VALUE'] = str(stats_custom_value)
         
         if priority_team:
             env['PRIORITY_TEAM_ABBR'] = priority_team.upper()
@@ -277,8 +267,7 @@ def calculate_stats():
     Request body:
     {
         "team_id": 1610612738,
-        "mode": "per_100",  # totals, per_game, per_100, per_36, per_minutes, per_possessions
-        "custom_value": 75,  # Optional: for per_minutes or per_possessions
+        "mode": "per_100",  # per_game, per_100, per_36
         "season": "2024-25"  # Optional: defaults to current season
     }
     
@@ -302,7 +291,6 @@ def calculate_stats():
     # Validate request
     team_id = data.get('team_id')
     mode = data.get('mode', 'per_100')
-    custom_value = data.get('custom_value')
     season = data.get('season', NBA_CONFIG['current_season'])
     
     if not team_id:
@@ -311,12 +299,9 @@ def calculate_stats():
     if team_id not in NBA_TEAMS_BY_ID:
         return jsonify({'error': 'Invalid team_id'}), 400
     
-    valid_modes = ['totals', 'per_game', 'per_100', 'per_36', 'per_minutes', 'per_possessions']
+    valid_modes = ['per_game', 'per_100', 'per_36']
     if mode not in valid_modes:
         return jsonify({'error': f'Invalid mode. Must be one of: {valid_modes}'}), 400
-    
-    if mode in ['per_minutes', 'per_possessions'] and custom_value is None:
-        return jsonify({'error': f'{mode} requires custom_value parameter'}), 400
 
     # Resolve team_id -> team_abbr
     team_abbr = None
@@ -344,7 +329,7 @@ def calculate_stats():
         # Build rows using lib.sheets (same as sync path)
         player_rows = []
         for p in players:
-            stats = calculate_entity_stats(p, 'player', mode, custom_value)
+            stats = calculate_entity_stats(p, 'player', mode)
             player_rows.append({
                 'player_id': p.get('player_id'),
                 'name': p.get('name'),
@@ -359,7 +344,6 @@ def calculate_stats():
             'mode': mode,
             'season': season,
             'players': player_rows,
-            'custom_value': custom_value,
         })
 
     except Exception as e:
@@ -451,7 +435,7 @@ def get_player_stats(player_id):
 
         # Calculate stats in all modes using config-driven engine
         modes = {
-            'totals': calculate_entity_stats(player_dict, 'player', mode='totals'),
+    
             'per_game': calculate_entity_stats(player_dict, 'player', mode='per_game'),
             'per_100': calculate_entity_stats(player_dict, 'player', mode='per_100'),
             'per_36': calculate_entity_stats(player_dict, 'player', mode='per_36'),
@@ -624,6 +608,3 @@ def get_config():
 def get_column_config():
     """Alias for /api/config for backward compatibility."""
     return get_config()
-
-
-# Entry point: python -m runners.api

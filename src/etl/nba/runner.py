@@ -75,7 +75,7 @@ from etl.nba.config import (
 )
 
 # Reusable utilities and helpers
-from db.lib import ensure_schema
+from src.db import ensure_schema
 from etl.nba.lib import (
     infer_execution_tier_from_endpoint,
     get_columns_by_endpoint,

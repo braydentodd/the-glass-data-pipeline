@@ -1,8 +1,8 @@
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 import sheets.lib.state as state
-from sheets.config.columns import SHEETS_COLUMNS
-from sheets.config.settings import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
+from src.sheets.config import SHEETS_COLUMNS
+from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
 def format_stat_value(value: Any, col_def: dict) -> Any:
     """Format a stat value for display according to column definition."""
     if value is None:
@@ -50,7 +50,7 @@ def format_section_header(section: str, years_config: Optional[dict] = None,
 
     Current stats:   "2025-26 Regular Season Stats per 100 Poss"
     Historical/Post: "Last 3 Regular Season Stats (2023-24 to 2025-26) per 36 Mins"
-                     "Career Regular Season Stats Totals"
+                     "Career Regular Season Stats per Game"
 
     Args:
         section: 'current_stats', 'historical_stats', or 'postseason_stats'
@@ -544,26 +544,30 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 11. Subsection borders — only when advanced columns are visible ----
-    if not hide_advanced:
-        subsection_boundaries = _get_subsection_boundaries(columns_list)
-        sub_hdr_row = fmt['subsection_header_row']  # 0-indexed row 1
-        for boundary_col in subsection_boundaries:
-            # Header portion (from subsection row through filter row) — white border
+    # ---- 11. Subsection borders (always drawn under section borders — UI manages visibility) ----
+    subsection_boundaries = _get_subsection_boundaries(columns_list)
+    sub_hdr_row = fmt['subsection_header_row']  # 0-indexed row 1
+    sub_border_weight = fmt.get('subsection_border_weight', 1)
+    
+    # We only draw a subsection border if it doesn't overlap a darker section border
+    filtered_sub_boundaries = [b for b in subsection_boundaries if b not in section_boundaries]
+    
+    for boundary_col in filtered_sub_boundaries:
+        # Header portion (from subsection row through filter row) — white border
+        requests.append({
+            'updateBorders': {
+                'range': _range(ws_id, sub_hdr_row, header_end, boundary_col, boundary_col + 1),
+                'left': _border_style_v2(sub_border_weight, header_border_color),
+            }
+        })
+        # Data portion — black border
+        if n_data_rows > 0:
             requests.append({
                 'updateBorders': {
-                    'range': _range(ws_id, sub_hdr_row, header_end, boundary_col, boundary_col + 1),
-                    'left': _border_style_v2(border_weight, header_border_color),
+                    'range': _range(ws_id, data_start, total_rows, boundary_col, boundary_col + 1),
+                    'left': _border_style_v2(sub_border_weight, data_border_color),
                 }
             })
-            # Data portion — black border
-            if n_data_rows > 0:
-                requests.append({
-                    'updateBorders': {
-                        'range': _range(ws_id, data_start, total_rows, boundary_col, boundary_col + 1),
-                        'left': _border_style_v2(border_weight, data_border_color),
-                    }
-                })
 
     # ---- 12. Horizontal borders between header rows — white, weight 2 ----
     # Between section header (row 0) and subsection header (row 1)
@@ -1659,7 +1663,7 @@ def clear_cache():
 
 def resolve_columns_for_league(league):
     """Resolve fully expanded SHEETS_COLUMNS into a league-specific flat dict."""
-    from sheets.config.settings import WIDTH_CLASSES
+    from src.sheets.config import WIDTH_CLASSES
     resolved = {}
 
     for col_key, col_def in SHEETS_COLUMNS.items():

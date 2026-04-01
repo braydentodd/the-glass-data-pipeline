@@ -23,8 +23,7 @@ load_dotenv()
 # REUSE NBA DB CONFIG (same database, separate tables)
 # ============================================================================
 
-from db.config import DB_CONFIG
-from db.lib import get_current_season, get_current_season_year
+from src.db import get_current_season, get_current_season_year
 
 # ============================================================================
 # CBBD API CONFIGURATION

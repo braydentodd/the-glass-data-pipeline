@@ -3,8 +3,8 @@ import logging
 from typing import Dict, List, Optional, Any, Tuple
 from bisect import bisect_left, bisect_right
 import sheets.lib.state as state
-from sheets.config.columns import SHEETS_COLUMNS
-from sheets.config.settings import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
+from src.sheets.config import SHEETS_COLUMNS
+from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
 class SheetsConfigurationError(Exception):
     """Raised when config/sheets.py has invalid formula syntax."""
     pass
@@ -197,7 +197,7 @@ def _eval_dynamic_formula(formula_str: str, entity_data: dict,
 
         # Apply mode-based scaling
         scale = col_def.get('scale_with_mode', False)
-        if mode == 'totals' or not scale:
+        if not scale:
             return raw
         games = entity_data.get('games', 0) or 0
         minutes = (entity_data.get('minutes_x10', 0) or 0) / 10.0
@@ -210,7 +210,7 @@ def _eval_dynamic_formula(formula_str: str, entity_data: dict,
 
 
 def _apply_scaling(raw_value: Any, mode: str, games: float, minutes: float,
-                   possessions: float, custom_value: Any = None) -> Any:
+                   possessions: float) -> Any:
     """Apply mode-based scaling to a raw stat value."""
     if raw_value is None or raw_value == 0:
         return raw_value
@@ -221,16 +221,12 @@ def _apply_scaling(raw_value: Any, mode: str, games: float, minutes: float,
         return raw_value * STAT_CONSTANTS.get('default_per_minute', 36.0) / max(minutes, 0.1)
     elif mode == 'per_100':
         return raw_value * STAT_CONSTANTS['default_per_possessions'] / max(possessions, 1)
-    elif mode == 'per_minutes' and custom_value:
-        return raw_value * custom_value / max(minutes, 0.1)
-    elif mode == 'per_possessions' and custom_value:
-        return raw_value * custom_value / max(possessions, 1)
 
     return raw_value
 
 
 def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
-                           mode: str = 'per_game', custom_value: Any = None) -> dict:
+                           mode: str = 'per_game') -> dict:
     """
     Calculate all stat values for an entity in a given mode.
 
@@ -265,10 +261,8 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
         # If there's a mode override active, the override formula already produces
         # the correct raw value. Apply scaling to the overridden value too.
         if override:
-            if mode == 'totals':
-                results[col_key] = raw_value
-            elif scale is True:
-                results[col_key] = _apply_scaling(raw_value, mode, games, minutes, possessions, custom_value)
+            if scale is True:
+                results[col_key] = _apply_scaling(raw_value, mode, games, minutes, possessions)
             elif scale == 'per_game_only':
                 results[col_key] = raw_value / max(games, 1)
             else:
@@ -276,10 +270,8 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
             continue
 
         # Normal formula (no override)
-        if mode == 'totals':
-            results[col_key] = raw_value
-        elif scale is True:
-            results[col_key] = _apply_scaling(raw_value, mode, games, minutes, possessions, custom_value)
+        if scale is True:
+            results[col_key] = _apply_scaling(raw_value, mode, games, minutes, possessions)
         elif scale == 'per_game_only':
             results[col_key] = raw_value / max(games, 1)
         else:
@@ -309,8 +301,7 @@ def _year_to_season(year: int) -> str:
 
 
 def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
-                              mode: str = 'per_game',
-                              custom_value: Any = None) -> dict:
+                              mode: str = 'per_game') -> dict:
     """
     Calculate minute-weighted percentile populations for all stat columns.
 
@@ -323,7 +314,7 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
     """
     all_calculated = []
     for entity in all_entities:
-        stats = calculate_entity_stats(entity, entity_type, mode, custom_value)
+        stats = calculate_entity_stats(entity, entity_type, mode)
         all_calculated.append((entity, stats))
 
     percentiles = {}
@@ -397,4 +388,3 @@ def get_percentile_rank(value: Any, sorted_weighted: List, reverse: bool = False
         percentile = 100 - percentile
 
     return max(0, min(100, percentile))
-
