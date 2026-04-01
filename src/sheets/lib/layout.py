@@ -1,9 +1,17 @@
-import logging
-from typing import Dict, List, Optional, Any, Tuple
+from typing import List, Optional, Any, Tuple
 from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
-from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats
-from .formatting import format_section_header, format_stat_value, get_color_for_percentile, get_color_for_raw, format_seasons_range
+from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING)
+from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, _eval_dynamic_formula
+from .formatting import format_section_header, format_stat_value, format_height
+
+SUMMARY_THRESHOLDS = [
+    ('Best', 100),
+    ('75th', 75),
+    ('Average', 50),
+    ('25th', 25),
+    ('Worst', 0)
+]
+
 def generate_percentile_columns() -> dict:
     """Auto-generate percentile companion column defs for all columns with has_percentile=True.
 
@@ -479,17 +487,15 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         first_section = next(iter(section_data))
         primary_entity = section_data[first_section][0]
         primary_calculated = calculated_by_section[first_section]
-        primary_seasons = section_data[first_section][2]
     else:
         # Legacy single-section mode
         primary_entity = entity_data
         primary_calculated = calculate_entity_stats(entity_data, entity_type, mode)
-        primary_seasons = seasons_str
 
     row = []
 
     for entry in columns_list:
-        col_key, col_def, visible = entry[0], entry[1], entry[2]
+        col_key, col_def = entry[0], entry[1]
         col_ctx = entry[3] if len(entry) > 3 else None
         is_pct = col_def.get('is_generated_percentile', False)
 
@@ -499,10 +505,9 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         if section_data and is_stats_section:
             # Pick the right data for this section
             if col_ctx in section_data:
-                sec_entity, sec_pcts, sec_seasons = section_data[col_ctx]
+                sec_entity, sec_pcts, _ = section_data[col_ctx]
                 calculated = calculated_by_section[col_ctx]
                 pcts = sec_pcts
-                ystr = sec_seasons
             else:
                 row.append('')
                 continue
@@ -516,7 +521,6 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             pcts = percentiles if not section_data else (
                 section_data[first_section][1] if section_data else percentiles
             )
-            ystr = primary_seasons
             sec_entity = primary_entity
 
         if is_pct:
@@ -526,7 +530,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
 
             if value is not None and isinstance(value, (int, float)) and base_key in pcts:
                 reverse = base_def.get('reverse_percentile', False)
-                rank = PERCENTILE_RANK_FN(value, pcts[base_key], reverse)
+                rank = get_percentile_rank(value, pcts[base_key], reverse)
                 row.append(round(rank))
             else:
                 row.append('')

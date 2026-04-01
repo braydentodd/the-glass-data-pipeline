@@ -16,29 +16,22 @@ import threading
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from src.db import get_db_connection as _get_db_conn
 from src.sheets.config import SHEETS_COLUMNS
 from src.sheets.lib.calculations import (
     calculate_entity_stats,
-    calculate_all_percentiles,
 )
 from src.sheets.lib.db import (
     fetch_players_for_team,
-    fetch_all_players,
-    fetch_team_stats,
 )
 from src.sheets.lib.formatting import (
     get_reverse_stats,
     get_editable_fields,
     get_config_for_export,
 )
-from src.sheets.lib.layout import (
-    build_entity_row,
-    build_sheet_columns,
-)
+from etl.nba.config import NBA_CONFIG, get_table_name
 
 def get_league_lib(league):
     if league == 'ncaa':
@@ -332,7 +325,8 @@ def calculate_stats():
         conn = get_db_connection()
 
         # Build mock context for sheets lib function calls
-        class Context: pass
+        class Context:
+            pass
         ctx = Context()
         ctx.league = 'nba'
         import etl.nba.lib as etl_lib
@@ -360,22 +354,7 @@ def calculate_stats():
             current_season_year=current_season_year, 
             season_type_val=season_type_val
         )
-        all_players = fetch_all_players(
-            conn=conn, 
-            section='current_stats', 
-            historical_config=None, 
-            ctx=ctx,
-            current_season=current_season, 
-            current_season_year=current_season_year, 
-            season_type_val=season_type_val
-        )
         conn.close()
-
-        # Calculate percentile populations
-        percentile_pops = calculate_all_percentiles(all_players, 'player', mode)
-
-        # Build column list (for context_section blanking)
-        columns = build_sheet_columns(entity='player', stat_mode='both')
 
         # Build rows using lib.sheets (same as sync path)
         player_rows = []

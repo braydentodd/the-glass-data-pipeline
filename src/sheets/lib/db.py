@@ -6,7 +6,7 @@ Functions are dynamically configured via the LeagueSyncContext to avoid hardcodi
 league-specific tables, schemas, or entity fields.
 """
 import logging
-from typing import Dict, List, Optional, Tuple, Set
+from typing import List, Optional, Tuple
 from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)

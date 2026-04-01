@@ -1,9 +1,9 @@
 import re
 import logging
-from typing import Dict, List, Optional, Any, Tuple
-from bisect import bisect_left, bisect_right
-from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
+from typing import Dict, Any, List
+from src.sheets.config import SHEETS_COLUMNS, MINUTES_FIELD_MAP, STAT_CONSTANTS
+
+logger = logging.getLogger(__name__)
 class SheetsConfigurationError(Exception):
     """Raised when config/sheets.py has invalid formula syntax."""
     pass
@@ -28,6 +28,31 @@ def _sanitize_formula(formula_str: str) -> str:
     """Transform formula string for Python eval: prefix digit-leading vars with _."""
     if not formula_str:
         return formula_str
+    # Replace anything starting with a digit that looks like a field name (e.g., 2fgm -> _2fgm)
+    return re.sub(r'\b(\d+[a-zA-Z_]\w*)\b', r'_\1', formula_str)
+
+def _eval_dynamic_formula(formula_str: str, entity_data: dict, col_def: dict, mode: str) -> Any:
+    """Evaluate a raw formula string dynamically without using pre-compiled cache."""
+    try:
+        sanitized_str = _sanitize_formula(formula_str)
+        if not sanitized_str:
+            return None
+        compiled_code = compile(sanitized_str, '<string>', 'eval')
+        
+        # Determine values to provide based on mode_overrides
+        eval_ctx = {}
+        for k, v in entity_data.items():
+            s_key = _sanitize_var_name(k)
+            eval_ctx[s_key] = v
+            
+        override = col_def.get('mode_overrides', {}).get(mode)
+        if override and 'team_formula' in override:
+            return eval(compile(_sanitize_formula(override['team_formula']), '<string>', 'eval'), {}, eval_ctx)
+            
+        return eval(compiled_code, {}, eval_ctx)
+    except Exception as e:
+        logger.warning(f"Failed to evaluate dynamic formula '{formula_str}': {e}")
+        return None
     return re.sub(r'\b(\d+[a-zA-Z_]\w*)', r'_\1', formula_str)
 
 
@@ -237,7 +262,7 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
             continue
 
         stat_cat = col_def.get('stat_category', 'none')
-        minutes_field = _MINUTES_FIELDS.get(stat_cat)
+        minutes_field = MINUTES_FIELD_MAP.get(stat_cat)
 
         entries = []
         for entity, stats in all_calculated:

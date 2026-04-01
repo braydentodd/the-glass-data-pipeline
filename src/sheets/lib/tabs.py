@@ -1,6 +1,5 @@
 import logging
 from collections import defaultdict
-from typing import Optional
 
 from src.db import get_db_connection
 from src.sheets.lib.db import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats

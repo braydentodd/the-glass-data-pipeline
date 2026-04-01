@@ -1,7 +1,6 @@
-import logging
-from typing import Dict, List, Optional, Any, Tuple
+from typing import List, Optional, Any
 from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, STAT_MODES, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, GOOGLE_SHEETS_CONFIG)
+from src.sheets.config import (STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS)
 
 def _format_season_label(season_year: int) -> str:
     """Convert end-year integer to season string: 2026 -> '2025-26'."""

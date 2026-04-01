@@ -9,24 +9,21 @@ Entry point:
 
 import argparse
 import os
-
-from dotenv import load_dotenv
-
 import logging
 import time
-from collections import defaultdict
+
+from dotenv import load_dotenv
 
 from src.db import get_db_connection
 from src.sheets.lib.db import fetch_all_players, fetch_all_teams
 from src.sheets.lib.calculations import calculate_all_percentiles
 from src.sheets.lib.google.client import get_sheets_client
 from src.sheets.lib.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
-
-logger = logging.getLogger(__name__)
-
 from src.sheets.config import STAT_MODES, DEFAULT_STAT_MODE
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -70,7 +67,9 @@ def main():
         historical_config = {'mode': 'seasons', 'value': num_seasons, 'include_current': include_current}
 
     # ---- Build context ----
-    class Context: pass
+    class Context:
+        pass
+
     ctx = Context()
     ctx.league = league
     from src.sheets.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING

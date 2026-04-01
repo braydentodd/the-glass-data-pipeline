@@ -1,7 +1,15 @@
 import os
-import json
-from typing import Optional, Any
-from src.sheets.config import SHEETS_COLUMNS, SECTIONS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_MODES
+import time
+from typing import Optional, Any, Dict, Tuple
+from src.sheets.config import (
+    SHEETS_COLUMNS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_MODES,
+    STAT_CONSTANTS, DEFAULT_STAT_MODE, SHEET_FORMATTING, COLORS,
+    COLOR_THRESHOLDS, SUBSECTIONS
+)
+from src.sheets.lib.layout import build_sheet_columns, get_column_index
+from src.sheets.lib.formatting import get_reverse_stats, get_editable_fields
+from src.sheets.lib.google.payloads import _get_subsection_boundaries, _get_section_boundaries
+
 def get_config_for_export(league: str,
                           get_teams_fn=None,
                           id_column_key: str = 'player_id',
@@ -23,8 +31,6 @@ def get_config_for_export(league: str,
       - stat_modes:               available stat modes with display labels
       - sections:                 section config (display names, toggleability)
     """
-    import os
-
     # Derive league dependencies when not explicitly provided
     if get_teams_fn is None:
         if league == 'ncaa':
