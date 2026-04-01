@@ -57,31 +57,6 @@ def _compile_formula_entry(formula: str, label: str) -> Any:
         raise SheetsConfigurationError(f"Invalid formula [{label}]: {formula!r} → {e}")
 
 
-def _compile_all_formulas():
-    """Pre-compile all formula strings at import time for ~10x eval speedup."""
-    for col_key, col_def in SHEETS_COLUMNS.items():
-        _COMPILED_FORMULAS[col_key] = {}
-        for ftype in ('player_formula', 'team_formula', 'opponents_formula'):
-            formula = col_def.get(ftype)
-            if formula is not None:
-                _COMPILED_FORMULAS[col_key][ftype] = _compile_formula_entry(
-                    formula, f'{col_key}.{ftype}'
-                )
-        # Also compile mode_overrides formulas
-        for mode, override in col_def.get('mode_overrides', {}).items():
-            okey = f'{col_key}__override_{mode}'
-            _COMPILED_FORMULAS[okey] = {}
-            for ftype in ('player_formula', 'team_formula', 'opponents_formula'):
-                formula = override.get(ftype)
-                if formula is not None:
-                    _COMPILED_FORMULAS[okey][ftype] = _compile_formula_entry(
-                        formula, f'{okey}.{ftype}'
-                    )
-
-
-# Formula compilation is triggered by init_engine() — NOT at import time.
-
-
 # ============================================================================
 # FORMULA EVALUATION
 # ============================================================================
@@ -162,52 +137,6 @@ def evaluate_formula(col_key: str, entity_data: dict,
         return None
 
 
-# ============================================================================
-# STAT CALCULATION ENGINE
-# ============================================================================
-
-def _eval_dynamic_formula(formula_str: str, entity_data: dict,
-                          col_def: dict, mode: str) -> Any:
-    """Evaluate a formula string directly against entity data with scaling.
-
-    Used for dynamically-generated opponent columns that don't exist in
-    SHEETS_COLUMNS and therefore aren't handled by calculate_entity_stats.
-    """
-    if not formula_str or not entity_data:
-        return None
-    try:
-        # Check for None source fields
-        if col_def.get('nullable', True):
-            for var_name in _extract_formula_variables(formula_str):
-                if var_name in entity_data and entity_data[var_name] is None:
-                    return None
-
-        # Simple field lookup or expression
-        if formula_str.isidentifier():
-            raw = entity_data.get(formula_str)
-        else:
-            local_vars = _sanitize_entity_data(entity_data)
-            local_vars['STAT_CONSTANTS'] = STAT_CONSTANTS
-            compiled = compile(formula_str, '<dynamic>', 'eval')
-            raw = eval(compiled, {"__builtins__": {}}, local_vars)
-
-        if raw is None:
-            return None
-
-        # Apply mode-based scaling
-        scale = col_def.get('scale_with_mode', False)
-        if not scale:
-            return raw
-        games = entity_data.get('games', 0) or 0
-        minutes = (entity_data.get('minutes_x10', 0) or 0) / 10.0
-        possessions = entity_data.get('possessions', 0) or 0
-        if scale == 'per_game_only':
-            return raw / max(games, 1)
-        return _apply_scaling(raw, mode, games, minutes, possessions)
-    except (ZeroDivisionError, TypeError, ValueError, NameError):
-        return None
-
-
 def _apply_scaling(raw_value: Any, mode: str, games: float, minutes: float,
                    possessions: float) -> Any:
     """Apply mode-based scaling to a raw stat value."""
@@ -283,15 +212,6 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
 # DB HELPERS & FETCH FUNCTIONS — live in league-specific wrappers
 # (nba_sheets_lib.py / ncaa_sheets_lib.py) because SQL differs per league.
 # ============================================================================
-
-
-def _quote_col(col: str) -> str:
-    """Quote a column name for SQL. Needed for digit-starting names like 2fgm."""
-    return f'"{col}"'
-
-
-# _build_season_filter lives in league-specific wrappers because SQL column
-# names differ (NBA uses 'season', NCAA uses 'season').
 
 
 def calculate_all_percentiles(all_entities: List[dict], entity_type: str,

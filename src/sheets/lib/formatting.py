@@ -493,7 +493,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         requests.append({
             'updateBorders': {
                 'range': _range(ws_id, 0, header_end, boundary_col, boundary_col + 1),
-                'left': _border_style_v2(border_weight, header_border_color),
+                'left': _border_style(border_weight, header_border_color),
             }
         })
         # Data portion — black border
@@ -501,7 +501,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             requests.append({
                 'updateBorders': {
                     'range': _range(ws_id, data_start, total_rows, boundary_col, boundary_col + 1),
-                    'left': _border_style_v2(border_weight, data_border_color),
+                    'left': _border_style(border_weight, data_border_color),
                 }
             })
 
@@ -518,7 +518,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         requests.append({
             'updateBorders': {
                 'range': _range(ws_id, sub_hdr_row, header_end, boundary_col, boundary_col + 1),
-                'left': _border_style_v2(sub_border_weight, header_border_color),
+                'left': _border_style(sub_border_weight, header_border_color),
             }
         })
         # Data portion — black border
@@ -526,7 +526,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             requests.append({
                 'updateBorders': {
                     'range': _range(ws_id, data_start, total_rows, boundary_col, boundary_col + 1),
-                    'left': _border_style_v2(sub_border_weight, data_border_color),
+                    'left': _border_style(sub_border_weight, data_border_color),
                 }
             })
 
@@ -535,14 +535,14 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     requests.append({
         'updateBorders': {
             'range': _range(ws_id, fmt['subsection_header_row'], fmt['subsection_header_row'] + 1, 0, n_cols),
-            'top': _border_style_v2(border_weight, header_border_color),
+            'top': _border_style(border_weight, header_border_color),
         }
     })
     # Between subsection header (row 1) and column header (row 2)
     requests.append({
         'updateBorders': {
             'range': _range(ws_id, fmt['column_header_row'], fmt['column_header_row'] + 1, 0, n_cols),
-            'top': _border_style_v2(border_weight, header_border_color),
+            'top': _border_style(border_weight, header_border_color),
         }
     })
 
@@ -554,7 +554,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         requests.append({
             'updateBorders': {
                 'range': _range(ws_id, team_row, team_row + 1, 0, n_cols),
-                'top': _border_style_v2(border_weight, data_border_color),
+                'top': _border_style(border_weight, data_border_color),
             }
         })
 
@@ -719,15 +719,7 @@ def _range(ws_id: int, start_row: int, end_row: int,
     }
 
 
-def _border_style(border_config: dict) -> dict:
-    """Build a border style dict from legacy config (backwards compat)."""
-    return {
-        'style': border_config.get('style', 'SOLID'),
-        'color': get_color_for_raw(COLORS[border_config.get('color', 'black')]),
-    }
-
-
-def _border_style_v2(weight: int, color: dict) -> dict:
+def _border_style(weight: int, color: dict) -> dict:
     """Build a border style dict with explicit weight and color."""
     # Google Sheets API uses 'style' with weight encoded as style name
     # weight 1 = SOLID, weight 2 = SOLID_MEDIUM, weight 3 = SOLID_THICK
@@ -1608,12 +1600,6 @@ def get_config_for_export(league: str,
 _stat_cache: Dict[str, Tuple[float, Any]] = {}
 
 
-def _cache_key(*args) -> str:
-    """Build a deterministic cache key from arguments."""
-    raw = json.dumps(args, sort_keys=True, default=str)
-    return hashlib.md5(raw.encode()).hexdigest()
-
-
 def get_cached_stats(key: str) -> Optional[Any]:
     """Get cached stats if TTL hasn't expired."""
     if key in _stat_cache:
@@ -1662,4 +1648,3 @@ def resolve_columns_for_league(league):
         resolved[col_key] = entry
 
     return resolved
-

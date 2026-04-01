@@ -153,30 +153,37 @@ SECTION_CONFIG = {
     'entities': {
         'display_name': 'Names',
         'is_stats_section': False,
+        'toggleable': False,
     },
     'player_info': {
         'display_name': 'Player Info',
         'is_stats_section': False,
+        'toggleable': True,
     },
     'analysis': {
         'display_name': 'Analysis',
         'is_stats_section': False,
+        'toggleable': True,
     },
     'current_stats': {
         'display_name': 'Current Stats',
         'is_stats_section': True,
+        'toggleable': True,
     },
     'historical_stats': {
         'display_name': 'Historical Stats',
         'is_stats_section': True,
+        'toggleable': True,
     },
     'postseason_stats': {
         'display_name': 'Postseason Stats',
         'is_stats_section': True,
+        'toggleable': True,
     },
     'identity': {
         'display_name': 'ID',
         'is_stats_section': False,
+        'toggleable': False,
     },
 }
 

@@ -556,7 +556,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             value = evaluate_formula(col_key, use_entity, entity_type, mode)
             if value is None:
                 row.append('')
-            elif col_def.get('format') == 'height':
+            elif col_def.get('format') == 'measurement':
                 row.append(format_height(value))
             else:
                 row.append(value)
