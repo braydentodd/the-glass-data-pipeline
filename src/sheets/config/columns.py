@@ -1786,4 +1786,3 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         },
     },
 }
-

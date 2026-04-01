@@ -15,7 +15,7 @@ python3 -m src.etl
 
 ### Sync to Google Sheets
 \`\`\`bash
-python3 -m src.sheets_sync
+python3 -m src.sync
 \`\`\`
 
 ## Environment Variables
@@ -40,7 +40,7 @@ All settings in `config/etl.py`:
 \`\`\`
 ├── src/
 │   ├── etl.py           # Core ETL logic
-│   ├── sheets_sync.py   # Google Sheets sync
+│   ├── sync.py   # Google Sheets sync
 │   └── api.py           # Flask API
 ├── config/
 │   └── etl.py           # All configuration
