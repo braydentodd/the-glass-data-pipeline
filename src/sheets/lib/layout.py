@@ -580,3 +580,263 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         row.append(formatted if formatted is not None else '')
 
     return row
+
+# ============================
+# MOVED FROM FORMATTING.PY
+# ============================
+def build_merged_entity_row(player_id, columns_list: List[Tuple],
+                            current_data: Optional[dict],
+                            historical_data: Optional[dict],
+                            postseason_data: Optional[dict],
+                            pct_curr: dict, pct_hist: dict, pct_post: dict,
+                            entity_type: str = 'player',
+                            mode: str = 'per_game',
+                            hist_seasons: str = '', post_seasons: str = '',
+                            opp_percentiles: Optional[dict] = None) -> Tuple[list, List[dict]]:
+    """
+    Build a single merged data row with current + historical + postseason stats.
+
+    pct_curr/pct_hist/pct_post: {col_key: sorted_values}
+    opp_percentiles: {col_key: {section: sorted_vals}}
+    """
+    section_data = {}
+    if current_data:
+        section_data['current_stats'] = (current_data, pct_curr, '')
+    if historical_data:
+        section_data['historical_stats'] = (historical_data, pct_hist, hist_seasons)
+    if postseason_data:
+        section_data['postseason_stats'] = (postseason_data, pct_post, post_seasons)
+
+    primary_entity = current_data or historical_data or postseason_data or {}
+
+    row = build_entity_row(
+        primary_entity, columns_list, {},
+        entity_type=entity_type, mode=mode,
+        section_data=section_data,
+    )
+
+    # Collect percentile info for companion column shading.
+    # Only companion columns (is_generated_percentile) get coloured backgrounds;
+    # stat columns show plain numbers without colour.
+    percentile_cells = []
+    for col_idx, entry in enumerate(columns_list):
+        col_key, col_def = entry[0], entry[1]
+        col_ctx = entry[3] if len(entry) > 3 else None
+        is_pct = col_def.get('is_generated_percentile', False)
+
+        # Only process companion columns
+        if not is_pct:
+            continue
+
+        col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+        is_stats_section = col_ctx_cfg.get('is_stats_section', False)
+        base_key = col_def.get('base_stat', col_key.replace('_pct', ''))
+
+        if is_stats_section:
+            if col_ctx not in section_data:
+                continue
+            sec_entity, sec_pcts, _ = section_data[col_ctx]
+
+            # Opponent companion: compute value from base opponent formula
+            if col_def.get('is_opponent_col') and opp_percentiles:
+                opp_pop = opp_percentiles.get(base_key, {}).get(col_ctx)
+                if opp_pop is not None:
+                    # Find base opponent column to get its formula
+                    base_col_def = None
+                    for e2 in columns_list:
+                        if e2[0] == base_key:
+                            base_col_def = e2[1]
+                            break
+                    if base_col_def:
+                        formula_str = base_col_def.get('team_formula')
+                        value = _eval_dynamic_formula(
+                            formula_str, sec_entity, base_col_def, mode)
+                        if value is not None:
+                            reverse = base_col_def.get('reverse_percentile', False)
+                            rank = get_percentile_rank(value, opp_pop, reverse)
+                            row[col_idx] = round(rank)  # Fill companion value
+                            percentile_cells.append({
+                                'col': col_idx,
+                                'percentile': rank,
+                                'reverse': False,
+                            })
+                continue
+
+            # Regular companion
+            base_def = SHEETS_COLUMNS.get(base_key, col_def)
+            calculated = calculate_entity_stats(sec_entity, entity_type, mode)
+            value = calculated.get(base_key)
+
+            if value is not None and base_key in sec_pcts:
+                reverse = base_def.get('reverse_percentile', False)
+                rank = get_percentile_rank(value, sec_pcts[base_key], reverse)
+                percentile_cells.append({
+                    'col': col_idx,
+                    'percentile': rank,
+                    'reverse': reverse,
+                })
+        else:
+            # Non-stats section — use current_stats percentile population
+            if 'current_stats' in section_data:
+                sec_entity, sec_pcts, _ = section_data['current_stats']
+            elif section_data:
+                first_key = next(iter(section_data))
+                sec_entity, sec_pcts, _ = section_data[first_key]
+            else:
+                continue
+            base_def = SHEETS_COLUMNS.get(base_key, col_def)
+            calculated = calculate_entity_stats(sec_entity, entity_type, mode)
+            value = calculated.get(base_key)
+
+            if value is not None and base_key in sec_pcts:
+                reverse = base_def.get('reverse_percentile', False)
+                rank = get_percentile_rank(value, sec_pcts[base_key], reverse)
+                percentile_cells.append({
+                    'col': col_idx,
+                    'percentile': rank,
+                    'reverse': reverse,
+                })
+
+    return row, percentile_cells
+
+
+def _get_value_at_percentile(sorted_values: List, percentile: float,
+                             reverse: bool = False) -> Any:
+    """Get the interpolated value at a given percentile (0-100) from sorted values."""
+    if not sorted_values:
+        return None
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    # For reverse columns (lower = better), Best (100) → lowest value
+    if reverse:
+        percentile = 100 - percentile
+    idx = percentile / 100 * (n - 1)
+    lower = int(idx)
+    upper = min(lower + 1, n - 1)
+    frac = idx - lower
+    v_lower = sorted_values[lower]
+    v_upper = sorted_values[upper]
+    if not isinstance(v_lower, (int, float)) or not isinstance(v_upper, (int, float)):
+        return None
+    return v_lower * (1 - frac) + v_upper * frac
+
+
+def build_summary_rows(columns_list: List[Tuple],
+                       percentile_pops: dict,
+                       mode: str = 'per_100',
+                       opp_percentiles: Optional[dict] = None) -> Tuple[List[list], List[dict]]:
+    """
+    Build summary rows (Best, 75th, Average, 25th, Worst) for Teams/Players sheets.
+
+    For each stat column, looks up the value at that percentile threshold.
+    Non-stat columns are left blank except 'names' which gets the label.
+    Generated percentile columns show the percentile level itself.
+
+    Returns:
+        (rows, percentile_cells) where rows is list of 5 row lists,
+        and percentile_cells is list of {row, col, percentile} dicts
+        (row index is relative — caller must add data_start offset).
+    """
+    rows = []
+    pct_cells = []
+
+    for label, pct_level in SUMMARY_THRESHOLDS:
+        row = []
+        for col_idx, entry in enumerate(columns_list):
+            col_key, col_def = entry[0], entry[1]
+            col_ctx = entry[3] if len(entry) > 3 else None
+
+            # Names column gets the label
+            if col_key == 'names':
+                row.append(label)
+                continue
+
+            # Generated percentile columns show the percentile level
+            if col_def.get('is_generated_percentile', False):
+                row.append(pct_level)
+                # Color this cell at its percentile level
+                pct_cells.append({
+                    'col': col_idx,
+                    'percentile': pct_level,
+                    'reverse': False,  # Already correct direction
+                    'row_offset': len(rows),
+                })
+                continue
+
+            # Non-stat, non-percentile, no-has_percentile columns are blank
+            if (col_def.get('stat_category', 'none') == 'none'
+                    and not col_def.get('is_generated_percentile', False)
+                    and not col_def.get('has_percentile', False)):
+                row.append('')
+                continue
+
+            # Opponent columns: use opp_percentiles populations
+            if col_def.get('is_opponent_col') and opp_percentiles:
+                col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+                if col_ctx_cfg.get('is_stats_section') and col_ctx:
+                    opp_pop = opp_percentiles.get(col_key, {}).get(col_ctx)
+                    if opp_pop:
+                        reverse = col_def.get('reverse_percentile', False)
+                        val = _get_value_at_percentile(opp_pop, pct_level, reverse)
+                        if val is not None:
+                            formatted = format_stat_value(val, col_def)
+                            row.append(formatted if formatted is not None else '')
+                            pct_cells.append({
+                                'col': col_idx,
+                                'percentile': pct_level,
+                                'reverse': False,
+                                'row_offset': len(rows),
+                            })
+                            continue
+                row.append('')
+                continue
+
+            # Regular stat columns: look up in section-specific populations
+            col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+            is_stats_section = col_ctx_cfg.get('is_stats_section', False)
+            pop_key = f'{col_ctx}:{col_key}'
+
+            # Stats-section columns: look up via section:col_key
+            if is_stats_section and (
+                    pop_key in percentile_pops or col_key in percentile_pops):
+                sorted_vals = percentile_pops.get(pop_key,
+                              percentile_pops.get(col_key))
+                if sorted_vals:
+                    reverse = col_def.get('reverse_percentile', False)
+                    val = _get_value_at_percentile(sorted_vals, pct_level, reverse)
+                    if val is not None:
+                        formatted = format_stat_value(val, col_def)
+                        row.append(formatted if formatted is not None else '')
+                        pct_cells.append({
+                            'col': col_idx,
+                            'percentile': pct_level,
+                            'reverse': False,
+                            'row_offset': len(rows),
+                        })
+                        continue
+
+            # Non-stats columns with has_percentile (player_info): direct col_key lookup
+            if not is_stats_section and col_def.get('has_percentile', False):
+                sorted_vals = percentile_pops.get(col_key)
+                if sorted_vals:
+                    reverse = col_def.get('reverse_percentile', False)
+                    val = _get_value_at_percentile(sorted_vals, pct_level, reverse)
+                    if val is not None:
+                        formatted = format_stat_value(val, col_def)
+                        row.append(formatted if formatted is not None else '')
+                        pct_cells.append({
+                            'col': col_idx,
+                            'percentile': pct_level,
+                            'reverse': False,
+                            'row_offset': len(rows),
+                        })
+                        continue
+
+            row.append('')
+
+        rows.append(row)
+
+    return rows, pct_cells
+
+

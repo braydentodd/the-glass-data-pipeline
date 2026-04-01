@@ -19,10 +19,8 @@ from collections import defaultdict
 from src.db import get_db_connection
 from src.sheets.lib.db import fetch_all_players, fetch_all_teams
 from src.sheets.lib.calculations import calculate_all_percentiles
-from src.sheets.lib.google import get_sheets_client
-from src.sheets.lib.tabs.teams import sync_teams_sheet
-from src.sheets.lib.tabs.team import sync_team_sheet
-from src.sheets.lib.tabs.players import sync_players_sheet
+from src.sheets.lib.google.client import get_sheets_client
+from src.sheets.lib.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
 
 logger = logging.getLogger(__name__)
 

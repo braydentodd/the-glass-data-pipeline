@@ -1,0 +1,751 @@
+import logging
+from typing import Dict, List, Optional, Tuple
+from src.sheets.config import SHEETS_COLUMNS
+from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
+from sheets.lib.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
+
+def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
+                              header_merges: list, n_data_rows: int,
+                              team_name: str,
+                              percentile_cells: Optional[List[dict]] = None,
+                              n_player_rows: int = 0,
+                              sheet_type: str = 'team',
+                              show_advanced: bool = False,
+                              partial_update: bool = False) -> list:
+    """
+    Build ALL Google Sheets batch_update requests for a worksheet.
+    100% config-driven from SHEET_FORMATTING.
+
+    show_advanced overrides config default so that syncs respect the
+    user's current toggle state.
+
+    Args:
+        ws_id: Worksheet ID
+        columns_list: The column structure from build_sheet_columns
+        header_merges: Merge info from build_headers
+        n_data_rows: Number of data rows (players + team/opp)
+        team_name: Full team name for display
+        percentile_cells: List of {row, col, percentile, reverse} for shading
+        n_player_rows: Number of player rows (for filter range; team/opp excluded)
+        sheet_type: 'team', 'players', or 'teams'
+        show_advanced: If True, keep advanced columns visible (override config)
+
+    Returns:
+        List of request dicts for spreadsheet.batch_update
+    """
+    fmt = SHEET_FORMATTING
+    n_cols = len(columns_list)
+    data_start = fmt['data_start_row']
+    total_rows = data_start + n_data_rows
+    header_end = fmt['data_start_row']  # Row after last header row
+    border_weight = fmt['border_weight']
+    header_border_color = get_color_for_raw(COLORS[fmt['header_border_color']])
+    data_border_color = get_color_for_raw(COLORS[fmt['data_border_color']])
+    wrap_strategy = fmt.get('wrap_strategy', 'CLIP')
+
+    # Respect current toggle state: override config defaults
+    hide_advanced = not show_advanced if show_advanced else fmt.get('hide_advanced_columns', True)
+    hide_subsection_row = hide_advanced  # subsection row visibility matches advanced state
+
+    # --- Fast path for partial update (mode / timeframe changes) ---------
+    # Skip all structural formatting, resize, and widths; only reapply data-dependent pieces.
+    if partial_update:
+        fast = []
+        # Banding (row count may have changed)
+        if n_data_rows > 0:
+            fast.append({
+                'addBanding': {
+                    'bandedRange': {
+                        'range': _range(ws_id, data_start, data_start + n_data_rows, 0, n_cols),
+                        'rowProperties': {
+                            'firstBandColor': get_color_for_raw(COLORS[fmt['row_even_bg']]),
+                            'secondBandColor': get_color_for_raw(COLORS[fmt['row_odd_bg']]),
+                        },
+                    },
+                }
+            })
+        # Auto-filter (range depends on row count)
+        filter_end = data_start + (n_player_rows if n_player_rows > 0 else n_data_rows)
+        fast.append({
+            'setBasicFilter': {
+                'filter': {
+                    'range': _range(ws_id, fmt['filter_row'], filter_end, 0, n_cols),
+                }
+            }
+        })
+        # Percentile shading
+        if percentile_cells:
+            fast.extend(_build_percentile_shading_requests(ws_id, percentile_cells))
+        # Null-formula backgrounds for team/opp rows
+        if sheet_type == 'team' and n_data_rows > n_player_rows:
+            fast.extend(_build_null_formula_bg_requests(
+                ws_id, columns_list, data_start, n_player_rows, n_data_rows
+            ))
+        return fast
+
+    requests = []
+
+    # ---- 1. Grid properties: frozen rows/cols, hide gridlines ----
+    requests.append({
+        'updateSheetProperties': {
+            'properties': {
+                'sheetId': ws_id,
+                'gridProperties': {
+                    'frozenRowCount': fmt['frozen_rows'],
+                    'frozenColumnCount': fmt['frozen_cols'],
+                    'hideGridlines': True,
+                },
+            },
+            'fields': 'gridProperties(frozenRowCount,frozenColumnCount,hideGridlines)',
+        }
+    })
+
+    # ---- 2. Section header row (row 0) — includes team name in entities section ----
+    requests.append({
+        'repeatCell': {
+            'range': _range(ws_id, fmt['section_header_row'], fmt['section_header_row'] + 1, 0, n_cols),
+            'cell': {
+                'userEnteredFormat': {
+                    'backgroundColor': get_color_for_raw(COLORS[fmt['header_bg']]),
+                    'textFormat': {
+                        'fontFamily': fmt['header_font'],
+                        'fontSize': fmt['section_header_size'],
+                        'bold': True,
+                        'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
+                    },
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE',
+                    'wrapStrategy': wrap_strategy,
+                },
+            },
+            'fields': 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)',
+        }
+    })
+
+    # Team name in entities section — centered, larger font
+    entities_end = 0
+    for idx, entry in enumerate(columns_list):
+        ctx = entry[3] if len(entry) > 3 else None
+        if ctx != 'entities':
+            entities_end = idx
+            break
+    else:
+        entities_end = n_cols
+    if entities_end > 0:
+        requests.append({
+            'repeatCell': {
+                'range': _range(ws_id, fmt['section_header_row'], fmt['section_header_row'] + 1, 0, entities_end),
+                'cell': {
+                    'userEnteredFormat': {
+                        'textFormat': {
+                            'fontFamily': fmt['header_font'],
+                            'fontSize': fmt['team_name_size'],
+                            'bold': True,
+                            'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
+                        },
+                        'horizontalAlignment': 'CENTER',
+                    },
+                },
+                'fields': 'userEnteredFormat(textFormat,horizontalAlignment)',
+            }
+        })
+
+    # ---- 3. Subsection header row (row 1) ----
+    requests.append({
+        'repeatCell': {
+            'range': _range(ws_id, fmt['subsection_header_row'], fmt['subsection_header_row'] + 1, 0, n_cols),
+            'cell': {
+                'userEnteredFormat': {
+                    'backgroundColor': get_color_for_raw(COLORS[fmt['header_bg']]),
+                    'textFormat': {
+                        'fontFamily': fmt['header_font'],
+                        'fontSize': fmt['subsection_header_size'],
+                        'bold': True,
+                        'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
+                    },
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE',
+                    'wrapStrategy': wrap_strategy,
+                },
+            },
+            'fields': 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)',
+        }
+    })
+
+    # ---- 4. Column header row (row 2) ----
+    requests.append({
+        'repeatCell': {
+            'range': _range(ws_id, fmt['column_header_row'], fmt['column_header_row'] + 1, 0, n_cols),
+            'cell': {
+                'userEnteredFormat': {
+                    'backgroundColor': get_color_for_raw(COLORS[fmt['header_bg']]),
+                    'textFormat': {
+                        'fontFamily': fmt['header_font'],
+                        'fontSize': fmt['column_header_size'],
+                        'bold': True,
+                        'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
+                    },
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE',
+                    'wrapStrategy': wrap_strategy,
+                },
+            },
+            'fields': 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)',
+        }
+    })
+
+    # ---- 5. Filter row (row 3) — same header styling ----
+    requests.append({
+        'repeatCell': {
+            'range': _range(ws_id, fmt['filter_row'], fmt['filter_row'] + 1, 0, n_cols),
+            'cell': {
+                'userEnteredFormat': {
+                    'backgroundColor': get_color_for_raw(COLORS[fmt['header_bg']]),
+                    'textFormat': {
+                        'fontFamily': fmt['header_font'],
+                        'fontSize': fmt['column_header_size'],
+                        'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
+                    },
+                    'horizontalAlignment': 'CENTER',
+                    'verticalAlignment': 'MIDDLE',
+                    'wrapStrategy': wrap_strategy,
+                },
+            },
+            'fields': 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)',
+        }
+    })
+
+    # ---- 6. Data rows default styling (incl. CLIP wrap) ----
+    if n_data_rows > 0:
+        requests.append({
+            'repeatCell': {
+                'range': _range(ws_id, data_start, total_rows, 0, n_cols),
+                'cell': {
+                    'userEnteredFormat': {
+                        'textFormat': {
+                            'fontFamily': fmt['data_font'],
+                            'fontSize': fmt['data_size'],
+                        },
+                        'horizontalAlignment': fmt['default_h_align'],
+                        'verticalAlignment': fmt['default_v_align'],
+                        'wrapStrategy': wrap_strategy,
+                    },
+                },
+                'fields': 'userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)',
+            }
+        })
+
+    # ---- 6b. Clear stale borders from previous syncs ----
+    # ws.clear() removes values but NOT formatting/borders.
+    # If the roster size changed, old borders would persist at wrong positions.
+    if n_data_rows > 0:
+        requests.append({
+            'updateBorders': {
+                'range': _range(ws_id, data_start, total_rows, 0, n_cols),
+                'top': {'style': 'NONE'},
+                'bottom': {'style': 'NONE'},
+                'left': {'style': 'NONE'},
+                'right': {'style': 'NONE'},
+                'innerHorizontal': {'style': 'NONE'},
+                'innerVertical': {'style': 'NONE'},
+            }
+        })
+
+    # ---- 7. Alternating row colors via addBanding (survives sorting) ----
+    # Banding covers ALL data rows including team/opponent rows
+    if n_data_rows > 0:
+        requests.append({
+            'addBanding': {
+                'bandedRange': {
+                    'range': _range(ws_id, data_start, data_start + n_data_rows, 0, n_cols),
+                    'rowProperties': {
+                        'firstBandColor': get_color_for_raw(COLORS[fmt['row_even_bg']]),
+                        'secondBandColor': get_color_for_raw(COLORS[fmt['row_odd_bg']]),
+                    },
+                },
+            }
+        })
+
+    # ---- 8. Left-aligned columns (data rows only) — config-driven ----
+    for col_key in fmt.get('left_align_columns', []):
+        col_idx = get_column_index(col_key, columns_list)
+        if col_idx is not None and n_data_rows > 0:
+            requests.append({
+                'repeatCell': {
+                    'range': _range(ws_id, data_start, total_rows, col_idx, col_idx + 1),
+                    'cell': {
+                        'userEnteredFormat': {'horizontalAlignment': 'LEFT'},
+                    },
+                    'fields': 'userEnteredFormat.horizontalAlignment',
+                }
+            })
+
+    # ---- 8b. Bold columns (data rows only) — config-driven ----
+    for col_key in fmt.get('bold_columns', []):
+        col_idx = get_column_index(col_key, columns_list)
+        if col_idx is not None and n_data_rows > 0:
+            requests.append({
+                'repeatCell': {
+                    'range': _range(ws_id, data_start, total_rows, col_idx, col_idx + 1),
+                    'cell': {
+                        'userEnteredFormat': {
+                            'textFormat': {'bold': True},
+                        },
+                    },
+                    'fields': 'userEnteredFormat.textFormat.bold',
+                }
+            })
+
+    # ---- 9. Header merge cells ----
+    for merge in header_merges:
+        row = merge['row']  # Already 0-based (section=0, subsection=1)
+        if merge['end_col'] - merge['start_col'] > 1:
+            requests.append({
+                'mergeCells': {
+                    'range': _range(ws_id, row, row + 1,
+                                    merge['start_col'], merge['end_col']),
+                    'mergeType': 'MERGE_ALL',
+                }
+            })
+
+    # ---- 10. Section borders (vertical) — white in all header rows, black in data ----
+    section_boundaries = _get_section_boundaries(columns_list)
+    for boundary_col in section_boundaries:
+        # Header portion (all header rows) — white border
+        requests.append({
+            'updateBorders': {
+                'range': _range(ws_id, 0, header_end, boundary_col, boundary_col + 1),
+                'left': _border_style(border_weight, header_border_color),
+            }
+        })
+        # Data portion — black border
+        if n_data_rows > 0:
+            requests.append({
+                'updateBorders': {
+                    'range': _range(ws_id, data_start, total_rows, boundary_col, boundary_col + 1),
+                    'left': _border_style(border_weight, data_border_color),
+                }
+            })
+
+    # ---- 11. Subsection borders (always drawn under section borders — UI manages visibility) ----
+    subsection_boundaries = _get_subsection_boundaries(columns_list)
+    sub_hdr_row = fmt['subsection_header_row']  # 0-indexed row 1
+    sub_border_weight = fmt.get('subsection_border_weight', 1)
+    
+    # We only draw a subsection border if it doesn't overlap a darker section border
+    filtered_sub_boundaries = [b for b in subsection_boundaries if b not in section_boundaries]
+    
+    for boundary_col in filtered_sub_boundaries:
+        # Header portion (from subsection row through filter row) — white border
+        requests.append({
+            'updateBorders': {
+                'range': _range(ws_id, sub_hdr_row, header_end, boundary_col, boundary_col + 1),
+                'left': _border_style(sub_border_weight, header_border_color),
+            }
+        })
+        # Data portion — black border
+        if n_data_rows > 0:
+            requests.append({
+                'updateBorders': {
+                    'range': _range(ws_id, data_start, total_rows, boundary_col, boundary_col + 1),
+                    'left': _border_style(sub_border_weight, data_border_color),
+                }
+            })
+
+    # ---- 12. Horizontal borders between header rows — white, weight 2 ----
+    # Between section header (row 0) and subsection header (row 1)
+    requests.append({
+        'updateBorders': {
+            'range': _range(ws_id, fmt['subsection_header_row'], fmt['subsection_header_row'] + 1, 0, n_cols),
+            'top': _border_style(border_weight, header_border_color),
+        }
+    })
+    # Between subsection header (row 1) and column header (row 2)
+    requests.append({
+        'updateBorders': {
+            'range': _range(ws_id, fmt['column_header_row'], fmt['column_header_row'] + 1, 0, n_cols),
+            'top': _border_style(border_weight, header_border_color),
+        }
+    })
+
+    # ---- 13. (Removed — no horizontal border between headers and data) ----
+
+    # ---- 14. Border above team/opp rows (horizontal divider) — black ----
+    if n_player_rows > 0 and n_data_rows > n_player_rows:
+        team_row = data_start + n_player_rows
+        requests.append({
+            'updateBorders': {
+                'range': _range(ws_id, team_row, team_row + 1, 0, n_cols),
+                'top': _border_style(border_weight, data_border_color),
+            }
+        })
+
+    # ---- 15. Column widths: only set minimum_width columns (no blanket auto-resize) ----
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        min_width = col_def.get('minimum_width')
+        if min_width == 'auto':
+            # Auto-resize just this column
+            requests.append({
+                'autoResizeDimensions': {
+                    'dimensions': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                }
+            })
+        elif isinstance(min_width, (int, float)):
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'pixelSize': int(min_width)},
+                    'fields': 'pixelSize',
+                }
+            })
+
+    # ---- 16. Hide advanced stat columns (respects current toggle state) ----
+    if hide_advanced:
+        requests.extend(_build_hide_advanced_requests(ws_id, columns_list))
+    else:
+        # Advanced visible → hide basic stat columns (swap behavior)
+        requests.extend(_build_hide_basic_requests(ws_id, columns_list))
+
+    # ---- 17. Hide base value columns (percentile companion columns are always visible) ----
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        if col_def.get('has_percentile', False) and not col_def.get('is_generated_percentile', False):
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'hiddenByUser': True},
+                    'fields': 'hiddenByUser',
+                }
+            })
+
+    # ---- 18. Hide subsection row (tied to advanced stats state) ----
+    if hide_subsection_row:
+        requests.append({
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': ws_id,
+                    'dimension': 'ROWS',
+                    'startIndex': fmt['subsection_header_row'],
+                    'endIndex': fmt['subsection_header_row'] + 1,
+                },
+                'properties': {'hiddenByUser': True},
+                'fields': 'hiddenByUser',
+            }
+        })
+
+    # ---- 19. Hide identity section columns ----
+    if fmt.get('hide_identity_section', True):
+        for idx, entry in enumerate(columns_list):
+            col_ctx = entry[3] if len(entry) > 3 else None
+            if col_ctx == 'identity':
+                requests.append({
+                    'updateDimensionProperties': {
+                        'range': {
+                            'sheetId': ws_id,
+                            'dimension': 'COLUMNS',
+                            'startIndex': idx,
+                            'endIndex': idx + 1,
+                        },
+                        'properties': {'hiddenByUser': True},
+                        'fields': 'hiddenByUser',
+                    }
+                })
+
+    # ---- 19b. Hide columns without entity formula (e.g. jersey on teams) ----
+    col_entity = 'team' if sheet_type == 'teams' else 'player'
+    fkey = f'{col_entity}_formula'
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        # Non-stat columns without a formula for this entity get hidden
+        if col_def.get('stat_category', 'none') == 'none' and col_def.get(fkey) is None:
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'hiddenByUser': True},
+                    'fields': 'hiddenByUser',
+                }
+            })
+
+    # ---- 20. Auto-filter on filter row — excludes team/opp rows from sort ----
+    filter_end = data_start + n_player_rows if n_player_rows > 0 else total_rows
+    requests.append({
+        'setBasicFilter': {
+            'filter': {
+                'range': _range(ws_id, fmt['filter_row'], filter_end, 0, n_cols),
+            }
+        }
+    })
+
+    # ---- 21. Percentile color shading ----
+    if percentile_cells:
+        requests.extend(_build_percentile_shading_requests(ws_id, percentile_cells))
+
+
+
+    # ---- 22. Black background for cells where entity has no formula ----
+    # Only for individual team sheets which have team/opponent rows.
+    # Players and Teams sheets have summary rows instead — no black bg.
+    if sheet_type == 'team' and n_data_rows > n_player_rows:
+        requests.extend(_build_null_formula_bg_requests(
+            ws_id, columns_list, data_start, n_player_rows, n_data_rows
+        ))
+
+    # ---- 23. Delete extra rows and columns (resize to exact dimensions) ----
+    requests.append({
+        'updateSheetProperties': {
+            'properties': {
+                'sheetId': ws_id,
+                'gridProperties': {
+                    'rowCount': total_rows,
+                    'columnCount': n_cols,
+                },
+            },
+            'fields': 'gridProperties(rowCount,columnCount)',
+        }
+    })
+
+    return requests
+
+
+def _range(ws_id: int, start_row: int, end_row: int,
+           start_col: int, end_col: int) -> dict:
+    """Build a GridRange dict."""
+    return {
+        'sheetId': ws_id,
+        'startRowIndex': start_row,
+        'endRowIndex': end_row,
+        'startColumnIndex': start_col,
+        'endColumnIndex': end_col,
+    }
+
+
+def _border_style(weight: int, color: dict) -> dict:
+    """Build a border style dict with explicit weight and color."""
+    # Google Sheets API uses 'style' with weight encoded as style name
+    # weight 1 = SOLID, weight 2 = SOLID_MEDIUM, weight 3 = SOLID_THICK
+    style_map = {1: 'SOLID', 2: 'SOLID_MEDIUM', 3: 'SOLID_THICK'}
+    return {
+        'style': style_map.get(weight, 'SOLID_MEDIUM'),
+        'color': color,
+    }
+
+
+def _get_section_boundaries(columns_list: List[Tuple]) -> List[int]:
+    """Get column indices where sections change (for vertical borders).
+    Skips the boundary after the 'entities' section — entities gets no right border."""
+    boundaries = []
+    prev_section = None
+    for idx, entry in enumerate(columns_list):
+        col_ctx = entry[3] if len(entry) > 3 else None
+        if col_ctx != prev_section and prev_section is not None:
+            # Skip the border between entities and the next section
+            if prev_section != 'entities':
+                boundaries.append(idx)
+        prev_section = col_ctx
+    return boundaries
+
+
+def _get_subsection_boundaries(columns_list: List[Tuple]) -> List[int]:
+    """Get column indices where subsections change within stats sections."""
+    boundaries = []
+    prev_subsection = None
+    prev_section = None
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        col_ctx = entry[3] if len(entry) > 3 else None
+        col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+        if not col_ctx_cfg.get('is_stats_section'):
+            prev_subsection = None
+            prev_section = col_ctx
+            continue
+        subsection = col_def.get('subsection')
+        # New subsection within same section
+        if (subsection != prev_subsection and prev_subsection is not None
+                and col_ctx == prev_section):
+            boundaries.append(idx)
+        prev_subsection = subsection
+        prev_section = col_ctx
+    return boundaries
+
+
+def _build_hide_advanced_requests(ws_id: int, columns_list: List[Tuple]) -> list:
+    """Build requests to hide advanced stat columns."""
+    requests = []
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        col_ctx = entry[3] if len(entry) > 3 else None
+        col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+        if col_ctx_cfg.get('is_stats_section') and col_def.get('stat_mode') == 'advanced':
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'hiddenByUser': True},
+                    'fields': 'hiddenByUser',
+                }
+            })
+    return requests
+
+
+def _build_hide_basic_requests(ws_id: int, columns_list: List[Tuple]) -> list:
+    """Build requests to hide basic stat columns (when advanced mode is shown)."""
+    requests = []
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        col_ctx = entry[3] if len(entry) > 3 else None
+        col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
+        if col_ctx_cfg.get('is_stats_section') and col_def.get('stat_mode') == 'basic':
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'hiddenByUser': True},
+                    'fields': 'hiddenByUser',
+                }
+            })
+    return requests
+
+
+def _build_null_formula_bg_requests(ws_id: int, columns_list: List[Tuple],
+                                     data_start: int, n_player_rows: int,
+                                     n_data_rows: int) -> list:
+    """
+    Build requests to set black background on cells where the row's
+    formula is None:
+      - player rows where player_formula is None (team-only columns)
+      - team row where team_formula is None
+      - opponent row where opponents_formula is None
+    Config-driven: reads formula presence from column definitions.
+    """
+    black = get_color_for_raw(COLORS['black'])
+    requests = []
+    team_row = data_start + n_player_rows
+    opp_row = data_start + n_player_rows + 1
+
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+
+        # Black bg on player rows for team-only columns
+        if col_def.get('player_formula') is None and n_player_rows > 0:
+            requests.append({
+                'repeatCell': {
+                    'range': _range(ws_id, data_start, data_start + n_player_rows, idx, idx + 1),
+                    'cell': {
+                        'userEnteredFormat': {
+                            'backgroundColor': black,
+                        },
+                    },
+                    'fields': 'userEnteredFormat.backgroundColor',
+                }
+            })
+
+        # Team row: black bg if team_formula is None
+        if col_def.get('team_formula') is None:
+            requests.append({
+                'repeatCell': {
+                    'range': _range(ws_id, team_row, team_row + 1, idx, idx + 1),
+                    'cell': {
+                        'userEnteredFormat': {
+                            'backgroundColor': black,
+                        },
+                    },
+                    'fields': 'userEnteredFormat.backgroundColor',
+                }
+            })
+        # Opponents row: black bg if opponents_formula is None
+        if col_def.get('opponents_formula') is None:
+            if opp_row < data_start + n_data_rows:
+                requests.append({
+                    'repeatCell': {
+                        'range': _range(ws_id, opp_row, opp_row + 1, idx, idx + 1),
+                        'cell': {
+                            'userEnteredFormat': {
+                                'backgroundColor': black,
+                            },
+                        },
+                        'fields': 'userEnteredFormat.backgroundColor',
+                    }
+                })
+    return requests
+
+
+def _build_percentile_shading_requests(ws_id: int,
+                                        percentile_cells: List[dict]) -> list:
+    """Build cell background color requests for percentile shading.
+
+    NOTE: percentile rank already accounts for reverse_percentile direction
+    (get_percentile_rank inverts so high rank = good always).
+    Do NOT pass reverse to get_color_for_percentile — that would double-invert.
+    """
+    requests = []
+    for cell in percentile_cells:
+        color = get_color_for_percentile(cell['percentile'])
+        requests.append({
+            'repeatCell': {
+                'range': _range(ws_id, cell['row'], cell['row'] + 1,
+                                cell['col'], cell['col'] + 1),
+                'cell': {
+                    'userEnteredFormat': {
+                        'backgroundColor': get_color_for_raw(color),
+                    },
+                },
+                'fields': 'userEnteredFormat.backgroundColor',
+            }
+        })
+    return requests
+
+
+def create_text_format(font_family=None, font_size=None, bold=False,
+                       foreground_color='white') -> dict:
+    """Create a text format dict for Google Sheets API."""
+    fmt = {'foregroundColor': get_color_dict(foreground_color), 'bold': bold}
+    if font_family:
+        fmt['fontFamily'] = font_family
+    if font_size:
+        fmt['fontSize'] = font_size
+    return fmt
+
+
+def create_cell_format(background_color='white', text_format=None,
+                       h_align='CENTER', v_align='MIDDLE', wrap='CLIP') -> dict:
+    """Create a complete cell format dict for Google Sheets API."""
+    cf = {
+        'backgroundColor': get_color_dict(background_color),
+        'horizontalAlignment': h_align,
+        'verticalAlignment': v_align,
+        'wrapStrategy': wrap
+    }
+    if text_format:
+        cf['textFormat'] = text_format
+    return cf
+
+

@@ -7,7 +7,7 @@ from src.sheets.lib.db import fetch_all_players, fetch_all_teams, fetch_players_
 from sheets.lib.layout import build_headers, build_sheet_columns
 from sheets.lib.calculations import calculate_all_percentiles
 from sheets.lib.formatting import build_formatting_requests, build_merged_entity_row
-from sheets.lib.google import get_or_create_worksheet, write_and_format
+from src.sheets.lib.google.client import get_or_create_worksheet, write_and_format
 
 logger = logging.getLogger(__name__)
 

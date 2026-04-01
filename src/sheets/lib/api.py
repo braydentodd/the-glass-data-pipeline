@@ -1,0 +1,409 @@
+import os
+import json
+from typing import Optional, Any
+from src.sheets.config import SHEETS_COLUMNS, SECTIONS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_MODES
+def get_config_for_export(league: str,
+                          get_teams_fn=None,
+                          id_column_key: str = 'player_id',
+                          server_config: dict = None,
+                          google_sheets_config: dict = None,
+                          mode: str = 'per_100') -> dict:
+    """
+    Build JSON-serializable config for /api/config endpoint.
+    Apps Script uses this as single source of truth — zero hardcoding in JS.
+
+    League-agnostic: derives league-specific values from the league parameter
+    when optional args are not provided.
+
+    Exports:
+      - column_ranges:            section toggle ranges (team_sheet / {league}_sheet)
+      - advanced_column_ranges:   toggle advanced stat columns
+      - percentile_column_ranges: toggle percentile columns
+      - column_indices:           edit-detection indices (player_id, team, stats_start)
+      - stat_modes:               available stat modes with display labels
+      - sections:                 section config (display names, toggleability)
+    """
+    import os
+
+    # Derive league dependencies when not explicitly provided
+    if get_teams_fn is None:
+        if league == 'ncaa':
+            import etl.ncaa.lib as _etl_lib
+        else:
+            import etl.nba.lib as _etl_lib
+        get_teams_fn = _etl_lib.get_teams_from_db
+
+    if server_config is None:
+        server_config = {
+            'production_host': os.getenv('API_HOST', '150.136.255.23'),
+            'production_port': int(os.getenv('API_PORT', 5000)),
+        }
+
+    if google_sheets_config is None:
+        google_sheets_config = GOOGLE_SHEETS_CONFIG.get(league, {})
+    league_sheet = f'{league}_sheet'
+
+    # --- Teams dict -------------------------------------------------------
+    teams_from_db = get_teams_fn()
+    league_teams = {abbr: team_id for team_id, (abbr, name) in teams_from_db.items()}
+
+    # --- Stat columns list -----------------------------------------------
+    stat_columns = [k for k, v in SHEETS_COLUMNS.items() if v.get('stat_category', 'none') != 'none']
+
+    # --- Build full column lists for all sheet types --------------------
+    team_columns = build_sheet_columns(
+        entity='player', stat_mode='both', sheet_type='team'
+    )
+    league_columns = build_sheet_columns(
+        entity='player', stat_mode='both', sheet_type='players'
+    )
+    teams_columns = build_sheet_columns(
+        entity='team', stat_mode='both', sheet_type='teams'
+    )
+
+    # --- Helper: find contiguous ranges of matching column indices --------
+    def _contiguous_ranges(indices):
+        if not indices:
+            return []
+        ranges = []
+        start = indices[0]
+        prev = indices[0]
+        for idx in indices[1:]:
+            if idx == prev + 1:
+                prev = idx
+            else:
+                ranges.append({'start': start + 1, 'count': prev - start + 1})
+                start = idx
+                prev = idx
+        ranges.append({'start': start + 1, 'count': prev - start + 1})
+        return ranges
+
+    # --- Section toggle ranges -------------------------------------------
+    def _section_range(cols, section_name):
+        indices = [i for i, entry in enumerate(cols)
+                   if (entry[3] if len(entry) > 3 else None) == section_name]
+        if not indices:
+            return None
+        return {'start': min(indices) + 1, 'count': len(indices)}
+
+    column_ranges = {'team_sheet': {}, league_sheet: {}, 'teams_sheet': {}}
+    for sec in ('current_stats', 'historical_stats', 'postseason_stats',
+                'player_info', 'analysis'):
+        team_range = _section_range(team_columns, sec)
+        league_range = _section_range(league_columns, sec)
+        teams_range = _section_range(teams_columns, sec)
+        if team_range:
+            column_ranges['team_sheet'][sec] = team_range
+        if league_range:
+            column_ranges[league_sheet][sec] = league_range
+        if teams_range:
+            column_ranges['teams_sheet'][sec] = teams_range
+
+    # --- Advanced column ranges ------------------------------------------
+    def _advanced_indices(cols):
+        return sorted([
+            i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
+            if col_def.get('stat_mode') == 'advanced'
+        ])
+
+    advanced_column_ranges = {
+        'team_sheet':  _contiguous_ranges(_advanced_indices(team_columns)),
+        league_sheet:  _contiguous_ranges(_advanced_indices(league_columns)),
+        'teams_sheet': _contiguous_ranges(_advanced_indices(teams_columns)),
+    }
+
+    # --- Basic column ranges (hidden when advanced mode is on) -----------
+    def _basic_indices(cols):
+        return sorted([
+            i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
+            if col_def.get('stat_mode') == 'basic'
+        ])
+
+    basic_column_ranges = {
+        'team_sheet':  _contiguous_ranges(_basic_indices(team_columns)),
+        league_sheet:  _contiguous_ranges(_basic_indices(league_columns)),
+        'teams_sheet': _contiguous_ranges(_basic_indices(teams_columns)),
+    }
+
+    # --- Percentile column ranges ----------------------------------------
+    def _percentile_indices(cols):
+        return sorted([
+            i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
+            if col_def.get('is_generated_percentile', False)
+        ])
+
+    percentile_column_ranges = {
+        'team_sheet':  _contiguous_ranges(_percentile_indices(team_columns)),
+        league_sheet:  _contiguous_ranges(_percentile_indices(league_columns)),
+        'teams_sheet': _contiguous_ranges(_percentile_indices(teams_columns)),
+    }
+
+    # --- Base value columns that have percentile counterparts ------------
+    def _base_value_with_pct_indices(cols):
+        return sorted([
+            i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
+            if col_def.get('has_percentile', False)
+            and not col_def.get('is_generated_percentile', False)
+        ])
+
+    base_value_column_ranges = {
+        'team_sheet':  _contiguous_ranges(_base_value_with_pct_indices(team_columns)),
+        league_sheet:  _contiguous_ranges(_base_value_with_pct_indices(league_columns)),
+        'teams_sheet': _contiguous_ranges(_base_value_with_pct_indices(teams_columns)),
+    }
+
+    # --- Vertical boundaries (for border management in toggles) -----------
+    def _boundary_entries(cols, idx_list):
+        return [{'col': b + 1, 'hp': bool(cols[b][1].get('has_percentile', False))}
+                for b in idx_list]
+
+    subsection_boundaries = {
+        'team_sheet':  _boundary_entries(team_columns,  _get_subsection_boundaries(team_columns)),
+        league_sheet:  _boundary_entries(league_columns, _get_subsection_boundaries(league_columns)),
+        'teams_sheet': _boundary_entries(teams_columns,  _get_subsection_boundaries(teams_columns)),
+    }
+
+    section_boundaries = {
+        'team_sheet':  _boundary_entries(team_columns,  _get_section_boundaries(team_columns)),
+        league_sheet:  _boundary_entries(league_columns, _get_section_boundaries(league_columns)),
+        'teams_sheet': _boundary_entries(teams_columns,  _get_section_boundaries(teams_columns)),
+    }
+
+    # --- Always-hidden columns per sheet type (1-indexed) ----------------
+    def _always_hidden_indices(cols, entity_type):
+        fkey = f'{entity_type}_formula'
+        hidden = []
+        for i, (ck, cd, v, cx) in enumerate(cols):
+            if cd.get('stat_category', 'none') == 'none' and cd.get(fkey) is None:
+                hidden.append(i + 1)
+        return hidden
+
+    always_hidden_columns = {
+        'team_sheet':  _always_hidden_indices(team_columns, 'player'),
+        'teams_sheet': _always_hidden_indices(teams_columns, 'team'),
+        league_sheet:  [],
+    }
+
+    # --- Stats section column ranges -----------
+    def _stats_section_range(cols):
+        start = end = None
+        for idx, (ck, cd, v, cx) in enumerate(cols):
+            if SECTION_CONFIG.get(cx, {}).get('is_stats_section'):
+                if start is None:
+                    start = idx + 1
+                end = idx + 1
+        return {'start': start, 'end': end} if start else None
+
+    stats_section_ranges = {
+        'team_sheet':  _stats_section_range(team_columns),
+        league_sheet:  _stats_section_range(league_columns),
+        'teams_sheet': _stats_section_range(teams_columns),
+    }
+
+    # --- Per-column metadata for JS toggle logic -------------------------
+    def _column_metadata(cols):
+        meta = []
+        for i, (ck, cd, v, cx) in enumerate(cols):
+            sm = cd.get('stat_mode', 'both')
+            is_stats = SECTION_CONFIG.get(cx, {}).get('is_stats_section', False)
+            meta.append({
+                'col': i + 1,
+                'pct': bool(cd.get('is_generated_percentile')),
+                'adv': sm == 'advanced',
+                'bas': sm == 'basic',
+                'stats': is_stats,
+                'hp': bool(cd.get('has_percentile')),
+                'sec': cx,
+            })
+        return meta
+
+    column_metadata = {
+        'team_sheet':  _column_metadata(team_columns),
+        league_sheet:  _column_metadata(league_columns),
+        'teams_sheet': _column_metadata(teams_columns),
+    }
+
+    # --- Per-column widths -----------------------------------------------
+    def _column_widths(cols):
+        widths = {}
+        for i, (ck, cd, v, cx) in enumerate(cols):
+            mw = cd.get('minimum_width')
+            if mw is not None:
+                widths[str(i + 1)] = mw
+        return widths
+
+    column_widths = {
+        'team_sheet':  _column_widths(team_columns),
+        league_sheet:  _column_widths(league_columns),
+        'teams_sheet': _column_widths(teams_columns),
+    }
+
+    # --- Column indices for edit detection (1-indexed) ---
+    id_idx = get_column_index(id_column_key, team_columns)
+    team_col_idx = get_column_index('team', league_columns)
+    stats_start = None
+    for i, entry in enumerate(team_columns):
+        if entry[1].get('stat_category', 'none') != 'none':
+            stats_start = i + 1
+            break
+
+    # --- Editable columns (config-driven for Apps Script) ----------------
+    editable_columns = []
+    for col_key, col_def in SHEETS_COLUMNS.items():
+        if not col_def.get('editable', False):
+            continue
+        db_field = col_def.get('player_formula')
+        if not db_field or any(op in db_field for op in '+-*/('):
+            continue
+        team_idx = get_column_index(col_key, team_columns)
+        league_idx = get_column_index(col_key, league_columns)
+        editable_columns.append({
+            'col_key': col_key,
+            'team_col_index': (team_idx or 0) + 1,
+            f'{league}_col_index': (league_idx or 0) + 1 if league_idx is not None else None,
+            'db_field': db_field,
+            'display_name': col_def.get('display_name', col_key),
+            'format': col_def.get('format', 'text'),
+            'team_row_calc': col_def.get('team_row_calc'),
+        })
+
+    # --- Editable columns for teams_sheet ----
+    teams_editable = []
+    for col_key, col_def in SHEETS_COLUMNS.items():
+        if not col_def.get('editable', False):
+            continue
+        tf = col_def.get('team_formula')
+        if tf and tf != 'TEAM' and not any(op in tf for op in '+-*/('):
+            ti = get_column_index(col_key, teams_columns)
+            if ti is not None:
+                teams_editable.append({
+                    'col_key': col_key,
+                    'col_index': ti + 1,
+                    'db_field': tf,
+                    'display_name': col_def.get('display_name', col_key),
+                })
+
+    # Reverse mapping: team name → abbreviation
+    team_name_to_abbr = {name: abbr for _, (abbr, name) in teams_from_db.items()}
+
+    # Stat mode labels (single source of truth for menu labels)
+    _pm = int(STAT_CONSTANTS['default_per_minute'])
+    _pp = int(STAT_CONSTANTS['default_per_possessions'])
+    stat_mode_labels = {
+        f'per_{_pp}': f'per {_pp} Poss',
+        'per_game': 'per Game',
+        f'per_{_pm}': f'per {_pm} Mins',
+    }
+
+    return {
+        'api_base_url': f"http://{server_config['production_host']}:{server_config['production_port']}",
+        'sheet_id': google_sheets_config.get('spreadsheet_id', ''),
+        'league': {
+            'name': league.upper(),
+            'slug': league,
+            'teams_key': f'{league}_teams',
+            'players_sheet_names': [league.upper(), 'PLAYERS'],
+            'players_range_key': league_sheet,
+            'edit_col_index_key': f'{league}_col_index',
+            'api_prefix': '/api',
+            'sync_endpoint': '/api/update-sheets',
+        },
+        f'{league}_teams': league_teams,
+        'team_name_to_abbr': team_name_to_abbr,
+        'stat_columns': stat_columns,
+        'reverse_stats': get_reverse_stats(),
+        'editable_fields': get_editable_fields(),
+        'editable_columns': editable_columns,
+        'column_indices': {
+            'player_id': (id_idx or 0) + 1,
+            'team': (team_col_idx or 0) + 1,
+            'stats_start': stats_start or 9,
+        },
+        'column_ranges': column_ranges,
+        'advanced_column_ranges': advanced_column_ranges,
+        'basic_column_ranges': basic_column_ranges,
+        'percentile_column_ranges': percentile_column_ranges,
+        'base_value_column_ranges': base_value_column_ranges,
+        'section_boundaries': section_boundaries,
+        'subsection_boundaries': subsection_boundaries,
+        'always_hidden_columns': always_hidden_columns,
+        'stats_section_ranges': stats_section_ranges,
+        'column_metadata': column_metadata,
+        'column_widths': column_widths,
+        'default_stat_mode': DEFAULT_STAT_MODE,
+        'subsection_row_index': SHEET_FORMATTING['subsection_header_row'] + 1,
+        'teams_editable_columns': teams_editable,
+        'colors': {
+            'red': {'r': int(COLORS['red']['red'] * 255), 'g': int(COLORS['red']['green'] * 255), 'b': int(COLORS['red']['blue'] * 255)},
+            'yellow': {'r': int(COLORS['yellow']['red'] * 255), 'g': int(COLORS['yellow']['green'] * 255), 'b': int(COLORS['yellow']['blue'] * 255)},
+            'green': {'r': int(COLORS['green']['red'] * 255), 'g': int(COLORS['green']['green'] * 255), 'b': int(COLORS['green']['blue'] * 255)},
+        },
+        'color_thresholds': COLOR_THRESHOLDS,
+        'layout': {
+            'header_row_count': SHEET_FORMATTING['header_row_count'],
+            'data_start_row': SHEET_FORMATTING['data_start_row'],
+            'frozen_rows': SHEET_FORMATTING['frozen_rows'],
+            'frozen_cols': SHEET_FORMATTING['frozen_cols'],
+        },
+        'sections': {k: v for k, v in SECTION_CONFIG.items()},
+        'subsections': SUBSECTIONS,
+        'stat_modes': STAT_MODES,
+        'stat_mode_labels': stat_mode_labels,
+    }
+
+
+# ============================================================================
+# API RESPONSE CACHE
+# ============================================================================
+
+_stat_cache: Dict[str, Tuple[float, Any]] = {}
+
+
+def get_cached_stats(key: str) -> Optional[Any]:
+    """Get cached stats if TTL hasn't expired."""
+    if key in _stat_cache:
+        timestamp, data = _stat_cache[key]
+        if time.time() - timestamp < STAT_CONSTANTS['cache_ttl_seconds']:
+            return data
+        del _stat_cache[key]
+    return None
+
+
+def set_cached_stats(key: str, data: Any):
+    """Cache stats with current timestamp."""
+    _stat_cache[key] = (time.time(), data)
+
+
+def clear_cache():
+    """Clear the entire stats cache."""
+    _stat_cache.clear()
+
+
+def resolve_columns_for_league(league):
+    """Resolve fully expanded SHEETS_COLUMNS into a league-specific flat dict."""
+    from src.sheets.config import WIDTH_CLASSES
+    resolved = {}
+
+    for col_key, col_def in SHEETS_COLUMNS.items():
+        leagues = col_def.get('leagues', ['nba', 'ncaa'])
+        if league not in leagues:
+            continue
+
+        entry = {}
+        _SKIP = {'leagues', 'formulas', 'width_class', 'width'}
+        for k, v in col_def.items():
+            if k not in _SKIP:
+                entry[k] = v
+
+        formulas = col_def.get('formulas', {})
+        entry['player_formula'] = formulas.get('player')
+        entry['team_formula'] = formulas.get('team')
+        entry['opponents_formula'] = formulas.get('opponents')
+
+        wc = col_def.get('width_class', 'auto')
+        pw = WIDTH_CLASSES.get(wc)
+        entry['minimum_width'] = pw if pw is not None else 'auto'
+
+        resolved[col_key] = entry
+
+    return resolved

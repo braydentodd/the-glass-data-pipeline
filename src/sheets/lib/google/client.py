@@ -108,7 +108,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
         n_player_rows=n_player_rows,
         sheet_type=sheet_type,
         show_advanced=show_advanced,
-        data_only=data_only,
+        partial_update=partial_update,
     )
     # Prepend deleteBanding so old banding is removed before new is added
     all_requests = delete_requests + requests
@@ -132,7 +132,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
 def write_and_format(worksheet, columns, headers, data_rows,
                       percentile_cells, n_entity_rows,
                       team_name, sheet_type, show_advanced,
-                      data_only, build_fn):
+                      partial_update, build_fn):
     """Resize worksheet, write values, and apply formatting."""
     n_cols = len(columns)
     filter_row = [''] * n_cols
@@ -156,7 +156,7 @@ def write_and_format(worksheet, columns, headers, data_rows,
         n_player_rows=n_entity_rows,
         sheet_type=sheet_type,
         show_advanced=show_advanced,
-        data_only=data_only,
+        partial_update=partial_update,
         build_fn=build_fn,
     )
 
