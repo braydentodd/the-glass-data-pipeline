@@ -22,40 +22,24 @@
  */
 
 // ============================================================
-// LEAGUE CONFIG
+// LEAGUE DETECTION
 // ============================================================
-function getLeagueConfig() {
-  var ssName = SpreadsheetApp.getActiveSpreadsheet().getName();
-  if (ssName.indexOf('NCAA') !== -1) {
-    return {
-      name:                'NCAA',
-      configEndpoint:      '/api/ncaa/config',
-      teamsKey:            'ncaa_teams',
-      playersSheetNames:   ['NCAA', 'PLAYERS'],
-      playersRangeKey:     'ncaa_sheet',
-      editColIndexKey:     'ncaa_col_index',
-      apiPrefix:           '/api/ncaa',
-      syncEndpoint:        '/api/update-sheets',
-      hasAdvancedStats:    false,
-      hasWingspan:         false,
-    };
-  } else {
-    return {
-      name:                'NBA',
-      configEndpoint:      '/api/config',
-      teamsKey:            'nba_teams',
-      playersSheetNames:   ['NBA', 'PLAYERS'],
-      playersRangeKey:     'nba_sheet',
-      editColIndexKey:     'nba_col_index',
-      apiPrefix:           '/api',
-      syncEndpoint:        '/api/update-sheets',
-      hasAdvancedStats:    true,
-      hasWingspan:         true,
-    };
+
+/**
+ * Detect league from the spreadsheet name.
+ * Returns the lowercase league slug used for API calls.
+ * As new leagues are added, just add their identifier here.
+ */
+function _detectLeague() {
+  var ssName = SpreadsheetApp.getActiveSpreadsheet().getName().toUpperCase();
+  var leagues = ['NCAA', 'WNBA', 'NBA'];
+  for (var i = 0; i < leagues.length; i++) {
+    if (ssName.indexOf(leagues[i]) !== -1) return leagues[i].toLowerCase();
   }
+  return 'nba';
 }
 
-var LEAGUE = getLeagueConfig();
+var LEAGUE_SLUG = _detectLeague();
 
 // ============================================================
 // CONFIG
@@ -68,13 +52,12 @@ var CONFIG = null;
 
 /**
  * Load config from the Python API. Cached for the lifetime of the script run.
- * Falls back to safe defaults so the spreadsheet never hard-breaks.
+ * All league-specific metadata is provided by the API response.
  */
 function loadConfig() {
   if (CONFIG) return CONFIG;
 
-  var league = LEAGUE;
-  var url = API_BASE + league.configEndpoint;
+  var url = API_BASE + '/api/config?league=' + LEAGUE_SLUG;
 
   try {
     var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
@@ -87,21 +70,7 @@ function loadConfig() {
     Logger.log('loadConfig: failed to reach API - ' + e);
   }
 
-  // Minimal fallback so the spreadsheet never hard-breaks
-  CONFIG = {
-    api_base_url: API_BASE,
-    column_ranges: { team_sheet: {} },
-    column_indices: {},
-    layout: { header_row_count: 4 },
-    colors: {
-      red:    { r: 238, g: 75,  b: 43  },
-      yellow: { r: 252, g: 245, b: 95  },
-      green:  { r: 76,  g: 187, b: 23  }
-    }
-  };
-  CONFIG[league.teamsKey] = {};
-  CONFIG.column_ranges[league.playersRangeKey] = {};
-  return CONFIG;
+  throw new Error('Could not load config from API (' + url + '). All operations require the API.');
 }
 
 function getApiBaseUrl() {
@@ -109,11 +78,7 @@ function getApiBaseUrl() {
 }
 
 function getColors() {
-  return loadConfig().colors || {
-    red:    { r: 238, g: 75,  b: 43  },
-    yellow: { r: 252, g: 245, b: 95  },
-    green:  { r: 76,  g: 187, b: 23  }
-  };
+  return loadConfig().colors;
 }
 
 // ============================================================
@@ -122,21 +87,17 @@ function getColors() {
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
-  var league = LEAGUE;
   var tfMenu = _buildTimeframeMenu();
 
   var menu = ui.createMenu('Display Settings')
     .addSubMenu(tfMenu)
     .addSubMenu(ui.createMenu('Stats Mode')
       .addItem('Per 100 Possessions', 'switchToPer100')
-      .addItem('Per 48 Minutes',      'switchToPer48')
-      .addItem('Per Game',            'switchToPerGame'));
-
-  if (league.hasAdvancedStats) {
-    menu.addSubMenu(ui.createMenu('Advanced Stats')
+      .addItem('Per 36 Minutes',      'switchToPer36')
+      .addItem('Per Game',            'switchToPerGame'))
+    .addSubMenu(ui.createMenu('Advanced Stats')
       .addItem('Show', 'showAdvancedStats')
       .addItem('Hide', 'hideAdvancedStats'));
-  }
 
   menu.addSeparator()
     .addSubMenu(ui.createMenu('Player Info')
@@ -184,8 +145,8 @@ function onEditInstallable(e) {
   var sheet     = e.range.getSheet();
   var sheetName = sheet.getName().toUpperCase();
   var config    = loadConfig();
-  var league    = LEAGUE;
-  var teams     = config[league.teamsKey] || {};
+  var league    = config.league;
+  var teams     = config[league.teams_key] || {};
   var sheetType = _getSheetType(sheetName);
 
   if (!sheetType) return;
@@ -238,7 +199,7 @@ function onEditInstallable(e) {
 
   for (var i = 0; i < editableColumns.length; i++) {
     var ec     = editableColumns[i];
-    var colIdx = isPlayersSheet ? ec[league.editColIndexKey] : ec.team_col_index;
+    var colIdx = isPlayersSheet ? ec[league.edit_col_index_key] : ec.team_col_index;
     if (colIdx === editedCol) { matched = ec; break; }
   }
   if (!matched) return;
@@ -255,8 +216,8 @@ function onEditInstallable(e) {
 
   // ---- TEAM row ----
   if (entityName === 'TEAM') {
-    if (matched.col_key !== 'notes') {
-      ss.toast('Only notes can be edited for teams', 'Info', 3);
+    if (matched.team_row_calc !== 'editable') {
+      ss.toast(matched.display_name + ' is not editable for teams', 'Info', 3);
       return;
     }
     var teamId = teams[teamAbbr];
@@ -264,11 +225,19 @@ function onEditInstallable(e) {
       ss.toast('Could not find team: ' + teamAbbr, 'Error', 3);
       return;
     }
+    var teamDbField = matched.db_field;
+    if (matched.format === 'height') {
+      value = parseHeightInput(value);
+      if (value === null) {
+        ss.toast("Invalid measurement. Use feet'inches (e.g. 6'8) or total inches.", 'Error', 5);
+        return;
+      }
+    }
     try {
-      updateTeamField(teamId, 'notes', value);
-      ss.toast('Notes saved for ' + teamAbbr, 'Saved \u2713', 3);
+      updateTeamField(teamId, teamDbField, value);
+      ss.toast(matched.display_name + ' saved for ' + teamAbbr, 'Saved \u2713', 3);
     } catch (err) {
-      ss.toast('Error saving team notes: ' + err.message, 'Error', 5);
+      ss.toast('Error saving ' + matched.display_name + ': ' + err.message, 'Error', 5);
     }
     return;
   }
@@ -280,10 +249,10 @@ function onEditInstallable(e) {
   }
 
   // ---- Player row ----
-  if (league.hasWingspan && matched.col_key === 'wingspan') {
-    value = parseWingspan(value);
+  if (matched.format === 'height') {
+    value = parseHeightInput(value);
     if (value === null) {
-      ss.toast("Invalid wingspan. Use feet'inches (e.g. 6'8) or total inches.", 'Error', 5);
+      ss.toast(`Invalid measurement. Use [feet]'[inches]" (e.g. 6'8").`, 'Error', 5);
       return;
     }
   }
@@ -304,7 +273,7 @@ function onEditInstallable(e) {
 // ============================================================
 
 function switchToPerGame() { _switchStatMode('per_game'); }
-function switchToPer48()   { _switchStatMode('per_48'); }
+function switchToPer36()   { _switchStatMode('per_36'); }
 function switchToPer100()  { _switchStatMode('per_100'); }
 
 /**
@@ -339,12 +308,14 @@ function _switchStatMode(newMode) {
  * Replaces mode labels in stats section headers.
  */
 function _updateSectionHeaders(sheet, newMode) {
-  var labels = {
+  var config = loadConfig();
+  var labels = config.stat_mode_labels || {
     'per_100':  'per 100 Poss',
     'per_game': 'per Game',
-    'per_48':   'per 48 Mins',
+    'per_36':   'per 36 Mins',
   };
-  var allLabels = Object.values(labels);
+  var allLabels = [];
+  for (var key in labels) { allLabels.push(labels[key]); }
   var newLabel = labels[newMode] || '';
 
   try {
@@ -367,7 +338,7 @@ function _updateSectionHeaders(sheet, newMode) {
 }
 
 // ============================================================
-// ADVANCED STATS TOGGLE  (NBA only — menu item is gated)
+// ADVANCED STATS TOGGLE
 // ============================================================
 
 function showAdvancedStats() { _setAdvancedStats(true); }
@@ -403,7 +374,7 @@ function _setAdvancedStats(newAdvancedVisible) {
 function _setTimeframe(mode, years) {
   var props = PropertiesService.getDocumentProperties();
   props.setProperty('HIST_MODE', mode);
-  if (years) props.setProperty('HIST_YEARS', String(years));
+  if (years) props.setProperty('HIST_SEASONS_COUNT', String(years));
   var label = years + ' season' + (years > 1 ? 's' : '');
   SpreadsheetApp.getActiveSpreadsheet().toast('Timeframe set to ' + label, 'Updated', 3);
   triggerSync(null, { priorityTeam: _getActiveTeamAbbr() });
@@ -421,7 +392,7 @@ function _setIncludeCurrentSeason(include) {
 function _setTimeframeWithCurrent(years, includeCurrent) {
   var props = PropertiesService.getDocumentProperties();
   props.setProperty('HIST_INCLUDE_CURRENT', includeCurrent ? 'true' : 'false');
-  _setTimeframe('years', years);
+  _setTimeframe('seasons', years);
 }
 
 function setTimeframe1IncludeCurrent()  { _setTimeframeWithCurrent(1, true); }
@@ -478,7 +449,7 @@ function setTimeframe23ExcludeCurrent() { _setTimeframeWithCurrent(23, false); }
 function triggerSync(mode, options) {
   options = options || {};
   var config  = loadConfig();
-  var league  = LEAGUE;
+  var league  = config.league;
   var apiBase = config.api_base_url || getApiBaseUrl();
   var props   = PropertiesService.getDocumentProperties();
 
@@ -487,11 +458,13 @@ function triggerSync(mode, options) {
 
   // If STATS_MODE was never set (initial sync via CLI), detect from headers
   if (!statsMode) {
-    var labels = {
-      'per 100 Poss': 'per_100',
-      'per Game':     'per_game',
-      'per 48 Mins':  'per_48',
+    // Build reverse label→mode map from config
+    var config0 = loadConfig();
+    var modeLabels = config0.stat_mode_labels || {
+      'per_100': 'per 100 Poss', 'per_game': 'per Game', 'per_36': 'per 36 Mins'
     };
+    var labelToMode = {};
+    for (var mKey in modeLabels) { labelToMode[modeLabels[mKey]] = mKey; }
     try {
       var active = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
       var lastCol = active.getMaxColumns();
@@ -499,9 +472,9 @@ function triggerSync(mode, options) {
         var headerVals = active.getRange(1, 1, 1, lastCol).getValues()[0];
         for (var hi = 0; hi < headerVals.length; hi++) {
           var headerText = String(headerVals[hi]);
-          for (var lbl in labels) {
+          for (var lbl in labelToMode) {
             if (headerText.indexOf(lbl) !== -1) {
-              statsMode = labels[lbl];
+              statsMode = labelToMode[lbl];
               props.setProperty('STATS_MODE', statsMode);
               break;
             }
@@ -510,7 +483,7 @@ function triggerSync(mode, options) {
         }
       }
     } catch (e) { Logger.log('Stats mode detection error: ' + e); }
-    if (!statsMode) statsMode = 'per_100';
+    if (!statsMode) statsMode = config0.default_stat_mode || 'per_100';
   }
 
   // Historical timeframe — always read from document properties
@@ -528,11 +501,9 @@ function triggerSync(mode, options) {
       actuallyVisible = (props.getProperty('SHOW_ADVANCED') === 'true');
   }
 
-  var showAdvanced = league.hasAdvancedStats
-    ? ((options.showAdvanced !== undefined)
-        ? options.showAdvanced
-        : actuallyVisible)
-    : false;
+  var showAdvanced = (options.showAdvanced !== undefined)
+    ? options.showAdvanced
+    : actuallyVisible;
 
   var previousAdvanced = (props.getProperty('SHOW_ADVANCED') === 'true');
   var advancedToggled = (showAdvanced !== previousAdvanced);
@@ -543,20 +514,23 @@ function triggerSync(mode, options) {
     priority_team: options.priorityTeam || null,
     partial_update:     !advancedToggled,
   };
+  if (options.syncSection) {
+    payload.sync_section = options.syncSection;
+  }
 
   // Keep document properties in sync with UI
   props.setProperty('SHOW_ADVANCED', showAdvanced ? 'true' : 'false');
 
-  payload.mode            = props.getProperty('HIST_MODE') || 'years';
-  payload.years           = parseInt(props.getProperty('HIST_YEARS') || '3');
+  payload.mode            = props.getProperty('HIST_MODE') || 'seasons';
+  payload.seasons_count           = parseInt(props.getProperty('HIST_SEASONS_COUNT') || '3');
   payload.include_current = props.getProperty('HIST_INCLUDE_CURRENT') === 'true';
   payload.show_advanced   = showAdvanced;
-  payload.league          = league.name.toLowerCase();
+  payload.league          = league.slug;
 
   var histSeason = props.getProperty('HIST_SEASON') || null;
   if (histSeason) payload.seasons = [histSeason];
 
-  var url = apiBase + league.syncEndpoint;
+  var url = apiBase + league.sync_endpoint;
 
   try {
     SpreadsheetApp.getActiveSpreadsheet().toast('Syncing stats...', 'Update', 3);
@@ -586,11 +560,11 @@ function triggerSync(mode, options) {
 
 function getPlayerIdByName(playerName, teamAbbr) {
   var config = loadConfig();
-  var league = LEAGUE;
-  var teams  = config[league.teamsKey] || {};
+  var league = config.league;
+  var teams  = config[league.teams_key] || {};
   var teamId = teams[teamAbbr];
   if (!teamId) return null;
-  var url = getApiBaseUrl() + league.apiPrefix + '/team/' + teamId + '/players';
+  var url = getApiBaseUrl() + league.api_prefix + '/team/' + teamId + '/players?league=' + league.slug;
   try {
     var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
     var data     = JSON.parse(response.getContentText());
@@ -603,10 +577,11 @@ function getPlayerIdByName(playerName, teamAbbr) {
 }
 
 function updatePlayerField(playerId, fieldName, fieldValue) {
-  var league  = LEAGUE;
+  var league  = loadConfig().league;
   var payload = {};
   payload[fieldName] = fieldValue;
-  var response = UrlFetchApp.fetch(getApiBaseUrl() + league.apiPrefix + '/player/' + playerId, {
+  var url = getApiBaseUrl() + league.api_prefix + '/player/' + playerId + '?league=' + league.slug;
+  var response = UrlFetchApp.fetch(url, {
     method: 'patch', contentType: 'application/json',
     payload: JSON.stringify(payload), muteHttpExceptions: true
   });
@@ -616,10 +591,11 @@ function updatePlayerField(playerId, fieldName, fieldValue) {
 }
 
 function updateTeamField(teamId, fieldName, fieldValue) {
-  var league  = LEAGUE;
+  var league  = loadConfig().league;
   var payload = {};
   payload[fieldName] = fieldValue;
-  var response = UrlFetchApp.fetch(getApiBaseUrl() + league.apiPrefix + '/teams/' + teamId, {
+  var url = getApiBaseUrl() + league.api_prefix + '/teams/' + teamId + '?league=' + league.slug;
+  var response = UrlFetchApp.fetch(url, {
     method: 'put', contentType: 'application/json',
     payload: JSON.stringify(payload), muteHttpExceptions: true
   });
@@ -629,10 +605,11 @@ function updateTeamField(teamId, fieldName, fieldValue) {
 }
 
 // ============================================================
-// WINGSPAN PARSER  (NBA only — guarded in onEditInstallable)
+// HEIGHT FORMAT PARSER — converts feet'inches to total inches
+// Used for any editable column with format: 'height' (wingspan, height, etc.)
 // ============================================================
 
-function parseWingspan(value) {
+function parseHeightInput(value) {
   if (!value) return null;
   var str = value.toString().trim();
   var feetInches = str.match(/^(\d+)'(\d+)"?$/);
@@ -673,20 +650,20 @@ function getPercentileColor(percentile) {
 /** Determine sheet type: 'team', 'players', 'teams', or null. */
 function _getSheetType(sheetName) {
   var config = loadConfig();
-  var league = LEAGUE;
-  var teams  = config[league.teamsKey] || {};
+  var league = config.league;
+  var teams  = config[league.teams_key] || {};
   var upper  = sheetName.toUpperCase();
   if (teams.hasOwnProperty(upper)) return 'team';
-  if (league.playersSheetNames.indexOf(upper) !== -1) return 'players';
+  if (league.players_sheet_names.indexOf(upper) !== -1) return 'players';
   if (upper === 'TEAMS') return 'teams';
   return null;
 }
 
 /** Map sheet type to the config range key. */
 function _getRangeKey(sheetType) {
-  var league = LEAGUE;
+  var league = loadConfig().league;
   if (sheetType === 'team')    return 'team_sheet';
-  if (sheetType === 'players') return league.playersRangeKey;
+  if (sheetType === 'players') return league.players_range_key;
   if (sheetType === 'teams')   return 'teams_sheet';
   return null;
 }
@@ -696,8 +673,8 @@ function _getActiveTeamAbbr() {
   var ss     = SpreadsheetApp.getActiveSpreadsheet();
   var name   = ss.getActiveSheet().getName().toUpperCase();
   var config = loadConfig();
-  var league = LEAGUE;
-  var teams  = config[league.teamsKey] || {};
+  var league = config.league;
+  var teams  = config[league.teams_key] || {};
   return teams.hasOwnProperty(name) ? name : null;
 }
 
@@ -892,25 +869,14 @@ function _reapplyToggles(sheet, sheetType) {
   var props    = PropertiesService.getDocumentProperties();
   var rangeKey = _getRangeKey(sheetType);
   var maxCols  = sheet.getMaxColumns();
-  var league   = LEAGUE;
 
-  var showAdv = league.hasAdvancedStats
-    ? (props.getProperty('SHOW_ADVANCED') === 'true')
-    : false;
+  var showAdv = (props.getProperty('SHOW_ADVANCED') === 'true');
 
   // --- column_metadata path (per-column flags, batched) ---
   var colMeta = (config.column_metadata || {})[rangeKey];
   if (colMeta && colMeta.length > 0) {
     var showList = [];
     var hideList = [];
-
-    var _secVisMap = {
-      'current_stats':    'SECTION_VIS_CURRENT',
-      'historical_stats': 'SECTION_VIS_HISTORICAL',
-      'postseason_stats': 'SECTION_VIS_POSTSEASON',
-      'analysis':         'SECTION_VIS_NOTES',
-      'player_info':      'SECTION_VIS_PLAYER_INFO',
-    };
 
     for (var i = 0; i < colMeta.length; i++) {
       var meta = colMeta[i];
@@ -927,7 +893,7 @@ function _reapplyToggles(sheet, sheetType) {
       var shouldShow = true;
 
       // Respect section-level visibility
-      var secVisKey = _secVisMap[secName];
+      var secVisKey = secName ? 'SECTION_VIS_' + secName.toUpperCase() : null;
       if (secVisKey && props.getProperty(secVisKey) === 'false') {
         shouldShow = false;
       } else {
@@ -976,14 +942,7 @@ function _setSectionVisibility(sectionKey, makeVisible, label) {
     var maxCols = sheet.getMaxColumns();
 
     // Preferred path: section-aware per-column metadata
-    var secMap = {
-      current: 'current_stats',
-      historical: 'historical_stats',
-      postseason: 'postseason_stats',
-      player_info: 'player_info',
-      notes: 'analysis'
-    };
-    var targetSec = secMap[sectionKey] || sectionKey;
+    var targetSec = sectionKey;
     var colMeta = ((config.column_metadata || {})[rangeKey] || []);
     var sectionCols = [];
     for (var m = 0; m < colMeta.length; m++) {
@@ -1028,20 +987,20 @@ function _setSectionVisibility(sectionKey, makeVisible, label) {
   ss.toast(label + ' (' + updatedCount + ' sheets)', 'Section Visibility', 3);
 }
 
-// Explicit show/hide for each section
-function showCurrentStats()    { _setSectionVisibility('current',     true,  'Current stats shown');    }
-function hideCurrentStats()    { _setSectionVisibility('current',     false, 'Current stats hidden');   }
-function showHistoricalStats() { _setSectionVisibility('historical',  true,  'Historical stats shown'); }
-function hideHistoricalStats() { _setSectionVisibility('historical',  false, 'Historical stats hidden');}
-function showPostseasonStats() { _setSectionVisibility('postseason',  true,  'Postseason stats shown'); }
-function hidePostseasonStats() { _setSectionVisibility('postseason',  false, 'Postseason stats hidden');}
-function showPlayerInfo()      { _setSectionVisibility('player_info', true,  'Player info shown');      }
-function hidePlayerInfo()      { _setSectionVisibility('player_info', false, 'Player info hidden');     }
-function showAnalysis()        { _setSectionVisibility('notes',       true,  'Analysis shown');         }
-function hideAnalysis()        { _setSectionVisibility('notes',       false, 'Analysis hidden');        }
+// Explicit show/hide for each section (keys match SECTION_CONFIG)
+function showCurrentStats()    { _setSectionVisibility('current_stats',    true,  'Current stats shown');    }
+function hideCurrentStats()    { _setSectionVisibility('current_stats',    false, 'Current stats hidden');   }
+function showHistoricalStats() { _setSectionVisibility('historical_stats', true,  'Historical stats shown'); }
+function hideHistoricalStats() { _setSectionVisibility('historical_stats', false, 'Historical stats hidden');}
+function showPostseasonStats() { _setSectionVisibility('postseason_stats', true,  'Postseason stats shown'); }
+function hidePostseasonStats() { _setSectionVisibility('postseason_stats', false, 'Postseason stats hidden');}
+function showPlayerInfo()      { _setSectionVisibility('player_info',      true,  'Player info shown');      }
+function hidePlayerInfo()      { _setSectionVisibility('player_info',      false, 'Player info hidden');     }
+function showAnalysis()        { _setSectionVisibility('analysis',         true,  'Analysis shown');         }
+function hideAnalysis()        { _setSectionVisibility('analysis',         false, 'Analysis hidden');        }
 
 function showAllSections() {
-  var sections = ['current', 'historical', 'postseason', 'player_info', 'notes'];
+  var sections = ['current_stats', 'historical_stats', 'postseason_stats', 'player_info', 'analysis'];
   var ss       = SpreadsheetApp.getActiveSpreadsheet();
   var config   = loadConfig();
   var colRange = config.column_ranges || {};

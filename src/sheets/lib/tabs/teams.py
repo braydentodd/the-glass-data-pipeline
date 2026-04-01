@@ -29,7 +29,8 @@ def _combine_team_opp(teams_dict):
 def sync_teams_sheet(ctx, client, spreadsheet, mode='per_100',
                      show_advanced=False,
                      historical_config=None,
-                     partial_update=False):
+                     partial_update=False,
+                     sync_section=None):
     """Sync the league-wide Teams sheet."""
     logger.info('  Syncing Teams sheet...')
     fmt = ctx.sheet_formatting

@@ -19,8 +19,6 @@ from flask_cors import CORS
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from etl.nba.config import NBA_CONFIG
-from etl.nba.lib import get_table_name, get_teams_from_db
 from src.db import get_db_connection as _get_db_conn
 from src.sheets.config import SHEETS_COLUMNS
 from src.sheets.lib.calculations import (
@@ -42,10 +40,32 @@ from src.sheets.lib.layout import (
     build_sheet_columns,
 )
 
-# Load NBA teams from DB at startup (team_id -> (abbr, name))
-_teams_db = get_teams_from_db()
-NBA_TEAMS_BY_ID = {tid: name for tid, (abbr, name) in _teams_db.items()}
-NBA_TEAMS_BY_ABBR = {abbr: tid for tid, (abbr, name) in _teams_db.items()}
+def get_league_lib(league):
+    if league == 'ncaa':
+        import etl.ncaa.lib as lib
+    else:
+        import etl.nba.lib as lib
+    return lib
+
+def get_league_config(league):
+    if league == 'ncaa':
+        from etl.ncaa.config import NCAA_CONFIG as config
+    else:
+        from etl.nba.config import NBA_CONFIG as config
+    return config
+
+def load_teams(league):
+    lib = get_league_lib(league)
+    db = lib.get_teams_from_db()
+    return {tid: name for tid, (abbr, name) in db.items()}, {abbr: tid for tid, (abbr, name) in db.items()}
+
+NBA_TEAMS_BY_ID, NBA_TEAMS_BY_ABBR = load_teams('nba')
+NCAA_TEAMS_BY_ID, NCAA_TEAMS_BY_ABBR = load_teams('ncaa')
+
+def get_teams_dicts(league):
+    if league == 'ncaa':
+        return NCAA_TEAMS_BY_ID, NCAA_TEAMS_BY_ABBR
+    return NBA_TEAMS_BY_ID, NBA_TEAMS_BY_ABBR
 
 # Get reverse stats and editable fields from config
 REVERSE_STATS = get_reverse_stats()
@@ -195,7 +215,7 @@ def sync_postseason_stats():
         env['STATS_MODE'] = stats_mode
         env['SEASON_TYPE'] = '2,3'
         env['SHOW_ADVANCED'] = 'true' if data.get('show_advanced', False) else 'false'
-        env['SYNC_SECTION'] = 'postseason'
+        env['SYNC_SECTION'] = 'postseason_stats'
         
         if priority_tab:
             env['PRIORITY_TAB'] = priority_tab
@@ -247,9 +267,11 @@ def sync_postseason_stats():
 
 @app.route('/api/teams', methods=['GET'])
 def get_teams():
-    """Get list of all NBA teams."""
+    """Get list of all teams."""
+    league = request.args.get('league', 'nba').lower()
+    teams_dict, _ = get_teams_dicts(league)
     teams_list = [{'id': team_id, 'name': team_name} 
-                  for team_id, team_name in NBA_TEAMS_BY_ID.items()]
+                  for team_id, team_name in teams_dict.items()]
     return jsonify({'teams': teams_list})
 
 
@@ -309,9 +331,44 @@ def calculate_stats():
     try:
         conn = get_db_connection()
 
+        # Build mock context for sheets lib function calls
+        class Context: pass
+        ctx = Context()
+        ctx.league = 'nba'
+        import etl.nba.lib as etl_lib
+        ctx.player_entity_table = etl_lib.get_table_name('player', 'entity')
+        ctx.team_entity_table = etl_lib.get_table_name('team', 'entity')
+        ctx.player_stats_table = etl_lib.get_table_name('player', 'stats')
+        ctx.team_stats_table = etl_lib.get_table_name('team', 'stats')
+        from etl.nba.config import NBA_CONFIG as league_config
+        ctx.league_config = league_config
+        ctx.season_key = 'current_season'
+        ctx.league_id = '00' # Required by NCAA/NBA configs sometimes? Actually no
+
+        current_season = league_config['current_season']
+        current_season_year = int(current_season[:4]) + 1
+        season_type_val = 1
+
         # Use lib.sheets fetch + calculate (config-driven, no hardcoded SQL)
-        players = fetch_players_for_team(conn, team_abbr, 'current_stats')
-        all_players = fetch_all_players(conn, 'current_stats')
+        players = fetch_players_for_team(
+            conn=conn, 
+            team_abbr=team_abbr, 
+            section='current_stats', 
+            historical_config=None, 
+            ctx=ctx,
+            current_season=current_season, 
+            current_season_year=current_season_year, 
+            season_type_val=season_type_val
+        )
+        all_players = fetch_all_players(
+            conn=conn, 
+            section='current_stats', 
+            historical_config=None, 
+            ctx=ctx,
+            current_season=current_season, 
+            current_season_year=current_season_year, 
+            season_type_val=season_type_val
+        )
         conn.close()
 
         # Calculate percentile populations
@@ -592,8 +649,9 @@ def get_config():
     colors, editable fields, API base URL. Zero hardcoding in Apps Script.
     """
     mode = request.args.get('mode', 'per_100')
+    league = request.args.get('league', 'nba').lower()
     try:
-        return jsonify(get_config_for_export(mode=mode))
+        return jsonify(get_config_for_export(league=league, mode=mode))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

@@ -94,10 +94,10 @@ def main():
     ctx.etl_lib = etl_lib
     ctx.league_config = league_config
 
-    ctx.player_entity_table = etl_lib.get_table_name('player_entity')
-    ctx.team_entity_table = etl_lib.get_table_name('team_entity')
-    ctx.player_stats_table = etl_lib.get_table_name('player_stats')
-    ctx.team_stats_table = etl_lib.get_table_name('team_stats')
+    ctx.player_entity_table = etl_lib.get_table_name('player', 'entity')
+    ctx.team_entity_table = etl_lib.get_table_name('team', 'entity')
+    ctx.player_stats_table = etl_lib.get_table_name('player', 'stats')
+    ctx.team_stats_table = etl_lib.get_table_name('team', 'stats')
 
     ctx.player_entity_fields = {
         'player_id', 'name', 'team_id', 'height_inches', 'weight_lbs',
@@ -124,22 +124,29 @@ def main():
     sync_kwargs = dict(mode=mode,
                        show_advanced=show_advanced,
                        historical_config=historical_config,
-                       partial_update=partial_update)
+                       partial_update=partial_update,
+                       sync_section=sync_section)
 
     # ---- Pre-compute league-wide percentile populations ONCE ----
+    # When sync_section is set, only fetch data for that section
     logger.info('  Pre-computing league-wide percentile populations...')
     conn = get_db_connection()
     try:
-        all_players_curr = fetch_all_players(conn, 'current_stats')
+        needs_current = sync_section is None or sync_section == 'current_stats'
+        needs_historical = sync_section is None or sync_section == 'historical_stats'
+        needs_postseason = sync_section is None or sync_section == 'postseason_stats'
+
+        all_players_curr = fetch_all_players(conn, 'current_stats') if needs_current else []
         all_players_hist = fetch_all_players(
-            conn, 'historical_stats', historical_config)
+            conn, 'historical_stats', historical_config) if needs_historical else []
         all_players_post = fetch_all_players(
-            conn, 'postseason_stats', historical_config)
-        all_teams_curr = fetch_all_teams(conn, 'current_stats')
+            conn, 'postseason_stats', historical_config) if needs_postseason else []
+        _empty_teams = {'teams': [], 'opponents': []}
+        all_teams_curr = fetch_all_teams(conn, 'current_stats') if needs_current else _empty_teams
         all_teams_hist = fetch_all_teams(
-            conn, 'historical_stats', historical_config)
+            conn, 'historical_stats', historical_config) if needs_historical else _empty_teams
         all_teams_post = fetch_all_teams(
-            conn, 'postseason_stats', historical_config)
+            conn, 'postseason_stats', historical_config) if needs_postseason else _empty_teams
 
         pct_curr = calculate_all_percentiles(all_players_curr, 'player', mode)
         pct_hist = calculate_all_percentiles(all_players_hist, 'player', mode)

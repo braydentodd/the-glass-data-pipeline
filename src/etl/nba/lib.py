@@ -398,7 +398,7 @@ def get_teams_from_db() -> Dict[int, Tuple[str, str]]:
     teams_table = get_table_name('team', 'entity')
     with db_connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute(f"SELECT team_id, team_abbr, team_name FROM {teams_table} ORDER BY team_id")
+            cursor.execute(f"SELECT team_id, abbr, name FROM {teams_table} ORDER BY team_id")
             teams = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
     return teams
 
@@ -604,7 +604,7 @@ def generate_schema_ddl() -> str:
             'primary_key': 'team_id',
             'additional_columns': [
                 'team_name VARCHAR(100)',
-                'team_abbr VARCHAR(3)',
+                'abbr VARCHAR(3)',
                 'team_city VARCHAR(100)',
                 'year_founded INTEGER',
                 'arena VARCHAR(100)',
@@ -612,7 +612,7 @@ def generate_schema_ddl() -> str:
                 'general_manager VARCHAR(100)',
                 'head_coach VARCHAR(100)'
             ],
-            'indexes': ['team_abbr', 'team_name']
+            'indexes': ['abbr', 'team_name']
         },
         players_table: {
             'primary_key': 'player_id',

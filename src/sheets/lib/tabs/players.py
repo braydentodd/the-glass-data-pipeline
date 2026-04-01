@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 def sync_players_sheet(ctx, client, spreadsheet, mode='per_100',
                        show_advanced=False,
                        historical_config=None,
-                       partial_update=False):
+                       partial_update=False,
+                       sync_section=None):
     """Sync the league-wide Players sheet."""
     logger.info('  Syncing Players sheet...')
     fmt = ctx.sheet_formatting

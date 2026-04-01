@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
+from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, STAT_MODES, DEFAULT_STAT_MODE, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, GOOGLE_SHEETS_CONFIG)
 
 
 def _format_season_label(season_year: int) -> str:
@@ -1252,24 +1252,44 @@ def get_editable_fields() -> List[str]:
 
 
 def get_config_for_export(league: str,
-                          get_teams_fn,
-                          id_column_key: str,
-                          server_config: dict,
-                          google_sheets_config: dict,
+                          get_teams_fn=None,
+                          id_column_key: str = 'player_id',
+                          server_config: dict = None,
+                          google_sheets_config: dict = None,
                           mode: str = 'per_100') -> dict:
     """
     Build JSON-serializable config for /api/config endpoint.
     Apps Script uses this as single source of truth — zero hardcoding in JS.
 
-    League-agnostic: parameterized by league name ("nba" or "ncaa"),
-    a team-fetching callable, and the ID column key.
+    League-agnostic: derives league-specific values from the league parameter
+    when optional args are not provided.
 
     Exports:
       - column_ranges:            section toggle ranges (team_sheet / {league}_sheet)
       - advanced_column_ranges:   toggle advanced stat columns
       - percentile_column_ranges: toggle percentile columns
       - column_indices:           edit-detection indices (player_id, team, stats_start)
+      - stat_modes:               available stat modes with display labels
+      - sections:                 section config (display names, toggleability)
     """
+    import os
+
+    # Derive league dependencies when not explicitly provided
+    if get_teams_fn is None:
+        if league == 'ncaa':
+            import etl.ncaa.lib as _etl_lib
+        else:
+            import etl.nba.lib as _etl_lib
+        get_teams_fn = _etl_lib.get_teams_from_db
+
+    if server_config is None:
+        server_config = {
+            'production_host': os.getenv('API_HOST', '150.136.255.23'),
+            'production_port': int(os.getenv('API_PORT', 5000)),
+        }
+
+    if google_sheets_config is None:
+        google_sheets_config = GOOGLE_SHEETS_CONFIG.get(league, {})
     league_sheet = f'{league}_sheet'
 
     # --- Teams dict -------------------------------------------------------
@@ -1316,19 +1336,17 @@ def get_config_for_export(league: str,
         return {'start': min(indices) + 1, 'count': len(indices)}
 
     column_ranges = {'team_sheet': {}, league_sheet: {}, 'teams_sheet': {}}
-    _sec_rename = {'analysis': 'notes'}
     for sec in ('current_stats', 'historical_stats', 'postseason_stats',
                 'player_info', 'analysis'):
-        key = _sec_rename.get(sec, sec.replace('_stats', ''))
         team_range = _section_range(team_columns, sec)
         league_range = _section_range(league_columns, sec)
         teams_range = _section_range(teams_columns, sec)
         if team_range:
-            column_ranges['team_sheet'][key] = team_range
+            column_ranges['team_sheet'][sec] = team_range
         if league_range:
-            column_ranges[league_sheet][key] = league_range
+            column_ranges[league_sheet][sec] = league_range
         if teams_range:
-            column_ranges['teams_sheet'][key] = teams_range
+            column_ranges['teams_sheet'][sec] = teams_range
 
     # --- Advanced column ranges ------------------------------------------
     def _advanced_indices(cols):
@@ -1495,6 +1513,7 @@ def get_config_for_export(league: str,
             'db_field': db_field,
             'display_name': col_def.get('display_name', col_key),
             'format': col_def.get('format', 'text'),
+            'team_row_calc': col_def.get('team_row_calc'),
         })
 
     # --- Editable columns for teams_sheet ----
@@ -1516,9 +1535,28 @@ def get_config_for_export(league: str,
     # Reverse mapping: team name → abbreviation
     team_name_to_abbr = {name: abbr for _, (abbr, name) in teams_from_db.items()}
 
+    # Stat mode labels (single source of truth for menu labels)
+    _pm = int(STAT_CONSTANTS['default_per_minute'])
+    _pp = int(STAT_CONSTANTS['default_per_possessions'])
+    stat_mode_labels = {
+        f'per_{_pp}': f'per {_pp} Poss',
+        'per_game': 'per Game',
+        f'per_{_pm}': f'per {_pm} Mins',
+    }
+
     return {
         'api_base_url': f"http://{server_config['production_host']}:{server_config['production_port']}",
         'sheet_id': google_sheets_config.get('spreadsheet_id', ''),
+        'league': {
+            'name': league.upper(),
+            'slug': league,
+            'teams_key': f'{league}_teams',
+            'players_sheet_names': [league.upper(), 'PLAYERS'],
+            'players_range_key': league_sheet,
+            'edit_col_index_key': f'{league}_col_index',
+            'api_prefix': '/api',
+            'sync_endpoint': '/api/update-sheets',
+        },
         f'{league}_teams': league_teams,
         'team_name_to_abbr': team_name_to_abbr,
         'stat_columns': stat_columns,
@@ -1558,6 +1596,8 @@ def get_config_for_export(league: str,
         },
         'sections': {k: v for k, v in SECTION_CONFIG.items()},
         'subsections': SUBSECTIONS,
+        'stat_modes': STAT_MODES,
+        'stat_mode_labels': stat_mode_labels,
     }
 
 

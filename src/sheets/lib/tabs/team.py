@@ -19,7 +19,8 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
                     team_name='', mode='per_100',
                     show_advanced=False,
                     historical_config=None,
-                    partial_update=False, precomputed=None):
+                    partial_update=False, precomputed=None,
+                    sync_section=None):
     """Sync a single team's worksheet with merged row layout."""
     logger.info(f'  Syncing {team_abbr}...')
     fmt = ctx.sheet_formatting

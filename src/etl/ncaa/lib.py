@@ -527,7 +527,7 @@ def generate_schema_ddl() -> str:
 def get_teams_from_db(conn=None) -> Dict[int, Tuple[str, str]]:
     """
     Get all NCAA teams from DB (excluding teams with NULL abbreviation).
-    Returns: {team_id: (abbr, institution)}
+    Returns: {team_id: (abbr, name)}
     """
     teams_table = get_table_name('team', 'entity')
     close_conn = conn is None
@@ -536,13 +536,13 @@ def get_teams_from_db(conn=None) -> Dict[int, Tuple[str, str]]:
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(f"""
-                SELECT team_id, abbr, institution
+                SELECT team_id, abbr, name
                 FROM {teams_table}
                 WHERE abbr IS NOT NULL AND abbr != ''
-                ORDER BY institution
+                ORDER BY name
             """)
             return {
-                r['team_id']: (r['abbr'] or '', r['institution'] or '')
+                r['team_id']: (r['abbr'] or '', r['name'] or '')
                 for r in cur.fetchall()
             }
     finally:
