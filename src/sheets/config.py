@@ -41,6 +41,7 @@ STAT_CONSTANTS = {
     'default_per_minute': 36.0,         # Default minutes for per-minute stats across all leagues
     'default_per_possessions': 100.0,   # Default possessions for per-possession stats
     'cache_ttl_seconds': 300,           # API response cache TTL
+    'max_historical_years': 20,         # Max seasons shown in UI timeframe toggle
 }
 
 # ============================================================================

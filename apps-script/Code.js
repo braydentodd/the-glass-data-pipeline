@@ -94,13 +94,20 @@ function getColors() {
 // DYNAMIC FUNCTION REGISTRATION (V8 globalThis)
 // ============================================================
 
-// Timeframe handlers — years 1..23 is a fixed range, no config needed.
+// Timeframe handlers — dynamically generated based on config (default 20 years).
 (function() {
-  for (var y = 1; y <= 23; y++) {
-    (function(years) {
-      globalThis['setTimeframe' + years + 'IncludeCurrent'] = function() { _setTimeframeWithCurrent(years, true); };
-      globalThis['setTimeframe' + years + 'ExcludeCurrent'] = function() { _setTimeframeWithCurrent(years, false); };
-    })(y);
+  try {
+    var config = loadConfig();
+    var maxYears = config.max_historical_years || 20;
+    for (var y = 1; y <= maxYears; y++) {
+      (function(years) {
+        globalThis['setTimeframe' + years + 'IncludeCurrent'] = function() { _setTimeframeWithCurrent(years, true); };
+        globalThis['setTimeframe' + years + 'ExcludeCurrent'] = function() { _setTimeframeWithCurrent(years, false); };
+      })(y);
+    }
+  } catch (e) {
+    // Expected in simple trigger context (onOpen without installable trigger).
+    // Functions will be registered on the next authorized execution.
   }
 })();
 
@@ -183,7 +190,10 @@ function _buildTimeframeMenu() {
   var ui = SpreadsheetApp.getUi();
   var menu = ui.createMenu('Historical Timeframe');
 
-  for (var years = 1; years <= 23; years++) {
+  var config = loadConfig();
+  var maxYears = config.max_historical_years || 20;
+
+  for (var years = 1; years <= maxYears; years++) {
     var label = 'Last ' + years + ' Season' + (years > 1 ? 's' : '');
     var includeFn = 'setTimeframe' + years + 'IncludeCurrent';
     var excludeFn = 'setTimeframe' + years + 'ExcludeCurrent';

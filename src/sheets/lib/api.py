@@ -349,6 +349,7 @@ def get_config_for_export(league: str,
         'subsections': SUBSECTIONS,
         'stat_modes': STAT_MODES,
         'stat_mode_labels': stat_mode_labels,
+        'max_historical_years': STAT_CONSTANTS.get('max_historical_years', 20),
     }
 
 
