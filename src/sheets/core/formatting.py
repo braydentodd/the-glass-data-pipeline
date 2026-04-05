@@ -53,7 +53,7 @@ def format_section_header(section: str, historical_config: Optional[dict] = None
     Build the full section header display string.
 
     Current stats:   "2025-26 Regular Season Stats per 100 Poss"
-    Historical/Post: "Last 3 Regular Season Stats (2023-24 to 2025-26) per 36 Mins"
+    Historical/Post: "Last 3 Regular Season Stats (2023-24 to 2025-26) per 48 Mins"
                      "Career Regular Season Stats per Game"
 
     Args:
@@ -65,7 +65,7 @@ def format_section_header(section: str, historical_config: Optional[dict] = None
     """
     _MODE_LABELS = {
         'per_game': 'per Game',
-        f"per_{int(STAT_CONSTANTS.get('default_per_minute', 36))}": f"per {int(STAT_CONSTANTS.get('default_per_minute', 36))} Mins",
+        f"per_{int(STAT_CONSTANTS.get('default_per_minute', 48))}": f"per {int(STAT_CONSTANTS.get('default_per_minute', 48))} Mins",
         'per_100': 'per 100 Poss',
     }
 
@@ -174,7 +174,7 @@ def get_color_for_raw(color_dict: dict) -> dict:
 
 def get_reverse_stats() -> List[str]:
     """Get list of stat column keys where lower is better."""
-    return [k for k, v in SHEETS_COLUMNS.items() if v.get('reverse_percentile', False)]
+    return [k for k, v in SHEETS_COLUMNS.items() if v.get('percentile') == 'reverse']
 
 
 def get_editable_fields() -> List[str]:
@@ -182,9 +182,9 @@ def get_editable_fields() -> List[str]:
     fields = []
     for col_key, col_def in SHEETS_COLUMNS.items():
         if col_def.get('editable', False):
-            # Get the actual DB field from the player_formula
-            formula = col_def.get('player_formula')
-            if formula and not any(op in formula for op in '+-*/('):
+            # Get the actual DB field from the player value
+            formula = col_def.get('values', {}).get('player')
+            if formula and isinstance(formula, str):
                 fields.append(formula)
 
 

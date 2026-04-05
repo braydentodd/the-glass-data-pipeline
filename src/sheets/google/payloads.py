@@ -1,8 +1,8 @@
 import logging
 from typing import Dict, List, Optional, Tuple
 from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING)
-from sheets.lib.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
+from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
+from src.sheets.core.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
 
 def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               header_merges: list, n_data_rows: int,
@@ -380,11 +380,12 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             }
         })
 
-    # ---- 15. Column widths: only set minimum_width columns (no blanket auto-resize) ----
+    # ---- 15. Column widths: only set width_class columns (no blanket auto-resize) ----
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
-        min_width = col_def.get('minimum_width')
-        if min_width == 'auto':
+        wc = col_def.get('width_class')
+        min_width = WIDTH_CLASSES.get(wc) if wc else None
+        if wc == 'auto' or min_width is None:
             # Auto-resize just this column
             requests.append({
                 'autoResizeDimensions': {
@@ -420,7 +421,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 17. Hide base value columns (percentile companion columns are always visible) ----
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
-        if col_def.get('has_percentile', False) and not col_def.get('is_generated_percentile', False):
+        if col_def.get('percentile') is not None and not col_def.get('is_generated_percentile', False):
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -469,11 +470,11 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
 
     # ---- 19b. Hide columns without entity formula (e.g. jersey on teams) ----
     col_entity = 'team' if sheet_type == 'teams' else 'player'
-    fkey = f'{col_entity}_formula'
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
-        # Non-stat columns without a formula for this entity get hidden
-        if col_def.get('stat_category', 'none') == 'none' and col_def.get(fkey) is None:
+        col_ctx = entry[3] if len(entry) > 3 else None
+        is_stat = SECTION_CONFIG.get(col_ctx, {}).get('is_stats_section', False)
+        if not is_stat and col_def.get('values', {}).get(col_entity) is None:
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -596,7 +597,7 @@ def _build_hide_advanced_requests(ws_id: int, columns_list: List[Tuple]) -> list
         col_def = entry[1]
         col_ctx = entry[3] if len(entry) > 3 else None
         col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
-        if col_ctx_cfg.get('is_stats_section') and col_def.get('stat_mode') == 'advanced':
+        if col_ctx_cfg.get('is_stats_section') and col_def.get('stats_mode') == 'advanced':
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -619,7 +620,7 @@ def _build_hide_basic_requests(ws_id: int, columns_list: List[Tuple]) -> list:
         col_def = entry[1]
         col_ctx = entry[3] if len(entry) > 3 else None
         col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
-        if col_ctx_cfg.get('is_stats_section') and col_def.get('stat_mode') == 'basic':
+        if col_ctx_cfg.get('is_stats_section') and col_def.get('stats_mode') == 'basic':
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -641,9 +642,9 @@ def _build_null_formula_bg_requests(ws_id: int, columns_list: List[Tuple],
     """
     Build requests to set black background on cells where the row's
     formula is None:
-      - player rows where player_formula is None (team-only columns)
-      - team row where team_formula is None
-      - opponent row where opponents_formula is None
+      - player rows where values.player is None (team-only columns)
+      - team row where values.team is None
+      - opponent row where values.opponents is None
     Config-driven: reads formula presence from column definitions.
     """
     black = get_color_for_raw(COLORS['black'])
@@ -653,9 +654,10 @@ def _build_null_formula_bg_requests(ws_id: int, columns_list: List[Tuple],
 
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
+        values = col_def.get('values', {})
 
         # Black bg on player rows for team-only columns
-        if col_def.get('player_formula') is None and n_player_rows > 0:
+        if values.get('player') is None and n_player_rows > 0:
             requests.append({
                 'repeatCell': {
                     'range': _range(ws_id, data_start, data_start + n_player_rows, idx, idx + 1),
@@ -668,8 +670,8 @@ def _build_null_formula_bg_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-        # Team row: black bg if team_formula is None
-        if col_def.get('team_formula') is None:
+        # Team row: black bg if values.team is None
+        if values.get('team') is None:
             requests.append({
                 'repeatCell': {
                     'range': _range(ws_id, team_row, team_row + 1, idx, idx + 1),
@@ -681,8 +683,8 @@ def _build_null_formula_bg_requests(ws_id: int, columns_list: List[Tuple],
                     'fields': 'userEnteredFormat.backgroundColor',
                 }
             })
-        # Opponents row: black bg if opponents_formula is None
-        if col_def.get('opponents_formula') is None:
+        # Opponents row: black bg if values.opponents is None
+        if values.get('opponents') is None:
             if opp_row < data_start + n_data_rows:
                 requests.append({
                     'repeatCell': {

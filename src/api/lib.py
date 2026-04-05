@@ -190,7 +190,7 @@ def sync_postseason_stats():
         "seasons": ["2024-25", "2023-24"],
         "seasons_count": 25,
         "include_current": true|false,
-        "stats_mode": "per_36"
+        "stats_mode": "per_48"
     }
     """
     try:
@@ -276,7 +276,7 @@ def calculate_stats():
     Request body:
     {
         "team_id": 1610612738,
-        "mode": "per_100",  # per_game, per_100, per_36
+        "mode": "per_100",  # per_game, per_100, per_48
         "season": "2024-25"  # Optional: defaults to current season
     }
     
@@ -308,7 +308,7 @@ def calculate_stats():
     if team_id not in NBA_TEAMS_BY_ID:
         return jsonify({'error': 'Invalid team_id'}), 400
     
-    valid_modes = ['per_game', 'per_100', 'per_36']
+    valid_modes = ['per_game', 'per_100', 'per_48']
     if mode not in valid_modes:
         return jsonify({'error': f'Invalid mode. Must be one of: {valid_modes}'}), 400
 
@@ -468,7 +468,7 @@ def get_player_stats(player_id):
     
             'per_game': calculate_entity_stats(player_dict, 'player', mode='per_game'),
             'per_100': calculate_entity_stats(player_dict, 'player', mode='per_100'),
-            'per_36': calculate_entity_stats(player_dict, 'player', mode='per_36'),
+            'per_48': calculate_entity_stats(player_dict, 'player', mode='per_48'),
         }
         
         return jsonify({

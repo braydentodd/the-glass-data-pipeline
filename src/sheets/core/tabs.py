@@ -2,12 +2,12 @@ import logging
 from collections import defaultdict
 
 from src.db import get_db_connection
-from src.sheets.lib.db import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats
-from sheets.lib.layout import build_headers, build_sheet_columns, build_merged_entity_row, build_summary_rows
-from src.sheets.lib.google.payloads import build_formatting_requests
-from sheets.lib.calculations import calculate_all_percentiles, _eval_dynamic_formula
+from src.sheets.core.db import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats
+from src.sheets.core.layout import build_headers, build_sheet_columns, build_merged_entity_row, build_summary_rows
+from src.sheets.google.payloads import build_formatting_requests
+from src.sheets.core.calculations import calculate_all_percentiles, evaluate_expression
 
-from src.sheets.lib.google.client import get_or_create_worksheet, write_and_format, move_sheet_to_position
+from src.sheets.google.client import get_or_create_worksheet, write_and_format, move_sheet_to_position
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
 
         # ---- Column structure ----
         columns = build_sheet_columns(
-            entity='player', stat_mode='both',
+            entity='player', stats_mode='both',
             sheet_type='team')
 
         # ---- Headers ----
@@ -262,7 +262,7 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_100',
 
         # ---- Opponent percentile populations ----
         columns = build_sheet_columns(
-            entity='team', stat_mode='both',
+            entity='team', stats_mode='both',
             sheet_type='teams')
 
         opp_percentiles = {}
@@ -270,7 +270,7 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_100',
             col_key, col_def, _, section_ctx = entry
             if not col_def.get('is_opponent_col'):
                 continue
-            formula = col_def.get('team_formula')
+            formula = col_def.get('values', {}).get('team')
             if not formula:
                 continue
             if section_ctx == 'current_stats':
@@ -283,7 +283,7 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_100',
                 continue
             values = []
             for d in data_list:
-                val = _eval_dynamic_formula(formula, d, col_def, mode)
+                val = evaluate_expression(formula, d, col_def)
                 if val is not None:
                     values.append(val)
             if values:
@@ -403,7 +403,7 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_100',
 
         # ---- Column structure (players sheet type keeps team column visible) ----
         columns = build_sheet_columns(
-            entity='player', stat_mode='both',
+            entity='player', stats_mode='both',
             sheet_type='players')
 
         # ---- Headers ----

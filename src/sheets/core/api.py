@@ -4,11 +4,11 @@ from typing import Optional, Any, Dict, Tuple
 from src.sheets.config import (
     SHEETS_COLUMNS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_MODES,
     STAT_CONSTANTS, DEFAULT_STAT_MODE, SHEET_FORMATTING, COLORS,
-    COLOR_THRESHOLDS, SUBSECTIONS
+    COLOR_THRESHOLDS, SUBSECTIONS, WIDTH_CLASSES
 )
-from src.sheets.lib.layout import build_sheet_columns, get_column_index
-from src.sheets.lib.formatting import get_reverse_stats, get_editable_fields
-from src.sheets.lib.google.payloads import _get_subsection_boundaries, _get_section_boundaries
+from src.sheets.core.layout import build_sheet_columns, get_column_index
+from src.sheets.core.formatting import get_reverse_stats, get_editable_fields
+from src.sheets.google.payloads import _get_subsection_boundaries, _get_section_boundaries
 
 def get_config_for_export(league: str,
                           get_teams_fn=None,
@@ -54,17 +54,18 @@ def get_config_for_export(league: str,
     league_teams = {abbr: team_id for team_id, (abbr, name) in teams_from_db.items()}
 
     # --- Stat columns list -----------------------------------------------
-    stat_columns = [k for k, v in SHEETS_COLUMNS.items() if v.get('stat_category', 'none') != 'none']
+    stat_columns = [k for k, v in SHEETS_COLUMNS.items()
+                    if any(SECTION_CONFIG.get(s, {}).get('is_stats_section') for s in v.get('sections', []))]
 
     # --- Build full column lists for all sheet types --------------------
     team_columns = build_sheet_columns(
-        entity='player', stat_mode='both', sheet_type='team'
+        entity='player', stats_mode='both', sheet_type='team'
     )
     league_columns = build_sheet_columns(
-        entity='player', stat_mode='both', sheet_type='players'
+        entity='player', stats_mode='both', sheet_type='players'
     )
     teams_columns = build_sheet_columns(
-        entity='team', stat_mode='both', sheet_type='teams'
+        entity='team', stats_mode='both', sheet_type='teams'
     )
 
     # --- Helper: find contiguous ranges of matching column indices --------
@@ -109,7 +110,7 @@ def get_config_for_export(league: str,
     def _advanced_indices(cols):
         return sorted([
             i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
-            if col_def.get('stat_mode') == 'advanced'
+            if col_def.get('stats_mode') == 'advanced'
         ])
 
     advanced_column_ranges = {
@@ -122,7 +123,7 @@ def get_config_for_export(league: str,
     def _basic_indices(cols):
         return sorted([
             i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
-            if col_def.get('stat_mode') == 'basic'
+            if col_def.get('stats_mode') == 'basic'
         ])
 
     basic_column_ranges = {
@@ -148,7 +149,7 @@ def get_config_for_export(league: str,
     def _base_value_with_pct_indices(cols):
         return sorted([
             i for i, (col_key, col_def, vis, ctx) in enumerate(cols)
-            if col_def.get('has_percentile', False)
+            if col_def.get('percentile') is not None
             and not col_def.get('is_generated_percentile', False)
         ])
 
@@ -160,7 +161,7 @@ def get_config_for_export(league: str,
 
     # --- Vertical boundaries (for border management in toggles) -----------
     def _boundary_entries(cols, idx_list):
-        return [{'col': b + 1, 'hp': bool(cols[b][1].get('has_percentile', False))}
+        return [{'col': b + 1, 'hp': bool(cols[b][1].get('percentile'))}
                 for b in idx_list]
 
     subsection_boundaries = {
@@ -177,10 +178,10 @@ def get_config_for_export(league: str,
 
     # --- Always-hidden columns per sheet type (1-indexed) ----------------
     def _always_hidden_indices(cols, entity_type):
-        fkey = f'{entity_type}_formula'
         hidden = []
         for i, (ck, cd, v, cx) in enumerate(cols):
-            if cd.get('stat_category', 'none') == 'none' and cd.get(fkey) is None:
+            is_stat = SECTION_CONFIG.get(cx, {}).get('is_stats_section', False)
+            if not is_stat and cd.get('values', {}).get(entity_type) is None:
                 hidden.append(i + 1)
         return hidden
 
@@ -210,7 +211,7 @@ def get_config_for_export(league: str,
     def _column_metadata(cols):
         meta = []
         for i, (ck, cd, v, cx) in enumerate(cols):
-            sm = cd.get('stat_mode', 'both')
+            sm = cd.get('stats_mode', 'both')
             is_stats = SECTION_CONFIG.get(cx, {}).get('is_stats_section', False)
             meta.append({
                 'col': i + 1,
@@ -218,7 +219,7 @@ def get_config_for_export(league: str,
                 'adv': sm == 'advanced',
                 'bas': sm == 'basic',
                 'stats': is_stats,
-                'hp': bool(cd.get('has_percentile')),
+                'hp': bool(cd.get('percentile')),
                 'sec': cx,
             })
         return meta
@@ -233,9 +234,11 @@ def get_config_for_export(league: str,
     def _column_widths(cols):
         widths = {}
         for i, (ck, cd, v, cx) in enumerate(cols):
-            mw = cd.get('minimum_width')
-            if mw is not None:
-                widths[str(i + 1)] = mw
+            wc = cd.get('width_class')
+            if wc is not None:
+                pw = WIDTH_CLASSES.get(wc)
+                if pw is not None:
+                    widths[str(i + 1)] = pw
         return widths
 
     column_widths = {
@@ -249,7 +252,8 @@ def get_config_for_export(league: str,
     team_col_idx = get_column_index('team', league_columns)
     stats_start = None
     for i, entry in enumerate(team_columns):
-        if entry[1].get('stat_category', 'none') != 'none':
+        section_ctx = entry[3] if len(entry) > 3 else None
+        if SECTION_CONFIG.get(section_ctx, {}).get('is_stats_section', False):
             stats_start = i + 1
             break
 
@@ -258,8 +262,8 @@ def get_config_for_export(league: str,
     for col_key, col_def in SHEETS_COLUMNS.items():
         if not col_def.get('editable', False):
             continue
-        db_field = col_def.get('player_formula')
-        if not db_field or any(op in db_field for op in '+-*/('):
+        db_field = col_def.get('values', {}).get('player')
+        if not db_field or not isinstance(db_field, str):
             continue
         team_idx = get_column_index(col_key, team_columns)
         league_idx = get_column_index(col_key, league_columns)
@@ -268,7 +272,7 @@ def get_config_for_export(league: str,
             'team_col_index': (team_idx or 0) + 1,
             f'{league}_col_index': (league_idx or 0) + 1 if league_idx is not None else None,
             'db_field': db_field,
-            'display_name': col_def.get('display_name', col_key),
+            'display_name': col_def.get('description', col_key),
             'format': col_def.get('format', 'text'),
             'team_row_calc': col_def.get('team_row_calc'),
         })
@@ -278,15 +282,15 @@ def get_config_for_export(league: str,
     for col_key, col_def in SHEETS_COLUMNS.items():
         if not col_def.get('editable', False):
             continue
-        tf = col_def.get('team_formula')
-        if tf and tf != 'TEAM' and not any(op in tf for op in '+-*/('):
+        tf = col_def.get('values', {}).get('team')
+        if tf and isinstance(tf, str) and tf != 'TEAM':
             ti = get_column_index(col_key, teams_columns)
             if ti is not None:
                 teams_editable.append({
                     'col_key': col_key,
                     'col_index': ti + 1,
                     'db_field': tf,
-                    'display_name': col_def.get('display_name', col_key),
+                    'display_name': col_def.get('description', col_key),
                 })
 
     # Reverse mapping: team name → abbreviation
@@ -388,7 +392,6 @@ def clear_cache():
 
 def resolve_columns_for_league(league):
     """Resolve fully expanded SHEETS_COLUMNS into a league-specific flat dict."""
-    from src.sheets.config import WIDTH_CLASSES
     resolved = {}
 
     for col_key, col_def in SHEETS_COLUMNS.items():
@@ -397,15 +400,15 @@ def resolve_columns_for_league(league):
             continue
 
         entry = {}
-        _SKIP = {'leagues', 'formulas', 'width_class', 'width'}
+        _SKIP = {'leagues', 'values', 'width_class', 'width'}
         for k, v in col_def.items():
             if k not in _SKIP:
                 entry[k] = v
 
-        formulas = col_def.get('formulas', {})
-        entry['player_formula'] = formulas.get('player')
-        entry['team_formula'] = formulas.get('team')
-        entry['opponents_formula'] = formulas.get('opponents')
+        values = col_def.get('values', {})
+        entry['player_formula'] = values.get('player')
+        entry['team_formula'] = values.get('team')
+        entry['opponents_formula'] = values.get('opponents')
 
         wc = col_def.get('width_class', 'auto')
         pw = WIDTH_CLASSES.get(wc)

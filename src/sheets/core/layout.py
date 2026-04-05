@@ -1,7 +1,7 @@
 from typing import List, Optional, Any, Tuple
 from src.sheets.config import SHEETS_COLUMNS
 from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING)
-from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, _eval_dynamic_formula
+from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
 from .formatting import format_section_header, format_stat_value, format_height
 
 SUMMARY_THRESHOLDS = [
@@ -13,7 +13,7 @@ SUMMARY_THRESHOLDS = [
 ]
 
 def generate_percentile_columns() -> dict:
-    """Auto-generate percentile companion column defs for all columns with has_percentile=True.
+    """Auto-generate percentile companion column defs for all columns with percentile set.
 
     Companion columns are narrow (10px), always visible, and display the
     percentile rank (0-100) with colour shading.  Headers merge across the
@@ -21,7 +21,7 @@ def generate_percentile_columns() -> dict:
     """
     pct_columns = {}
     for col_key, col_def in SHEETS_COLUMNS.items():
-        if not col_def.get('has_percentile'):
+        if not col_def.get('percentile'):
             continue
         pct_key = f"{col_key}_pct"
         pct_columns[pct_key] = _make_companion_def(col_def, col_key, pct_key)
@@ -39,27 +39,24 @@ def _make_companion_def(base_def: dict, base_key: str,
         pct_key = f"{base_key}_pct"
     return {
         'key': pct_key,
-        'stat_category': base_def.get('stat_category', 'none'),
-        'display_name': '',  # Companion has no header text (merged with stat)
+        'display_name': '',
         'description': '',
-        'section': base_def.get('section', ['current_stats']),
+        'sections': base_def.get('sections', ['current_stats']),
         'subsection': base_def.get('subsection'),
-        'stat_mode': base_def.get('stat_mode', 'both'),
-        'has_percentile': False,
+        'stats_mode': base_def.get('stats_mode', 'both'),
+        'percentile': None,
         'editable': False,
-        'reverse_percentile': base_def.get('reverse_percentile', False),
-        'scale_with_mode': False,
+        'scale_with_rate': False,
         'format': 'number',
         'decimal_places': 0,
         'is_generated_percentile': True,
         'is_percentile_companion': True,
         'base_stat': base_key,
-        'player_formula': base_def.get('player_formula'),
-        'team_formula': base_def.get('team_formula'),
-        'opponents_formula': base_def.get('opponents_formula'),
+        'base_percentile': base_def.get('percentile', 'standard'),
+        'values': base_def.get('values', {}),
         'is_opponent_col': base_def.get('is_opponent_col', False),
-        'minimum_width': SHEET_FORMATTING.get('percentile_companion_width', 10),
-        'sheets': base_def.get('sheets', ['all_teams', 'all_players', 'teams']),
+        'width_class': SHEET_FORMATTING.get('percentile_companion_width', 10),
+        'tabs': base_def.get('tabs', ['teams', 'players', 'team']),
     }
 
 
@@ -71,32 +68,31 @@ def get_all_columns_with_percentiles() -> dict:
 
 
 def get_columns_by_filters(section=None, subsection=None, entity=None,
-                           stat_mode=None, include_percentiles=False) -> dict:
+                           stats_mode=None, include_percentiles=False) -> dict:
     """
     Get columns matching specified filters.
 
     Args:
         section: Filter by section name
         subsection: Filter by subsection name
-        entity: 'player', 'team', or 'opponents' — checks formula existence
-        stat_mode: 'basic', 'advanced', or 'both'
+        entity: 'player', 'team', or 'opponents' — checks values dict
+        stats_mode: 'basic', 'advanced', or 'both'
         include_percentiles: Include auto-generated percentile columns
     """
     columns = get_all_columns_with_percentiles() if include_percentiles else SHEETS_COLUMNS
     filtered = {}
 
     for col_key, col_def in columns.items():
-        if section and section not in col_def.get('section', []):
+        if section and section not in col_def.get('sections', []):
             continue
         if subsection and col_def.get('subsection') != subsection:
             continue
         if entity:
-            fkey = f'{entity}_formula'
-            if col_def.get(fkey) is None:
+            if entity not in col_def.get('values', {}):
                 continue
-        if stat_mode and stat_mode != 'both':
-            col_mode = col_def.get('stat_mode', 'both')
-            if col_mode != 'both' and col_mode != stat_mode:
+        if stats_mode and stats_mode != 'both':
+            col_mode = col_def.get('stats_mode', 'both')
+            if col_mode != 'both' and col_mode != stats_mode:
                 continue
         filtered[col_key] = col_def
 
@@ -104,7 +100,7 @@ def get_columns_by_filters(section=None, subsection=None, entity=None,
 
 
 def get_columns_for_section_and_entity(section: str, entity: str,
-                                       stat_mode: str = 'both',
+                                       stats_mode: str = 'both',
                                        include_percentiles: bool = False) -> List[Tuple]:
     """
     Get ordered columns for a section and entity.
@@ -112,7 +108,7 @@ def get_columns_for_section_and_entity(section: str, entity: str,
     """
     columns = get_columns_by_filters(
         section=section, entity=entity,
-        stat_mode=stat_mode, include_percentiles=include_percentiles
+        stats_mode=stats_mode, include_percentiles=include_percentiles
     )
     section_config = SECTION_CONFIG.get(section, {})
 
@@ -132,7 +128,7 @@ def get_columns_for_section_and_entity(section: str, entity: str,
         return [(k, v) for k, v in columns.items()]
 
 
-def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
+def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
                         league_key: str = 'nba',
                         sheet_type: str = 'team') -> List[Tuple]:
     """
@@ -143,70 +139,57 @@ def build_sheet_columns(entity: str = 'player', stat_mode: str = 'both',
     Single set of columns per section — mode switching triggers a re-sync
     with the new mode rather than column visibility toggling.
     Percentile columns are interleaved immediately after their base stat column.
-    Columns are filtered by their 'sheets' array.
+    Columns are filtered by their 'tabs' array.
     """
     fmt = SHEET_FORMATTING
     hide_advanced = fmt.get('hide_advanced_columns', True)
 
-    # Mapping: sheet_type → key to look for in column 'sheets' array.
-    #   'teams'  = individual team sheets (DAL, BOS, …)
-    #   'all_teams' = the Teams aggregate sheet
-    #   'all_players' = the Players aggregate sheet
-    _SHEET_TYPE_KEY = {
-        'team': 'teams',
-        'players': 'all_players',
-        league_key: 'all_players',  # e.g. 'nba' or 'ncaa'
-        'teams': 'all_teams',
+    _TAB_TYPE_KEY = {
+        'team': 'team',
+        'players': 'players',
+        league_key: 'players',
+        'teams': 'teams',
     }
-    sheet_key = _SHEET_TYPE_KEY.get(sheet_type, 'teams')
+    tab_key = _TAB_TYPE_KEY.get(sheet_type, 'team')
     col_entity = 'team' if sheet_type == 'teams' else entity
     pct_columns = generate_percentile_columns()
 
-    def _normalize_sheets(col_def):
-        col_sheets = col_def.get('sheets', ['all_teams', 'all_players', 'teams'])
-        if isinstance(col_sheets, str):
-            if col_sheets == 'both':
-                return ['all_teams', 'all_players', 'teams']
-            elif col_sheets in ('players', league_key):
-                return ['all_players']
-            elif col_sheets == 'teams':
-                return ['teams']
-            elif col_sheets == 'all_teams':
-                return ['all_teams']
-            return ['all_teams', 'all_players', 'teams']
-        return col_sheets
+    def _normalize_tabs(col_def):
+        col_tabs = col_def.get('tabs', ['teams', 'players', 'team'])
+        if isinstance(col_tabs, str):
+            return [col_tabs]
+        return col_tabs
 
     all_columns = []
 
     for section in SECTIONS:
         section_cols = get_columns_for_section_and_entity(
             section=section, entity=None,
-            stat_mode='both', include_percentiles=False
+            stats_mode='both', include_percentiles=False
         )
 
         for col_key, col_def in section_cols:
-            if sheet_key not in _normalize_sheets(col_def):
+            if tab_key not in _normalize_tabs(col_def):
                 continue
 
-            # For the Teams aggregate sheet: skip columns with no team_formula entirely
-            if sheet_type == 'teams' and col_def.get('team_formula') is None:
+            # For the Teams aggregate sheet: skip columns with no team value
+            if sheet_type == 'teams' and 'team' not in col_def.get('values', {}):
                 continue
 
-            col_stat_mode = col_def.get('stat_mode', 'both')
+            col_stats_mode = col_def.get('stats_mode', 'both')
             visible = True
-            if hide_advanced and col_stat_mode == 'advanced':
+            if hide_advanced and col_stats_mode == 'advanced':
                 visible = False
-            elif not hide_advanced and col_stat_mode == 'basic':
+            elif not hide_advanced and col_stats_mode == 'basic':
                 visible = False
 
-            fkey = f'{col_entity}_formula'
-            if not (col_def.get('stat_category', 'none') != 'none' or col_def.get(fkey) is not None):
+            if col_entity not in col_def.get('values', {}):
                 visible = False
 
             all_columns.append((col_key, col_def, visible, section))
 
             pct_key = f"{col_key}_pct"
-            if col_def.get('has_percentile') and pct_key in pct_columns:
+            if col_def.get('percentile') and pct_key in pct_columns:
                 pct_def = pct_columns[pct_key]
                 all_columns.append((pct_key, pct_def, True, section))
 
@@ -230,19 +213,19 @@ def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
     for entry in columns:
         col_key, col_def, vis, ctx = entry
         is_stats = SECTION_CONFIG.get(ctx, {}).get('is_stats_section', False)
-        if not is_stats or col_def.get('stat_category', 'none') == 'none' or col_def.get('is_generated_percentile'):
+        if not is_stats or col_def.get('is_generated_percentile'):
             continue
-        opp_formula = col_def.get('opponents_formula')
-        if not opp_formula:
+        opp_expr = col_def.get('values', {}).get('opponents')
+        if not opp_expr:
             continue
 
-        col_mode = col_def.get('stat_mode', 'both')
+        col_mode = col_def.get('stats_mode', 'both')
         opp_def = dict(col_def)
-        opp_def['display_name'] = f"O{col_def['display_name']}"
-        opp_def['team_formula'] = opp_formula
-        opp_def['opponents_formula'] = None
+        opp_def['display_name'] = f"O{col_key}"
+        opp_values = {'team': opp_expr}
+        opp_def['values'] = opp_values
         opp_def['is_opponent_col'] = True
-        opp_def['has_percentile'] = True
+        opp_def['percentile'] = 'standard'
         opp_def['subsection'] = 'opponent'
         opp_key = f'opp_{col_key}'
 
@@ -364,7 +347,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_game',
 
     for idx, entry in enumerate(columns_list):
         col_key, col_def = entry[0], entry[1]
-        section = entry[3] if len(entry) > 3 else (col_def.get('section', ['unknown'])[0])
+        section = entry[3] if len(entry) > 3 else (col_def.get('sections', ['unknown'])[0])
         subsection = col_def.get('subsection')
 
         # Row 0: Section headers (grouped by section)
@@ -529,7 +512,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             value = calculated.get(base_key)
 
             if value is not None and isinstance(value, (int, float)) and base_key in pcts:
-                reverse = base_def.get('reverse_percentile', False)
+                reverse = base_def.get('percentile') == 'reverse'
                 rank = get_percentile_rank(value, pcts[base_key], reverse)
                 row.append(round(rank))
             else:
@@ -554,8 +537,8 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
                 row.append(season_count)
             continue
 
-        # Info column (non-stat) — simple field lookup
-        if col_def.get('stat_category', 'none') == 'none':
+        # Info column (non-stat section) — simple field lookup
+        if not col_ctx_cfg.get('is_stats_section', False) and col_def.get('percentile') is None:
             use_entity = sec_entity if section_data and is_stats_section else primary_entity
             value = evaluate_formula(col_key, use_entity, entity_type, mode)
             if value is None:
@@ -568,8 +551,8 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
 
         # Dynamically-generated opponent column (Teams sheet) — eval directly
         if col_def.get('is_opponent_col'):
-            formula_str = col_def.get('team_formula')
-            value = _eval_dynamic_formula(formula_str, sec_entity, col_def, mode)
+            opp_expr = col_def.get('values', {}).get('team')
+            value = evaluate_expression(opp_expr, sec_entity)
             override = col_def.get('mode_overrides', {}).get(mode)
             active_def = override if override else col_def
             formatted = format_stat_value(value, active_def)
@@ -652,11 +635,10 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                             base_col_def = e2[1]
                             break
                     if base_col_def:
-                        formula_str = base_col_def.get('team_formula')
-                        value = _eval_dynamic_formula(
-                            formula_str, sec_entity, base_col_def, mode)
+                        opp_expr = base_col_def.get('values', {}).get('team')
+                        value = evaluate_expression(opp_expr, sec_entity)
                         if value is not None:
-                            reverse = base_col_def.get('reverse_percentile', False)
+                            reverse = base_col_def.get('percentile') == 'reverse'
                             rank = get_percentile_rank(value, opp_pop, reverse)
                             row[col_idx] = round(rank)  # Fill companion value
                             percentile_cells.append({
@@ -672,7 +654,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             value = calculated.get(base_key)
 
             if value is not None and base_key in sec_pcts:
-                reverse = base_def.get('reverse_percentile', False)
+                reverse = base_def.get('percentile') == 'reverse'
                 rank = get_percentile_rank(value, sec_pcts[base_key], reverse)
                 percentile_cells.append({
                     'col': col_idx,
@@ -693,7 +675,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             value = calculated.get(base_key)
 
             if value is not None and base_key in sec_pcts:
-                reverse = base_def.get('reverse_percentile', False)
+                reverse = base_def.get('percentile') == 'reverse'
                 rank = get_percentile_rank(value, sec_pcts[base_key], reverse)
                 percentile_cells.append({
                     'col': col_idx,
@@ -768,10 +750,9 @@ def build_summary_rows(columns_list: List[Tuple],
                 })
                 continue
 
-            # Non-stat, non-percentile, no-has_percentile columns are blank
-            if (col_def.get('stat_category', 'none') == 'none'
-                    and not col_def.get('is_generated_percentile', False)
-                    and not col_def.get('has_percentile', False)):
+            # Non-stat, non-percentile columns are blank
+            if (not col_def.get('percentile')
+                    and not col_def.get('is_generated_percentile', False)):
                 row.append('')
                 continue
 
@@ -781,7 +762,7 @@ def build_summary_rows(columns_list: List[Tuple],
                 if col_ctx_cfg.get('is_stats_section') and col_ctx:
                     opp_pop = opp_percentiles.get(col_key, {}).get(col_ctx)
                     if opp_pop:
-                        reverse = col_def.get('reverse_percentile', False)
+                        reverse = col_def.get('percentile') == 'reverse'
                         val = _get_value_at_percentile(opp_pop, pct_level, reverse)
                         if val is not None:
                             formatted = format_stat_value(val, col_def)
@@ -807,7 +788,7 @@ def build_summary_rows(columns_list: List[Tuple],
                 sorted_vals = percentile_pops.get(pop_key,
                               percentile_pops.get(col_key))
                 if sorted_vals:
-                    reverse = col_def.get('reverse_percentile', False)
+                    reverse = col_def.get('percentile') == 'reverse'
                     val = _get_value_at_percentile(sorted_vals, pct_level, reverse)
                     if val is not None:
                         formatted = format_stat_value(val, col_def)
@@ -820,11 +801,11 @@ def build_summary_rows(columns_list: List[Tuple],
                         })
                         continue
 
-            # Non-stats columns with has_percentile (player_info): direct col_key lookup
-            if not is_stats_section and col_def.get('has_percentile', False):
+            # Non-stats columns with percentile (player_info): direct col_key lookup
+            if not is_stats_section and col_def.get('percentile'):
                 sorted_vals = percentile_pops.get(col_key)
                 if sorted_vals:
-                    reverse = col_def.get('reverse_percentile', False)
+                    reverse = col_def.get('percentile') == 'reverse'
                     val = _get_value_at_percentile(sorted_vals, pct_level, reverse)
                     if val is not None:
                         formatted = format_stat_value(val, col_def)

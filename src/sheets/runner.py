@@ -4,7 +4,7 @@ THE GLASS - Universal Google Sheets Sync
 Unified runner for synchronizing league data to Google Sheets.
 
 Entry point:
-    python -m src.sheets.runner --league nba [--tab BOS] [--mode per_game|per_36|per_100]
+    python -m src.sheets.runner --league nba [--tab BOS] [--mode per_game|per_48|per_100]
 """
 
 import argparse
@@ -15,11 +15,11 @@ import time
 from dotenv import load_dotenv
 
 from src.db import get_db_connection
-from src.sheets.lib.db import fetch_all_players, fetch_all_teams
-from src.sheets.lib.calculations import calculate_all_percentiles
-from src.sheets.lib.google.client import get_sheets_client
-from src.sheets.lib.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
-from src.sheets.config import STAT_MODES, DEFAULT_STAT_MODE
+from src.sheets.core.db import fetch_all_players, fetch_all_teams
+from src.sheets.core.calculations import calculate_all_percentiles
+from src.sheets.google.client import get_sheets_client
+from src.sheets.core.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
+from src.sheets.config import SHEETS_COLUMNS, STAT_MODES, DEFAULT_STAT_MODE, SECTION_CONFIG
 
 load_dotenv()
 
@@ -105,7 +105,9 @@ def main():
         'team_id', 'abbr', 'team_name', 'notes', 'updated_at',
     }
 
-    all_cols = {k for k, v in SHEETS_COLUMNS.items() if league in v.get('leagues', []) and v.get('stat_category') != 'none'}
+    all_cols = {k for k, v in SHEETS_COLUMNS.items()
+                if league in v.get('leagues', [])
+                and any(SECTION_CONFIG.get(s, {}).get('is_stats_section') for s in v.get('sections', []))}
     ctx.stat_fields = {c for c in (all_cols - ctx.player_entity_fields - ctx.team_entity_fields) if not c[0].isupper()}
     ctx.team_stat_fields = {c for c in (all_cols - ctx.team_entity_fields) if not c[0].isupper()}
     ctx.team_abbr_col = 'abbr'
