@@ -4,7 +4,7 @@ THE GLASS - Universal Google Sheets Sync
 Unified runner for synchronizing league data to Google Sheets.
 
 Entry point:
-    python -m src.sheets.runner --league nba [--tab BOS] [--mode per_game|per_48|per_100]
+    python -m src.sheets.runner --league nba [--tab BOS] [--mode per_possession|per_minute|per_game]
 """
 
 import argparse
@@ -38,8 +38,6 @@ def main():
                         help=f'Stats display mode (default: {DEFAULT_STAT_MODE})')
     parser.add_argument('--hist-seasons', type=int, default=None,
                         help='Number of historical seasons to include')
-    parser.add_argument('--include-current', action='store_true',
-                        help='Include current season within the historical seasons count')
     parser.add_argument('--partial-update', action='store_true',
                         help='Fast sync: skip structural formatting, only update data + colors')
     args = parser.parse_args()
@@ -52,19 +50,18 @@ def main():
     partial_update = args.partial_update or os.environ.get('PARTIAL_UPDATE') == 'true'
     sync_section = os.environ.get('SYNC_SECTION')
 
-    # Build historical config (postseason always reuses the same config)
+    # Build historical config (never includes current season)
     hist_mode = os.environ.get('HISTORICAL_MODE', 'seasons')
-    include_current = os.environ.get('INCLUDE_CURRENT_SEASON', 'false') == 'true'
 
     if hist_mode == 'career':
-        historical_config = {'mode': 'career', 'include_current': include_current}
+        historical_config = {'mode': 'career'}
     elif hist_mode == 'seasons':
         season_str = os.environ.get('HISTORICAL_SEASONS', '')
         seasons = [s.strip() for s in season_str.split(',') if s.strip()]
-        historical_config = {'mode': 'seasons', 'value': seasons, 'include_current': include_current}
+        historical_config = {'mode': 'seasons', 'value': seasons}
     else:
         num_seasons = args.hist_seasons or int(os.environ.get('HISTORICAL_SEASONS_COUNT', '3'))
-        historical_config = {'mode': 'seasons', 'value': num_seasons, 'include_current': include_current}
+        historical_config = {'mode': 'seasons', 'value': num_seasons}
 
     # ---- Build context ----
     class Context:
@@ -126,8 +123,7 @@ def main():
                        partial_update=partial_update,
                        sync_section=sync_section)
 
-    # ---- Pre-compute league-wide percentile populations ONCE ----
-    # When sync_section is set, only fetch data for that section
+    # ---- Pre-compute league-wide percentile populations ONCE (all modes) ----
     logger.info('  Pre-computing league-wide percentile populations...')
     conn = get_db_connection()
     try:
@@ -147,34 +143,37 @@ def main():
         all_teams_post = fetch_all_teams(
             conn, 'postseason_stats', historical_config) if needs_postseason else _empty_teams
 
-        pct_curr = calculate_all_percentiles(all_players_curr, 'player', mode)
-        pct_hist = calculate_all_percentiles(all_players_hist, 'player', mode)
-        pct_post = calculate_all_percentiles(all_players_post, 'player', mode)
-        pct_team_curr = calculate_all_percentiles(
-            all_teams_curr['teams'], 'team', mode)
-        pct_opp_curr = calculate_all_percentiles(
-            all_teams_curr['opponents'], 'opponents', mode)
-        pct_team_hist = calculate_all_percentiles(
-            all_teams_hist['teams'], 'team', mode)
-        pct_opp_hist = calculate_all_percentiles(
-            all_teams_hist['opponents'], 'opponents', mode)
-        pct_team_post = calculate_all_percentiles(
-            all_teams_post['teams'], 'team', mode)
-        pct_opp_post = calculate_all_percentiles(
-            all_teams_post['opponents'], 'opponents', mode)
+        def _build_pct_by_mode(section_data, entity_type):
+            """Compute percentile populations for all modes."""
+            result = {}
+            for m in STAT_MODES:
+                result[m] = {}
+                for section, data_list in section_data.items():
+                    if data_list:
+                        result[m][section] = calculate_all_percentiles(
+                            data_list, entity_type, m)
+                    else:
+                        result[m][section] = {}
+            return result
 
         precomputed = {
-            'pct_curr': pct_curr,
-            'pct_hist': pct_hist,
-            'pct_post': pct_post,
-            'pct_team_curr': pct_team_curr,
-            'pct_opp_curr': pct_opp_curr,
-            'pct_team_hist': pct_team_hist,
-            'pct_opp_hist': pct_opp_hist,
-            'pct_team_post': pct_team_post,
-            'pct_opp_post': pct_opp_post,
+            'player': _build_pct_by_mode({
+                'current_stats': all_players_curr,
+                'historical_stats': all_players_hist,
+                'postseason_stats': all_players_post,
+            }, 'player'),
+            'team': _build_pct_by_mode({
+                'current_stats': all_teams_curr['teams'],
+                'historical_stats': all_teams_hist['teams'],
+                'postseason_stats': all_teams_post['teams'],
+            }, 'team'),
+            'opponents': _build_pct_by_mode({
+                'current_stats': all_teams_curr['opponents'],
+                'historical_stats': all_teams_hist['opponents'],
+                'postseason_stats': all_teams_post['opponents'],
+            }, 'opponents'),
         }
-        logger.info('  Percentile populations ready')
+        logger.info('  Percentile populations ready (%d modes)', len(STAT_MODES))
     finally:
         conn.close()
 

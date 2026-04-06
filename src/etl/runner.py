@@ -1,64 +1,61 @@
 """
 The Glass - ETL Runner (Orchestrator)
 
-Central orchestrator for the ETL pipeline.  Dispatches API calls based on
-endpoint execution tiers (league / team / team_call / player), routes
-results through core extraction, and writes to the database.
+Central orchestrator for the NBA ETL pipeline.  Groups column sources by
+(endpoint, params), dispatches API calls based on execution tier
+(league / team / team_call / player), extracts data through the core
+modules, and writes to the database.
+
+No classes -- all state is passed as function arguments.
 
 Usage:
-    python -m src.etl.runner                        # current season, Regular
-    python -m src.etl.runner --season 2023-24       # specific season
-    python -m src.etl.runner --season-type 2         # Playoffs
-    python -m src.etl.runner --entity team           # teams only
-    python -m src.etl.runner --endpoint leaguedashptstats  # single endpoint
+    python -m src.etl.runner                         # current season, Regular
+    python -m src.etl.runner --season 2023-24        # specific season
+    python -m src.etl.runner --season-type 2          # Playoffs
+    python -m src.etl.runner --entity team            # teams only
+    python -m src.etl.runner --endpoint leaguedashptstats
 """
 
 import argparse
 import logging
 import time
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional
 
-# Suppress urllib3 keep-alive pool warnings (harmless with stats.nba.com)
 warnings.filterwarnings(
     'ignore',
     message='Failed to return connection to pool',
     module='urllib3',
 )
 
-from src.db import db_connection, ensure_schema, quote_col
-from src.etl.config import DB_COLUMNS
+from src.db import db_connection, quote_col
+from src.etl.config import DB_COLUMNS, TYPE_TRANSFORMS
 from src.etl.core.extract import (
     extract_columns_from_result,
     extract_derived_field,
     extract_field,
-    get_entity_id_field,
+    get_multi_call_columns,
     get_pipeline_columns,
     get_simple_columns,
 )
-from src.etl.core.load import BulkDatabaseWriter
-from src.etl.core.transform import apply_transform, execute_pipeline
-from src.etl.nba_api.client import (
+from src.etl.core.load import bulk_upsert
+from src.etl.core.transform import apply_transform, execute_pipeline, safe_int
+from src.etl.db import ensure_tables, get_table_name
+from src.etl.nba.client import (
     build_endpoint_params,
     create_api_call,
     load_endpoint_class,
     with_retry,
 )
-from src.etl.nba_api.config import (
+from src.etl.nba.config import (
     API_CONFIG,
-    API_FIELD_NAMES,
     DB_SCHEMA,
     ENDPOINTS,
-    PARALLEL_CONFIG,
-    RETRY_CONFIG,
     SEASON_CONFIG,
     SEASON_TYPES,
-    SOURCES,
-    TABLES_CONFIG,
-    TEAM_IDS,
     get_columns_for_endpoint,
-    get_table_name,
+    get_entity_id_field,
+    get_team_ids,
     is_endpoint_available,
 )
 
@@ -71,293 +68,375 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# ETL CONTEXT
+# CALL GROUP BUILDING
 # ============================================================================
 
-class ETLContext:
-    """Mutable state container passed through the entire pipeline."""
-
-    def __init__(self) -> None:
-        self.failed_endpoints: List[Dict[str, Any]] = []
-        self.api_result_cache: Dict[str, Any] = {}
-
-    def add_failed_endpoint(self, info: Dict[str, Any]) -> None:
-        self.failed_endpoints.append(info)
-
-    def cache_key(self, endpoint: str, params: Dict[str, Any], team_id: Optional[int] = None) -> str:
-        """Deterministic cache key from endpoint name + sorted params."""
-        parts = [endpoint]
-        if team_id is not None:
-            parts.append(f'team={team_id}')
-        for k in sorted(params):
-            if not k.startswith('_'):
-                parts.append(f'{k}={params[k]}')
-        return '|'.join(parts)
-
-
-# ============================================================================
-# PARALLEL EXECUTOR
-# ============================================================================
-
-class ParallelAPIExecutor:
-    """ThreadPoolExecutor wrapper with tier-aware worker counts."""
-
-    def __init__(self, tier: str = 'league') -> None:
-        self.max_workers = PARALLEL_CONFIG.get(tier, {}).get('max_workers', 1)
-
-    def execute_batch(
-        self,
-        tasks: List[Dict[str, Any]],
-        description: str = 'Batch',
-    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        """Run *tasks* in parallel and return (results, errors).
-
-        Each task dict must have 'id' and 'func' (a zero-arg callable).
-        """
-        results: Dict[str, Any] = {}
-        errors: List[Dict[str, Any]] = []
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-            future_map = {
-                pool.submit(self._run_task, t): t for t in tasks
-            }
-            for future in as_completed(future_map):
-                task = future_map[future]
-                try:
-                    results[task['id']] = future.result()
-                except Exception as exc:
-                    errors.append({'task_id': task['id'], 'error': str(exc)})
-                    if 'timeout' not in str(exc).lower():
-                        logger.warning('Task %s failed: %s', task['id'], exc)
-
-        return results, errors
-
-    @staticmethod
-    def _run_task(task: Dict[str, Any]) -> Any:
-        delay = API_CONFIG.get('rate_limit_delay', 0.6)
-        time.sleep(delay)
-        return task['func']()
-
-
-# ============================================================================
-# ENDPOINT EXECUTION — DISPATCHER
-# ============================================================================
-
-def execute_endpoint(
-    ctx: ETLContext,
-    endpoint_name: str,
-    endpoint_params: Dict[str, Any],
+def _build_call_groups(
+    entity: str,
     season: str,
-    entity: Literal['player', 'team'] = 'player',
-    season_type: int = 1,
-    season_type_name: str = 'Regular Season',
-) -> int:
-    """Universal dispatcher — routes to the correct execution strategy.
+) -> List[Dict[str, Any]]:
+    """Group all columns for *entity* into API call batches.
 
-    Returns the number of rows written.
+    Walks DB_COLUMNS, groups simple/derived columns that share the same
+    (endpoint, params) so each batch requires exactly one API call.
+    Multi-call, pipeline, and team_call columns get their own entries.
+
+    Returns a list of dicts, each with:
+        endpoint, params, tier, columns ({col_name: enriched_source})
     """
-    table = get_table_name(entity, 'stats')
+    # Key: (endpoint, frozen_params) -> {col_name: source}
+    simple_groups: Dict[tuple, Dict[str, Dict[str, Any]]] = {}
+    special: List[Dict[str, Any]] = []
 
-    # Collect columns from SOURCES for this endpoint + entity + params
-    cols = get_columns_for_endpoint(endpoint_name, entity, params=endpoint_params)
-    simple = get_simple_columns(cols)
-    pipelines = get_pipeline_columns(cols)
+    for col_name, col_meta in DB_COLUMNS.items():
+        source = col_meta.get('nba', {}).get(entity)
+        if not source:
+            continue
 
-    if not simple and not pipelines:
-        return 0
+        # Enrich with default transform
+        enriched = {**source}
+        if 'transform' not in enriched and 'pipeline' not in enriched and 'multi_call' not in enriched:
+            base_type = col_meta['type'].split('(')[0]
+            enriched['transform'] = TYPE_TRANSFORMS.get(base_type, 'safe_int')
 
-    # Detect execution tier from column source configs
-    tier = _resolve_tier(cols, endpoint_name)
+        # Determine the endpoint
+        ep = enriched.get('endpoint')
+        if not ep:
+            pipeline = enriched.get('pipeline', {})
+            ep = pipeline.get('endpoint')
+        if not ep:
+            continue
+        if not is_endpoint_available(ep, season):
+            continue
 
-    param_label = ' '.join(f'{k}={v}' for k, v in sorted(endpoint_params.items()) if not k.startswith('_'))
-    logger.info('Processing %s %s %s %s [%s]', season, season_type_name, endpoint_name, entity, param_label)
+        # Multi-call, pipeline, and team_call get their own groups
+        if 'multi_call' in enriched or 'pipeline' in enriched:
+            special.append({
+                'endpoint': ep,
+                'params': enriched.get('params', {}),
+                'tier': _tier_for_source(enriched, ep),
+                'columns': {col_name: enriched},
+            })
+        elif enriched.get('tier') == 'team_call':
+            special.append({
+                'endpoint': ep,
+                'params': {},
+                'tier': 'team_call',
+                'columns': {col_name: enriched},
+            })
+        else:
+            params = enriched.get('params', {})
+            key = (ep, frozenset(sorted(params.items())))
+            simple_groups.setdefault(key, {})[col_name] = enriched
 
-    # Dispatch based on tier
-    if tier == 'team_call':
-        return _execute_team_call(
-            ctx, endpoint_name, endpoint_params, season,
-            entity, table, season_type, season_type_name, cols,
-        )
-    elif tier == 'team':
-        return _execute_per_team(
-            ctx, endpoint_name, endpoint_params, season,
-            entity, table, season_type, season_type_name, simple, pipelines,
-        )
-    else:
-        # league (default) — single API call returns all entities
-        return _execute_league_wide(
-            ctx, endpoint_name, endpoint_params, season,
-            entity, table, season_type, season_type_name, simple, pipelines,
-        )
+    # Build result list
+    groups: List[Dict[str, Any]] = []
+
+    for (ep, frozen_params), cols in simple_groups.items():
+        groups.append({
+            'endpoint': ep,
+            'params': dict(frozen_params),
+            'tier': _tier_for_endpoint(ep),
+            'columns': cols,
+        })
+
+    # Merge team_call columns that share the same endpoint
+    team_call_merged: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for item in special:
+        if item['tier'] == 'team_call':
+            team_call_merged.setdefault(item['endpoint'], {}).update(item['columns'])
+        else:
+            groups.append(item)
+    for ep, cols in team_call_merged.items():
+        groups.append({
+            'endpoint': ep,
+            'params': {},
+            'tier': 'team_call',
+            'columns': cols,
+        })
+
+    return groups
 
 
-def _resolve_tier(cols: Dict[str, Dict[str, Any]], endpoint_name: str) -> str:
-    """Determine execution tier from column sources or endpoint config."""
-    for source in cols.values():
-        tier = source.get('execution_tier')
-        if tier:
-            return tier
-    ep = ENDPOINTS.get(endpoint_name, {})
-    return ep.get('execution_tier', 'league')
+def _tier_for_source(source: Dict[str, Any], endpoint: str) -> str:
+    """Resolve execution tier from a source config or endpoint default."""
+    tier = source.get('tier')
+    if tier:
+        return tier
+    pipeline = source.get('pipeline', {})
+    if pipeline.get('tier'):
+        return pipeline['tier']
+    return _tier_for_endpoint(endpoint)
+
+
+def _tier_for_endpoint(endpoint: str) -> str:
+    """Get the default execution tier for an endpoint."""
+    return ENDPOINTS.get(endpoint, {}).get('execution_tier', 'league')
 
 
 # ============================================================================
-# LEAGUE-WIDE (single API call)
+# EXECUTION DISPATCHER
+# ============================================================================
+
+def _execute_group(
+    group: Dict[str, Any],
+    entity: str,
+    season: str,
+    season_type: int,
+    season_type_name: str,
+    failed: List[Dict[str, Any]],
+) -> int:
+    """Execute a single call group and return rows written."""
+    endpoint = group['endpoint']
+    params = group['params']
+    tier = group['tier']
+    columns = group['columns']
+
+    simple = get_simple_columns(columns)
+    multi_call = get_multi_call_columns(columns)
+    pipelines = get_pipeline_columns(columns)
+
+    param_label = ' '.join(f'{k}={v}' for k, v in sorted(params.items()))
+    logger.info(
+        'Processing %s %s %s %s [%s]',
+        season, season_type_name, endpoint, entity, param_label,
+    )
+
+    written = 0
+
+    if tier == 'team_call':
+        written += _execute_team_call(
+            endpoint, columns, entity, season,
+            season_type, season_type_name, failed,
+        )
+    elif tier in ('team', 'player'):
+        # Per-entity endpoints are handled via pipeline engine
+        for col_name, source in pipelines.items():
+            written += _execute_pipeline_column(
+                col_name, source, entity, season,
+                season_type, season_type_name, failed,
+            )
+        for col_name, source in multi_call.items():
+            written += _execute_multi_call_column(
+                col_name, source, entity, season,
+                season_type, season_type_name, failed,
+            )
+    else:
+        # League-wide: one API call covers all simple + derived columns
+        if simple:
+            written += _execute_league_wide(
+                endpoint, params, simple, entity, season,
+                season_type, season_type_name, failed,
+            )
+        for col_name, source in multi_call.items():
+            written += _execute_multi_call_column(
+                col_name, source, entity, season,
+                season_type, season_type_name, failed,
+            )
+        for col_name, source in pipelines.items():
+            written += _execute_pipeline_column(
+                col_name, source, entity, season,
+                season_type, season_type_name, failed,
+            )
+
+    return written
+
+
+# ============================================================================
+# LEAGUE-WIDE  (single API call -> all entities)
 # ============================================================================
 
 def _execute_league_wide(
-    ctx: ETLContext,
-    endpoint_name: str,
-    endpoint_params: Dict[str, Any],
-    season: str,
+    endpoint: str,
+    params: Dict[str, Any],
+    columns: Dict[str, Dict[str, Any]],
     entity: str,
-    table: str,
+    season: str,
     season_type: int,
     season_type_name: str,
-    simple_cols: Dict[str, Dict[str, Any]],
-    pipeline_cols: Dict[str, Dict[str, Any]],
+    failed: List[Dict[str, Any]],
 ) -> int:
-    """One API call returns all entities — extract, transform, write."""
-    EndpointClass = load_endpoint_class(endpoint_name)
+    """One API call returns all entities -- extract, transform, write."""
+    EndpointClass = load_endpoint_class(endpoint)
     if EndpointClass is None:
         return 0
 
-    params = build_endpoint_params(endpoint_name, season, season_type_name, entity, endpoint_params)
-    api_call = create_api_call(EndpointClass, params, endpoint_name=endpoint_name)
+    full_params = build_endpoint_params(
+        endpoint, season, season_type_name, entity, params,
+    )
+    api_call = create_api_call(EndpointClass, full_params, endpoint_name=endpoint)
 
     try:
         result = with_retry(api_call)
     except Exception as exc:
-        logger.error('League-wide %s failed: %s', endpoint_name, exc)
-        ctx.add_failed_endpoint({'endpoint': endpoint_name, 'params': endpoint_params, 'error': str(exc)})
+        logger.error('League-wide %s failed: %s', endpoint, exc)
+        failed.append({'endpoint': endpoint, 'params': params, 'error': str(exc)})
         return 0
 
-    entity_id_field = get_entity_id_field(entity)
+    id_field = get_entity_id_field(entity)
+    rows = extract_columns_from_result(result, columns, entity, id_field)
 
-    # Extract simple (direct-field) columns
-    rows = extract_columns_from_result(
-        result, simple_cols, entity, entity_id_field,
-    )
-
-    # Write to DB
-    return _write_rows(table, rows, entity, season, season_type)
+    return _write_rows(entity, 'stats', rows, season, season_type)
 
 
 # ============================================================================
-# PER-TEAM (30 API calls per endpoint, aggregate across teams)
+# MULTI-CALL  (N API calls with different params, sum per entity)
 # ============================================================================
 
-def _execute_per_team(
-    ctx: ETLContext,
-    endpoint_name: str,
-    endpoint_params: Dict[str, Any],
-    season: str,
+def _execute_multi_call_column(
+    col_name: str,
+    source: Dict[str, Any],
     entity: str,
-    table: str,
+    season: str,
     season_type: int,
     season_type_name: str,
-    simple_cols: Dict[str, Dict[str, Any]],
-    pipeline_cols: Dict[str, Dict[str, Any]],
+    failed: List[Dict[str, Any]],
 ) -> int:
-    """30 per-team API calls, aggregate results across teams."""
-    EndpointClass = load_endpoint_class(endpoint_name)
+    """Make multiple API calls and sum the field per entity."""
+    endpoint = source['endpoint']
+    field = source['field']
+    multi_call_params = source['multi_call']
+    result_set = source.get('result_set')
+    id_field = get_entity_id_field(entity)
+
+    EndpointClass = load_endpoint_class(endpoint)
     if EndpointClass is None:
         return 0
 
-    base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity, endpoint_params)
-    entity_id_field = get_entity_id_field(entity)
-    delay = API_CONFIG.get('rate_limit_delay', 0.6)
-    consecutive_failures = 0
-    threshold = API_CONFIG.get('max_consecutive_failures', 5)
+    totals: Dict[int, int] = {}
 
-    aggregated: Dict[int, Dict[str, int]] = {}  # {entity_id: {col: sum_value}}
-
-    team_ids = list(TEAM_IDS.values())
-    for idx, team_id in enumerate(team_ids):
-        params = {**base_params, 'team_id': team_id}
-        api_call = create_api_call(EndpointClass, params, endpoint_name=endpoint_name)
+    for extra_params in multi_call_params:
+        full_params = build_endpoint_params(
+            endpoint, season, season_type_name, entity, extra_params,
+        )
+        api_call = create_api_call(EndpointClass, full_params, endpoint_name=endpoint)
 
         try:
             result = with_retry(api_call)
-            consecutive_failures = 0
         except Exception as exc:
-            consecutive_failures += 1
-            logger.warning('Team %d failed for %s: %s', team_id, endpoint_name, exc)
-            if consecutive_failures >= threshold:
-                logger.error('Aborting %s after %d consecutive failures', endpoint_name, consecutive_failures)
-                break
+            logger.warning(
+                'Multi-call %s %s failed for params %s: %s',
+                endpoint, col_name, extra_params, exc,
+            )
             continue
 
-        # Extract and sum across teams
-        team_rows = extract_columns_from_result(result, simple_cols, entity, entity_id_field)
-        for eid, vals in team_rows.items():
-            if eid not in aggregated:
-                aggregated[eid] = {col: 0 for col in simple_cols}
-            for col, val in vals.items():
-                if val is not None and isinstance(val, (int, float)):
-                    aggregated[eid][col] += val
+        for rs in result.get('resultSets', []):
+            if result_set and rs['name'] != result_set:
+                continue
+            headers = rs['headers']
+            if id_field not in headers or field not in headers:
+                continue
+            id_idx = headers.index(id_field)
+            field_idx = headers.index(field)
+            for row in rs['rowSet']:
+                eid = row[id_idx]
+                val = safe_int(row[field_idx])
+                if val is not None:
+                    totals[eid] = totals.get(eid, 0) + val
+            break
 
-        if delay > 0 and idx < len(team_ids) - 1:
-            time.sleep(delay)
-
-    return _write_rows(table, aggregated, entity, season, season_type)
+    if not totals:
+        return 0
+    rows = {eid: {col_name: val} for eid, val in totals.items()}
+    return _write_rows(entity, 'stats', rows, season, season_type)
 
 
 # ============================================================================
-# TEAM-CALL (30 per-team calls returning player-level data keyed by VS_PLAYER_ID)
+# PIPELINE  (multi-step transformation via core/transform engine)
+# ============================================================================
+
+def _execute_pipeline_column(
+    col_name: str,
+    source: Dict[str, Any],
+    entity: str,
+    season: str,
+    season_type: int,
+    season_type_name: str,
+    failed: List[Dict[str, Any]],
+) -> int:
+    """Execute a transformation pipeline for a single column."""
+    pipeline_config = source['pipeline']
+
+    def api_fetcher(ep, extra_params, tier):
+        EndpointClass = load_endpoint_class(ep)
+        if EndpointClass is None:
+            return {'resultSets': []}
+        full_params = build_endpoint_params(
+            ep, season, season_type_name, entity, extra_params,
+        )
+        api_call = create_api_call(EndpointClass, full_params, endpoint_name=ep)
+        return with_retry(api_call)
+
+    try:
+        result = execute_pipeline(
+            pipeline_config, api_fetcher, entity, season, season_type_name,
+        )
+    except Exception as exc:
+        logger.error('Pipeline %s failed: %s', col_name, exc)
+        failed.append({'column': col_name, 'error': str(exc)})
+        return 0
+
+    if not result:
+        return 0
+    rows = {eid: {col_name: val} for eid, val in result.items()}
+    return _write_rows(entity, 'stats', rows, season, season_type)
+
+
+# ============================================================================
+# TEAM-CALL  (30 per-team calls -> aggregate per player)
 # ============================================================================
 
 def _execute_team_call(
-    ctx: ETLContext,
-    endpoint_name: str,
-    endpoint_params: Dict[str, Any],
-    season: str,
+    endpoint: str,
+    columns: Dict[str, Dict[str, Any]],
     entity: str,
-    table: str,
+    season: str,
     season_type: int,
     season_type_name: str,
-    cols: Dict[str, Dict[str, Any]],
+    failed: List[Dict[str, Any]],
 ) -> int:
-    """Per-team calls that return player rows (e.g. teamplayeronoffsummary).
+    """Per-team calls returning player-level data (e.g. on/off court).
 
-    Aggregates across teams for traded players using source-level
-    ``aggregation`` setting (``sum`` or ``minute_weighted``).
+    Aggregates across teams for traded players using per-column
+    aggregation setting (sum or minute_weighted).
     """
-    # Discover result_set and player_id_field from first column's source config
-    first_source = next(iter(cols.values()))
+    first_source = next(iter(columns.values()))
     result_set_name = first_source.get('result_set', 'PlayersOffCourtTeamPlayerOnOffSummary')
     player_id_field = first_source.get('player_id_field', 'VS_PLAYER_ID')
     minutes_field = 'MIN'
 
-    EndpointClass = load_endpoint_class(endpoint_name)
+    EndpointClass = load_endpoint_class(endpoint)
     if EndpointClass is None:
         return 0
 
-    base_params = build_endpoint_params(endpoint_name, season, season_type_name, entity, endpoint_params)
+    base_params = build_endpoint_params(
+        endpoint, season, season_type_name, entity,
+    )
     delay = API_CONFIG.get('rate_limit_delay', 0.6)
     consecutive_failures = 0
     threshold = API_CONFIG.get('max_consecutive_failures', 5)
 
-    # Phase 1: Collect raw row dicts per player across all 30 teams
     player_team_rows: Dict[int, List[Dict[str, Any]]] = {}
+    team_ids = list(get_team_ids().values())
 
-    team_ids = list(TEAM_IDS.values())
     for idx, team_id in enumerate(team_ids):
         params = {**base_params, 'team_id': team_id}
-        api_call = create_api_call(EndpointClass, params, endpoint_name=endpoint_name)
+        api_call = create_api_call(EndpointClass, params, endpoint_name=endpoint)
 
         try:
             result = with_retry(api_call)
             consecutive_failures = 0
         except Exception as exc:
             consecutive_failures += 1
-            logger.warning('Team %d failed for %s: %s', team_id, endpoint_name, exc)
+            logger.warning('Team %d failed for %s: %s', team_id, endpoint, exc)
             if consecutive_failures >= threshold:
-                logger.error('Aborting %s after %d failures', endpoint_name, consecutive_failures)
+                logger.error(
+                    'Aborting %s after %d consecutive failures',
+                    endpoint, consecutive_failures,
+                )
                 break
             continue
 
-        # Find the target result set
         for rs in result.get('resultSets', []):
             if rs['name'] != result_set_name:
                 continue
@@ -368,7 +447,9 @@ def _execute_team_call(
             for row in rs['rowSet']:
                 pid = row[pid_idx]
                 if pid is not None:
-                    player_team_rows.setdefault(pid, []).append(dict(zip(headers, row)))
+                    player_team_rows.setdefault(pid, []).append(
+                        dict(zip(headers, row))
+                    )
 
         if delay > 0 and idx < len(team_ids) - 1:
             time.sleep(delay)
@@ -376,14 +457,13 @@ def _execute_team_call(
     if not player_team_rows:
         return 0
 
-    # Phase 2: Aggregate across teams per player
     rows: Dict[int, Dict[str, Any]] = {}
 
     for player_id, team_rows in player_team_rows.items():
         total_minutes = sum(float(r.get(minutes_field) or 0) for r in team_rows)
         values: Dict[str, Any] = {}
 
-        for col_name, source in cols.items():
+        for col_name, source in columns.items():
             nba_field = source.get('field')
             scale = source.get('scale', 1)
             transform_name = source.get('transform', 'safe_int')
@@ -404,147 +484,120 @@ def _execute_team_call(
 
         rows[player_id] = values
 
-    return _write_rows(table, rows, entity, season, season_type)
+    return _write_rows(entity, 'stats', rows, season, season_type)
 
 
 # ============================================================================
-# DATABASE WRITE HELPER
+# DATABASE WRITE
 # ============================================================================
 
 def _write_rows(
-    table: str,
-    rows: Dict[int, Dict[str, Any]],
     entity: str,
+    scope: str,
+    rows: Dict[int, Dict[str, Any]],
     season: str,
     season_type: int,
 ) -> int:
-    """Write extracted rows to the database via UPDATE.
+    """Write extracted rows to the database via upsert.
 
-    Each row updates the matching (entity_id, season, season_type) composite key.
+    Adds nba_api_id, season, and season_type to each row for the
+    conflict key, then delegates to bulk_upsert.
     """
     if not rows:
         return 0
 
-    entity_id_col = 'player_id' if entity == 'player' else 'team_id'
+    table = get_table_name(entity, scope, DB_SCHEMA)
+
+    # Determine conflict columns from TABLES config
+    from src.etl.config import TABLES
+    table_name = table.split('.', 1)[1]
+    table_meta = TABLES[table_name]
+    conflict_columns = table_meta['unique_key']
+
+    # Build tuples: add identity columns to each row
+    all_cols: set = set()
+    for vals in rows.values():
+        all_cols.update(vals.keys())
+
+    # Ensure identity columns are present
+    identity_cols = set(conflict_columns) - all_cols
+    data_cols = sorted(all_cols)
+    columns = list(conflict_columns) + data_cols
+
+    data = []
+    for entity_id, vals in rows.items():
+        identity_values = []
+        for ck in conflict_columns:
+            if ck == 'nba_api_id':
+                identity_values.append(str(entity_id))
+            elif ck == 'season':
+                identity_values.append(season)
+            elif ck == 'season_type':
+                identity_values.append(str(season_type))
+            else:
+                identity_values.append(None)
+
+        row_values = [vals.get(c) for c in data_cols]
+        data.append(tuple(identity_values + row_values))
 
     with db_connection() as conn:
-        cursor = conn.cursor()
-        updated = 0
-
-        for entity_id, vals in rows.items():
-            if not vals:
-                continue
-            set_clause = ', '.join(f'{quote_col(c)} = %s' for c in vals)
-            set_clause += ', updated_at = NOW()'
-            values = list(vals.values()) + [entity_id, season, season_type]
-
-            cursor.execute(
-                f'UPDATE {table} SET {set_clause} '
-                f'WHERE {entity_id_col} = %s AND year = %s AND season_type = %s',
-                values,
-            )
-            if cursor.rowcount > 0:
-                updated += 1
-
-        conn.commit()
-        return updated
+        return bulk_upsert(conn, table, columns, data, conflict_columns)
 
 
 # ============================================================================
-# MAIN ORCHESTRATOR
+# ORCHESTRATOR
 # ============================================================================
 
 def run_etl(
+    entity: str = 'all',
+    endpoint_filter: Optional[str] = None,
     season: Optional[str] = None,
     season_type: int = 1,
-    entity: Optional[str] = None,
-    endpoint_filter: Optional[str] = None,
 ) -> None:
-    """Top-level ETL entry point.
+    """Main ETL entry point.
 
-    Iterates over all endpoints (or one if *endpoint_filter* is given),
-    executing each for the specified season + season_type.
+    Args:
+        entity:          'player', 'team', or 'all'.
+        endpoint_filter: If set, only process this one endpoint.
+        season:          e.g. '2024-25'.  Defaults to current season.
+        season_type:     1=Regular, 2=Playoffs, 3=PlayIn.
     """
     season = season or SEASON_CONFIG['current_season']
-    season_type_meta = SEASON_TYPES.get(season_type)
-    if not season_type_meta:
-        logger.error('Unknown season_type: %d', season_type)
-        return
-    season_type_name = season_type_meta['name']
+    st_info = SEASON_TYPES.get(season_type, SEASON_TYPES[1])
+    season_type_name = st_info['name']
 
-    # Ensure schema columns are up to date before any writes
-    ensure_schema(DB_SCHEMA, TABLES_CONFIG, DB_COLUMNS)
+    logger.info('ETL starting: season=%s type=%s entity=%s', season, season_type_name, entity)
 
-    ctx = ETLContext()
-    entities = [entity] if entity else ['player', 'team']
+    # Ensure schema + tables exist
+    ensure_tables(DB_SCHEMA)
 
-    # Build endpoint → param-combos list from SOURCES
-    endpoint_combos = _collect_endpoint_param_combos(entities)
+    entities = ['player', 'team'] if entity == 'all' else [entity]
+    failed: List[Dict[str, Any]] = []
+    total_rows = 0
 
-    if endpoint_filter:
-        endpoint_combos = {
-            k: v for k, v in endpoint_combos.items() if k == endpoint_filter
-        }
+    for ent in entities:
+        groups = _build_call_groups(ent, season)
 
-    total_written = 0
-    for ep_name, combo_list in endpoint_combos.items():
-        if not is_endpoint_available(ep_name, season):
-            continue
-        ep_meta = ENDPOINTS.get(ep_name, {})
-        ep_entities = ep_meta.get('entity_types', ['player', 'team'])
+        # Optionally filter to a single endpoint
+        if endpoint_filter:
+            groups = [g for g in groups if g['endpoint'] == endpoint_filter]
 
-        for ent in entities:
-            if ent not in ep_entities:
-                continue
-            for params in combo_list:
-                written = execute_endpoint(
-                    ctx, ep_name, params, season,
-                    entity=ent, season_type=season_type,
-                    season_type_name=season_type_name,
-                )
-                total_written += written
+        logger.info(
+            'Entity %s: %d call groups to process', ent, len(groups),
+        )
 
-    # Retry failed endpoints once
-    if ctx.failed_endpoints:
-        logger.info('Retrying %d failed endpoint(s)...', len(ctx.failed_endpoints))
-        for info in list(ctx.failed_endpoints):
-            execute_endpoint(
-                ctx, info['endpoint'], info.get('params', {}), season,
-                season_type=season_type, season_type_name=season_type_name,
+        for group in groups:
+            rows = _execute_group(
+                group, ent, season, season_type, season_type_name, failed,
             )
+            total_rows += rows
 
-    logger.info('ETL complete — %d total rows written for %s %s', total_written, season, season_type_name)
+    logger.info('ETL complete: %d total rows written', total_rows)
 
-
-def _collect_endpoint_param_combos(
-    entities: List[str],
-) -> Dict[str, List[Dict[str, Any]]]:
-    """Scan SOURCES to find every unique (endpoint, params) combination needed.
-
-    Returns ``{endpoint_name: [params_dict, ...]}``.
-    """
-    seen: Dict[str, set] = {}
-    result: Dict[str, List[Dict[str, Any]]] = {}
-
-    for _col, entity_map in SOURCES.items():
-        for ent in entities:
-            source = entity_map.get(ent)
-            if not source:
-                continue
-            # Skip pipeline-only columns (their own endpoint is internal)
-            if 'transformation' in source and 'field' not in source:
-                continue
-            ep = source.get('endpoint')
-            if not ep:
-                continue
-            params = source.get('params', {})
-            frozen = tuple(sorted(params.items()))
-            seen.setdefault(ep, set())
-            if frozen not in seen[ep]:
-                seen[ep].add(frozen)
-                result.setdefault(ep, []).append(params)
-
-    return result
+    if failed:
+        logger.warning('%d failures:', len(failed))
+        for f in failed:
+            logger.warning('  %s', f)
 
 
 # ============================================================================
@@ -553,17 +606,17 @@ def _collect_endpoint_param_combos(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='The Glass - NBA ETL Pipeline')
-    parser.add_argument('--season', type=str, default=None, help='Season string, e.g. 2024-25')
-    parser.add_argument('--season-type', type=int, default=1, help='1=Regular, 2=Playoffs, 3=PlayIn')
-    parser.add_argument('--entity', type=str, default=None, choices=['player', 'team'])
-    parser.add_argument('--endpoint', type=str, default=None, help='Run a single endpoint')
+    parser.add_argument('--season', type=str, default=None)
+    parser.add_argument('--season-type', type=int, default=1, choices=[1, 2, 3])
+    parser.add_argument('--entity', type=str, default='all', choices=['player', 'team', 'all'])
+    parser.add_argument('--endpoint', type=str, default=None)
     args = parser.parse_args()
 
     run_etl(
-        season=args.season,
-        season_type=args.season_type,
         entity=args.entity,
         endpoint_filter=args.endpoint,
+        season=args.season,
+        season_type=args.season_type,
     )
 
 

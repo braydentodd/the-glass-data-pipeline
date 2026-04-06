@@ -1,25 +1,112 @@
 """
-The Glass - Unified Column Registry
+The Glass - Column Registry & Source Mappings
 
-Single source of truth for all database column definitions across leagues.
-Column names match the actual PostgreSQL schema exactly.
+Single source of truth for database schema, column definitions, and
+provider-specific API source mappings across all leagues.
 
-Sources (API field mappings) are defined in league-specific configs:
-  - src/etl/nba/sources.py  -> NBA_SOURCE_MAP
-  - src/etl/ncaa/sources.py -> NCAA_SOURCE_MAP
+Column names match the actual PostgreSQL schema exactly. Each column
+includes schema metadata and provider source mappings (under 'nba' key).
 
-Attributes per column:
-  tables           - Which table types contain this column: 'entity', 'stats'
-  type             - PostgreSQL data type
-  nullable         - Whether NULL is allowed
-  update_frequency - How often data changes: 'daily', 'annual', or None (manual/computed)
-  default          - SQL DEFAULT value (omitted when none)
-  entity_types     - (entity only) Which entity tables have this column: 'player', 'team'
-  has_opponent     - (stats only) Whether opp_<col> exists in team_season_stats
-  rate_group       - (stats only) Games/minutes baseline: 'basic', 'tracking', 'hustle', 'onoff'
+Source mapping patterns:
+  Simple:      {'endpoint': '...', 'field': '...'}
+  With params: {'endpoint': '...', 'field': '...', 'params': {...}}
+  With scale:  {'endpoint': '...', 'field': '...', 'scale': N}
+  Derived:     {'endpoint': '...', 'field': '...', 'derived': {'subtract': '...'}}
+  Pipeline:    {'pipeline': {'endpoint': '...', 'tier': '...', 'operations': [...]}}
+  Multi-call:  {'endpoint': '...', 'field': '...', 'multi_call': [...param_sets...]}
+  Team-call:   {'endpoint': '...', 'tier': 'team_call', 'result_set': '...', ...}
+
+Transforms are inferred from column type unless overridden:
+  SMALLINT / INTEGER -> safe_int
+  VARCHAR / TEXT / CHAR -> safe_str
+  Override with 'transform' key (e.g., parse_height, parse_birthdate, format_season)
 """
 
 from typing import Any, Dict
+
+
+# ============================================================================
+# DEFAULT TRANSFORMS BY COLUMN TYPE
+# ============================================================================
+
+TYPE_TRANSFORMS = {
+    'SMALLINT': 'safe_int',
+    'INTEGER': 'safe_int',
+    'VARCHAR': 'safe_str',
+    'TEXT': 'safe_str',
+    'CHAR': 'safe_str',
+}
+
+
+# ============================================================================
+# TABLE DEFINITIONS
+# ============================================================================
+
+TABLES = {
+    'players': {
+        'entity': 'player',
+        'scope': 'entity',
+        'unique_key': ['nba_api_id'],
+    },
+    'teams': {
+        'entity': 'team',
+        'scope': 'entity',
+        'unique_key': ['nba_api_id'],
+    },
+    'player_season_stats': {
+        'entity': 'player',
+        'scope': 'stats',
+        'unique_key': ['nba_api_id', 'season', 'season_type'],
+    },
+    'team_season_stats': {
+        'entity': 'team',
+        'scope': 'stats',
+        'unique_key': ['nba_api_id', 'season', 'season_type'],
+        'has_opponent_columns': True,
+    },
+}
+
+
+# ============================================================================
+# SHOT TYPE CONSTANTS  (referenced by pipeline source mappings)
+# ============================================================================
+
+PUTBACK_SHOT_TYPES = [
+    'Putback Dunk Shot', 'Putback Layup Shot',
+    'Tip Dunk Shot', 'Tip Layup Shot',
+]
+
+DUNK_SHOT_TYPES = [
+    'Alley Oop Dunk Shot', 'Cutting Dunk Shot', 'Driving Dunk Shot',
+    'Driving Reverse Dunk Shot', 'Dunk Shot', 'Putback Dunk Shot',
+    'Reverse Dunk Shot', 'Running Alley Oop Dunk Shot',
+    'Running Dunk Shot', 'Tip Dunk Shot',
+]
+
+
+# ============================================================================
+# SHOT TRACKING PARAMETER SETS  (multi-call sources aggregate across these)
+# ============================================================================
+
+CONTESTED_RIM_PARAMS = [
+    {'close_def_dist_range_nullable': '0-2 Feet - Very Tight', 'general_range_nullable': 'Less Than 10 ft'},
+    {'close_def_dist_range_nullable': '2-4 Feet - Tight',      'general_range_nullable': 'Less Than 10 ft'},
+]
+
+OPEN_RIM_PARAMS = [
+    {'close_def_dist_range_nullable': '4-6 Feet - Open',       'general_range_nullable': 'Less Than 10 ft'},
+    {'close_def_dist_range_nullable': '6+ Feet - Wide Open',   'general_range_nullable': 'Less Than 10 ft'},
+]
+
+CONTESTED_ALL_PARAMS = [
+    {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
+    {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
+]
+
+OPEN_ALL_PARAMS = [
+    {'close_def_dist_range_nullable': '4-6 Feet - Open'},
+    {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
+]
 
 
 # ============================================================================
@@ -28,799 +115,1301 @@ from typing import Any, Dict
 
 DB_COLUMNS: Dict[str, Dict[str, Any]] = {
 
+    # ------------------------------------------------------------------
+    # SYSTEM COLUMNS  (managed by DB / ETL engine, no provider sources)
+    # ------------------------------------------------------------------
+
     'id': {
-        'scope': ['entity', 'stats'],
         'type': 'SERIAL',
-        'primary_key': True,
+        'scope': ['entity', 'stats'],
         'nullable': False,
-        'default': None,
-        'update_frequency': 'initial_only',
-        'entity_types': ['player', 'team']
+        'primary_key': True,
+        'entity_types': ['player', 'team'],
     },
     'nba_api_id': {
+        'type': 'VARCHAR(10)',
         'scope': ['entity', 'stats'],
-        'type': 'VARCHAR(10)',
-        'primary_key': False,
         'nullable': False,
-        'default': None,
-        'update_frequency': 'initial_only',
-        'entity_types': ['player', 'team']
-    },
-    'team_id': {
-        'scope': ['entity'],
-        'type': 'INTEGER',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player']
-    },
-    'name': {
-        'scope': ['entity'],
-        'type': 'VARCHAR(100)',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'annual',
-        'entity_types': ['player', 'team']
-    },
-    'height_ins': {
-        'scope': ['entity'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'annual',
-        'entity_types': ['player']
-    },
-    'weight_lbs': {
-        'scope': ['entity'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'annual',
-        'entity_types': ['player']
-    },
-    'wingspan_ins': {
-        'scope': ['entity'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'annual',
-        'entity_types': ['player']
-    },
-    'jersey_num': {
-        'scope': ['entity'],
-        'type': 'VARCHAR(3)',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player']
-    },
-    'birthdate': {
-        'scope': ['entity'],
-        'type': 'DATE',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'annual',
-        'entity_types': ['player']
-    },
-    'hand': {
-        'scope': ['entity'],
-        'type': 'CHAR',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': None,
-        'entity_types': ['player']
-    },
-    'seasons_exp': {
-        'scope': ['entity'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player']
-    },
-    'rookie_season': {
-        'scope': ['entity'],
-        'type': 'VARCHAR(10)',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'annual',
-        'entity_types': ['player']
-    },
-    'abbr': {
-        'scope': ['entity'],
-        'type': 'VARCHAR(5)',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'annual',
-        'entity_types': ['team']
-    },
-    'conf': {
-        'scope': ['entity'],
-        'type': 'VARCHAR(50)',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'annual',
-        'entity_types': ['team']
-    },
-    'backfilled': {
-        'scope': ['entity'],
-        'type': 'BOOLEAN',
-        'primary_key': False,
-        'nullable': False,
-        'default': 'FALSE',
-        'update_frequency': 'initial_only',
-        'entity_types': ['player', 'team']
-    },
-    'notes': {
-        'scope': ['entity'],
-        'type': 'TEXT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': None,
-        'entity_types': ['player', 'team']
-    },
-    'created_at': {
-        'scope': ['entity'],
-        'type': 'TIMESTAMP',
-        'primary_key': False,
-        'nullable': True,
-        'default': 'CURRENT_TIMESTAMP',
-        'update_frequency': 'initial_only',
-        'entity_types': ['player', 'team']
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'PLAYER_ID', 'transform': 'safe_str'},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'TEAM_ID',   'transform': 'safe_str'},
+        },
     },
     'updated_at': {
-        'scope': ['entity', 'stats'],
         'type': 'TIMESTAMP',
-        'primary_key': False,
+        'scope': ['entity', 'stats'],
         'nullable': True,
         'default': 'CURRENT_TIMESTAMP',
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
+        'entity_types': ['player', 'team'],
+    },
+    'created_at': {
+        'type': 'TIMESTAMP',
+        'scope': ['entity'],
+        'nullable': True,
+        'default': 'CURRENT_TIMESTAMP',
+        'entity_types': ['player', 'team'],
     },
     'season': {
-        'scope': ['stats'],
         'type': 'VARCHAR(7)',
-        'primary_key': True,
+        'scope': ['stats'],
         'nullable': False,
-        'default': None,
-        'update_frequency': 'annual_initial_only',
         'entity_types': ['player', 'team'],
     },
     'season_type': {
-        'scope': ['stats'],
         'type': 'VARCHAR(3)',
-        'primary_key': True,
-        'nullable': False,
-        'default': None,
-        'update_frequency': 'annual_initial_only',
-        'entity_types': ['player', 'team']
-    },
-    'games': {
         'scope': ['stats'],
+        'nullable': False,
+        'entity_types': ['player', 'team'],
+    },
+    'backfilled': {
+        'type': 'BOOLEAN',
+        'scope': ['entity'],
+        'nullable': False,
+        'default': 'FALSE',
+        'entity_types': ['player', 'team'],
+    },
+    'notes': {
+        'type': 'TEXT',
+        'scope': ['entity'],
+        'nullable': True,
+        'entity_types': ['player', 'team'],
+    },
+
+    # ------------------------------------------------------------------
+    # ENTITY INFORMATION  (player / team profile data)
+    # ------------------------------------------------------------------
+
+    'team_id': {
+        'type': 'INTEGER',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {'endpoint': 'commonplayerinfo', 'field': 'TEAM_ID'},
+        },
+    },
+    'name': {
+        'type': 'VARCHAR(100)',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'annual',
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'PLAYER_NAME', 'transform': 'safe_str'},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'TEAM_NAME',   'transform': 'safe_str'},
+        },
+    },
+    'height_ins': {
         'type': 'SMALLINT',
-        'primary_key': False,
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'annual',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {'endpoint': 'commonplayerinfo', 'field': 'HEIGHT', 'transform': 'parse_height'},
+        },
+    },
+    'weight_lbs': {
+        'type': 'SMALLINT',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'annual',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {'endpoint': 'commonplayerinfo', 'field': 'WEIGHT'},
+        },
+    },
+    'wingspan_ins': {
+        'type': 'SMALLINT',
+        'scope': ['entity'],
+        'nullable': True,
+        'entity_types': ['player'],
+        'nba': {
+            'player': {'endpoint': 'draftcombineplayeranthro', 'field': 'WINGSPAN', 'transform': 'parse_height'},
+        },
+    },
+    'jersey_num': {
+        'type': 'VARCHAR(3)',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {'endpoint': 'commonplayerinfo', 'field': 'JERSEY'},
+        },
+    },
+    'birthdate': {
+        'type': 'DATE',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'annual',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {'endpoint': 'commonplayerinfo', 'field': 'BIRTHDATE', 'transform': 'parse_birthdate'},
+        },
+    },
+    'hand': {
+        'type': 'CHAR',
+        'scope': ['entity'],
+        'nullable': True,
+        'entity_types': ['player'],
+    },
+    'seasons_exp': {
+        'type': 'SMALLINT',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {'endpoint': 'commonplayerinfo', 'field': 'SEASON_EXP'},
+        },
+    },
+    'rookie_season': {
+        'type': 'VARCHAR(10)',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'annual',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {'endpoint': 'commonplayerinfo', 'field': 'FROM_YEAR', 'transform': 'format_season'},
+        },
+    },
+    'abbr': {
+        'type': 'VARCHAR(5)',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'annual',
+        'entity_types': ['team'],
+        'nba': {
+            'team': {'endpoint': 'leaguedashteamstats', 'field': 'TEAM_ABBREVIATION'},
+        },
+    },
+    'conf': {
+        'type': 'VARCHAR(50)',
+        'scope': ['entity'],
+        'nullable': True,
+        'update_frequency': 'annual',
+        'entity_types': ['team'],
+        'nba': {
+            'team': {'endpoint': 'leaguedashteamstats', 'field': 'CONFERENCE'},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # GAMES & MINUTES
+    # ------------------------------------------------------------------
+
+    'games': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
         'nullable': False,
         'default': '0',
         'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'GP'},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'GP'},
+        },
     },
     'minutes_x10': {
-        'scope': ['stats'],
         'type': 'INTEGER',
-        'primary_key': False,
+        'scope': ['stats'],
         'nullable': False,
         'default': '0',
         'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'tr_games': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': False,
-        'default': '0',
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'tr_minutes_x10': {
-        'scope': ['stats'],
-        'type': 'INTEGER',
-        'primary_key': False,
-        'nullable': False,
-        'default': '0',
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'h_games': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': False,
-        'default': '0',
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'h_minutes_x10': {
-        'scope': ['stats'],
-        'type': 'INTEGER',
-        'primary_key': False,
-        'nullable': False,
-        'default': '0',
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'off_games': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': False,
-        'default': '0',
-        'update_frequency': 'daily',
-        'entity_types': ['player']
-    },
-    'off_minutes_x10': {
-        'scope': ['stats'],
-        'type': 'INTEGER',
-        'primary_key': False,
-        'nullable': False,
-        'default': '0',
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'possessions': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'fg2m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'fg2a': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'fg3m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'fg3a': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'ftm': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'fta': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'cont_fg2m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'cont_fg2a': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'open_fg2m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'open_fg2a': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'cont_fg3m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'cont_fg3a': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'open_fg3m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,    
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'open_fg3a': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'cont_rim_fgm': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'cont_rim_fga': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'open_rim_fgm': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'open_rim_fga': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'dunks': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'putbacks': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'unassisted_rim_fgm': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'unassisted_fg2m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'unassisted_fg3m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'o_rebs': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'd_rebs': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'o_reb_pct_x1000': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_reb_pct_x1000': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'cont_o_rebs': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'cont_d_rebs': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'assists': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'pot_assists': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'turnovers': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'touches': {
-        'scope': ['stats'],
-        'type': 'INTEGER',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'time_on_ball': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'passes': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'sec_assists': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'o_dist_x10': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_dist_x10': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'steals': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'blocks': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'fouls': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team', 'opponent']
-    },
-    'deflections': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'charges_drawn': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'contests': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_rim_fgm': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_rim_fga': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_fg2m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_fg2a': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_fg3m': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_fg3a': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'o_rtg_x10': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'd_rtg_x10': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    },
-    'off_o_rtg_x10': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player']
-    },
-    'off_d_rtg_x10': {
-        'scope': ['stats'],
-        'type': 'SMALLINT',
-        'primary_key': False,
-        'nullable': True,
-        'default': None,
-        'update_frequency': 'daily',
-        'entity_types': ['player']
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'MIN', 'scale': 10},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'MIN', 'scale': 10},
+        },
     },
     'wins': {
-        'scope': ['stats'],
         'type': 'SMALLINT',
-        'primary_key': False,
+        'scope': ['stats'],
         'nullable': True,
-        'default': None,
         'update_frequency': 'daily',
-        'entity_types': ['player', 'team']
-    }
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'W'},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'W'},
+        },
+    },
+    'tr_games': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': False,
+        'default': '0',
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'GP',
+                       'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'GP',
+                       'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Team'}},
+        },
+    },
+    'tr_minutes_x10': {
+        'type': 'INTEGER',
+        'scope': ['stats'],
+        'nullable': False,
+        'default': '0',
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'MIN', 'scale': 10,
+                       'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'MIN', 'scale': 10,
+                       'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Team'}},
+        },
+    },
+    'h_games': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': False,
+        'default': '0',
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'hustle',
+        'nba': {
+            'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'GP'},
+            'team':   {'endpoint': 'leaguehustlestatsteam',   'field': 'GP'},
+        },
+    },
+    'h_minutes_x10': {
+        'type': 'INTEGER',
+        'scope': ['stats'],
+        'nullable': False,
+        'default': '0',
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'hustle',
+        'nba': {
+            'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'MIN', 'scale': 10},
+            'team':   {'endpoint': 'leaguehustlestatsteam',   'field': 'MIN', 'scale': 10},
+        },
+    },
+    'off_games': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': False,
+        'default': '0',
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'rate_group': 'onoff',
+        'nba': {
+            'player': {
+                'endpoint': 'teamplayeronoffsummary',
+                'tier': 'team_call',
+                'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+                'player_id_field': 'VS_PLAYER_ID',
+                'field': 'GP',
+                'aggregation': 'sum',
+            },
+        },
+    },
+    'off_minutes_x10': {
+        'type': 'INTEGER',
+        'scope': ['stats'],
+        'nullable': False,
+        'default': '0',
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'onoff',
+        'nba': {
+            'player': {
+                'endpoint': 'teamplayeronoffsummary',
+                'tier': 'team_call',
+                'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+                'player_id_field': 'VS_PLAYER_ID',
+                'field': 'MIN', 'scale': 10,
+                'aggregation': 'sum',
+            },
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # SCORING: 2-POINT
+    # ------------------------------------------------------------------
+
+    'fg2m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'FGM',
+                         'derived': {'subtract': 'FG3M'}},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'FGM',
+                         'derived': {'subtract': 'FG3M'}},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_FGM',
+                         'params': {'measure_type_detailed_defense': 'Opponent'},
+                         'derived': {'subtract': 'OPP_FG3M'}},
+        },
+    },
+    'fg2a': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'FGA',
+                         'derived': {'subtract': 'FG3A'}},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'FGA',
+                         'derived': {'subtract': 'FG3A'}},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_FGA',
+                         'params': {'measure_type_detailed_defense': 'Opponent'},
+                         'derived': {'subtract': 'OPP_FG3A'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # SCORING: 3-POINT
+    # ------------------------------------------------------------------
+
+    'fg3m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'FG3M'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'FG3M'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_FG3M',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+    'fg3a': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'FG3A'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'FG3A'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_FG3A',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # SCORING: FREE THROWS
+    # ------------------------------------------------------------------
+
+    'ftm': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'FTM'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'FTM'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_FTM',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+    'fta': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'FTA'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'FTA'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_FTA',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # SHOT TRACKING: CONTESTED / OPEN  x  RIM / ALL
+    # ------------------------------------------------------------------
+
+    'cont_rim_fgm': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FGM',
+                       'multi_call': CONTESTED_RIM_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FGM',
+                       'multi_call': CONTESTED_RIM_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'cont_rim_fga': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FGA',
+                       'multi_call': CONTESTED_RIM_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FGA',
+                       'multi_call': CONTESTED_RIM_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'open_rim_fgm': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FGM',
+                       'multi_call': OPEN_RIM_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FGM',
+                       'multi_call': OPEN_RIM_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'open_rim_fga': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FGA',
+                       'multi_call': OPEN_RIM_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FGA',
+                       'multi_call': OPEN_RIM_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'cont_fg2m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FG2M',
+                       'multi_call': CONTESTED_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FG2M',
+                       'multi_call': CONTESTED_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'cont_fg2a': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FG2A',
+                       'multi_call': CONTESTED_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FG2A',
+                       'multi_call': CONTESTED_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'open_fg2m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FG2M',
+                       'multi_call': OPEN_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FG2M',
+                       'multi_call': OPEN_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'open_fg2a': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FG2A',
+                       'multi_call': OPEN_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FG2A',
+                       'multi_call': OPEN_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'cont_fg3m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FG3M',
+                       'multi_call': CONTESTED_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FG3M',
+                       'multi_call': CONTESTED_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'cont_fg3a': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FG3A',
+                       'multi_call': CONTESTED_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FG3A',
+                       'multi_call': CONTESTED_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'open_fg3m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FG3M',
+                       'multi_call': OPEN_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FG3M',
+                       'multi_call': OPEN_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+    'open_fg3a': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerptshot', 'field': 'FG3A',
+                       'multi_call': OPEN_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+            'team':   {'endpoint': 'leaguedashteamptshot',   'field': 'FG3A',
+                       'multi_call': OPEN_ALL_PARAMS, 'result_set': 'LeagueDashPTShots'},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # PUTBACKS & DUNKS  (pipeline: filter shooting splits -> aggregate)
+    # ------------------------------------------------------------------
+
+    'putbacks': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {
+                'pipeline': {
+                    'endpoint': 'playerdashboardbyshootingsplits',
+                    'tier': 'player',
+                    'params': {'measure_type_detailed': 'Base', 'per_mode_detailed': 'Totals'},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'ShotTypePlayerDashboard', 'field': 'FGM',
+                         'filter_field': 'GROUP_VALUE', 'filter_values': PUTBACK_SHOT_TYPES},
+                        {'type': 'aggregate', 'method': 'sum'},
+                    ],
+                },
+            },
+            'team': {
+                'pipeline': {
+                    'endpoint': 'teamdashboardbyshootingsplits',
+                    'tier': 'team',
+                    'params': {'measure_type_detailed_defense': 'Base', 'per_mode_detailed': 'Totals'},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'ShotTypeTeamDashboard', 'field': 'FGM',
+                         'filter_field': 'GROUP_VALUE', 'filter_values': PUTBACK_SHOT_TYPES},
+                        {'type': 'aggregate', 'method': 'sum'},
+                    ],
+                },
+            },
+        },
+    },
+    'dunks': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {
+                'pipeline': {
+                    'endpoint': 'playerdashboardbyshootingsplits',
+                    'tier': 'player',
+                    'params': {'measure_type_detailed': 'Base', 'per_mode_detailed': 'Totals'},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'ShotTypePlayerDashboard', 'field': 'FGM',
+                         'filter_field': 'GROUP_VALUE', 'filter_values': DUNK_SHOT_TYPES},
+                        {'type': 'aggregate', 'method': 'sum'},
+                    ],
+                },
+            },
+            'team': {
+                'pipeline': {
+                    'endpoint': 'teamdashboardbyshootingsplits',
+                    'tier': 'team',
+                    'params': {'measure_type_detailed_defense': 'Base', 'per_mode_detailed': 'Totals'},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'ShotTypeTeamDashboard', 'field': 'FGM',
+                         'filter_field': 'GROUP_VALUE', 'filter_values': DUNK_SHOT_TYPES},
+                        {'type': 'aggregate', 'method': 'sum'},
+                    ],
+                },
+            },
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # UNASSISTED FIELD GOALS  (per-player shooting splits)
+    # ------------------------------------------------------------------
+
+    'unassisted_rim_fgm': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {
+                'pipeline': {
+                    'endpoint': 'playerdashboardbyshootingsplits',
+                    'tier': 'player',
+                    'params': {'measure_type_detailed': 'Base', 'per_mode_detailed': 'Totals'},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'AssistTracking', 'field': 'FGM',
+                         'filter_field': 'SHOT_TYPE', 'filter_values': ['AtRim']},
+                    ],
+                },
+            },
+        },
+    },
+    'unassisted_fg2m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {
+                'pipeline': {
+                    'endpoint': 'playerdashboardbyshootingsplits',
+                    'tier': 'player',
+                    'params': {'measure_type_detailed': 'Base', 'per_mode_detailed': 'Totals'},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'AssistTracking', 'field': 'FGM',
+                         'filter_field': 'SHOT_TYPE', 'filter_values': ['2PT']},
+                    ],
+                },
+            },
+        },
+    },
+    'unassisted_fg3m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'nba': {
+            'player': {
+                'pipeline': {
+                    'endpoint': 'playerdashboardbyshootingsplits',
+                    'tier': 'player',
+                    'params': {'measure_type_detailed': 'Base', 'per_mode_detailed': 'Totals'},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'AssistTracking', 'field': 'FGM',
+                         'filter_field': 'SHOT_TYPE', 'filter_values': ['3PT']},
+                    ],
+                },
+            },
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # REBOUNDS
+    # ------------------------------------------------------------------
+
+    'o_rebs': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'OREB'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'OREB'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_OREB',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+    'd_rebs': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'DREB'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'DREB'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_DREB',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+    'o_reb_pct_x1000': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'OREB_PCT', 'scale': 1000,
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'OREB_PCT', 'scale': 1000,
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+        },
+    },
+    'd_reb_pct_x1000': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'DREB_PCT', 'scale': 1000,
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'DREB_PCT', 'scale': 1000,
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+        },
+    },
+    'cont_o_rebs': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {
+                'pipeline': {
+                    'endpoint': 'playerdashptreb',
+                    'tier': 'player',
+                    'params': {'team_id': 0},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'OverallRebounding', 'field': 'C_OREB'},
+                    ],
+                },
+            },
+            'team': {
+                'pipeline': {
+                    'endpoint': 'teamdashptreb',
+                    'tier': 'team',
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'OverallRebounding', 'field': 'C_OREB'},
+                    ],
+                },
+            },
+        },
+    },
+    'cont_d_rebs': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {
+                'pipeline': {
+                    'endpoint': 'playerdashptreb',
+                    'tier': 'player',
+                    'params': {'team_id': 0},
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'OverallRebounding', 'field': 'C_DREB'},
+                    ],
+                },
+            },
+            'team': {
+                'pipeline': {
+                    'endpoint': 'teamdashptreb',
+                    'tier': 'team',
+                    'operations': [
+                        {'type': 'extract', 'result_set': 'OverallRebounding', 'field': 'C_DREB'},
+                    ],
+                },
+            },
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # PLAYMAKING
+    # ------------------------------------------------------------------
+
+    'assists': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'AST'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'AST'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_AST',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+    'pot_assists': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'POTENTIAL_AST',
+                       'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'POTENTIAL_AST',
+                       'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Team'}},
+        },
+    },
+    'passes': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'PASSES_MADE',
+                       'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'PASSES_MADE',
+                       'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Team'}},
+        },
+    },
+    'sec_assists': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'SECONDARY_AST',
+                       'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'SECONDARY_AST',
+                       'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Team'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # BALL HANDLING
+    # ------------------------------------------------------------------
+
+    'touches': {
+        'type': 'INTEGER',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'TOUCHES',
+                       'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'TOUCHES',
+                       'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Team'}},
+        },
+    },
+    'time_on_ball': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'TIME_OF_POSS',
+                       'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'TIME_OF_POSS',
+                       'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Team'}},
+        },
+    },
+    'possessions': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'POSS',
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'POSS',
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # TURNOVERS
+    # ------------------------------------------------------------------
+
+    'turnovers': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'TOV'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'TOV'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_TOV',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # DISTANCE
+    # ------------------------------------------------------------------
+
+    'o_dist_x10': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'DIST_MILES_OFF', 'scale': 10,
+                       'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'DIST_MILES_OFF', 'scale': 10,
+                       'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Team'}},
+        },
+    },
+    'd_dist_x10': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptstats', 'field': 'DIST_MILES_DEF', 'scale': 10,
+                       'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'}},
+            'team':   {'endpoint': 'leaguedashptstats', 'field': 'DIST_MILES_DEF', 'scale': 10,
+                       'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Team'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # DEFENSE: STEALS / BLOCKS / FOULS
+    # ------------------------------------------------------------------
+
+    'steals': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'STL'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'STL'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_STL',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+    'blocks': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'BLK'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'BLK'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_BLK',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+    'fouls': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team', 'opponent'],
+        'nba': {
+            'player':   {'endpoint': 'leaguedashplayerstats', 'field': 'PF'},
+            'team':     {'endpoint': 'leaguedashteamstats',   'field': 'PF'},
+            'opponent': {'endpoint': 'leaguedashteamstats',   'field': 'OPP_PF',
+                         'params': {'measure_type_detailed_defense': 'Opponent'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # HUSTLE STATS
+    # ------------------------------------------------------------------
+
+    'deflections': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'hustle',
+        'nba': {
+            'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'DEFLECTIONS'},
+            'team':   {'endpoint': 'leaguehustlestatsteam',   'field': 'DEFLECTIONS'},
+        },
+    },
+    'charges_drawn': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'hustle',
+        'nba': {
+            'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'CHARGES_DRAWN'},
+            'team':   {'endpoint': 'leaguehustlestatsteam',   'field': 'CHARGES_DRAWN'},
+        },
+    },
+    'contests': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'hustle',
+        'nba': {
+            'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'CONTESTED_SHOTS'},
+            'team':   {'endpoint': 'leaguehustlestatsteam',   'field': 'CONTESTED_SHOTS'},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # DEFENSIVE SHOT TRACKING  (leaguedashptdefend / leaguedashptteamdefend)
+    # ------------------------------------------------------------------
+
+    'd_rim_fgm': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'FGM',
+                       'params': {'defense_category': 'Less Than 10Ft'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'FGM',
+                       'params': {'defense_category': 'Less Than 10Ft'}},
+        },
+    },
+    'd_rim_fga': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'FGA_LT_10',
+                       'params': {'defense_category': 'Less Than 10Ft'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'FGA_LT_10',
+                       'params': {'defense_category': 'Less Than 10Ft'}},
+        },
+    },
+    'd_fg2m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'FG2M',
+                       'params': {'defense_category': '2 Pointers'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'FG2M',
+                       'params': {'defense_category': '2 Pointers'}},
+        },
+    },
+    'd_fg2a': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'FG2A',
+                       'params': {'defense_category': '2 Pointers'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'FG2A',
+                       'params': {'defense_category': '2 Pointers'}},
+        },
+    },
+    'd_fg3m': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'FG3M',
+                       'params': {'defense_category': '3 Pointers'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'FG3M',
+                       'params': {'defense_category': '3 Pointers'}},
+        },
+    },
+    'd_fg3a': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'FG3A',
+                       'params': {'defense_category': '3 Pointers'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'FG3A',
+                       'params': {'defense_category': '3 Pointers'}},
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # RATINGS
+    # ------------------------------------------------------------------
+
+    'o_rtg_x10': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'OFF_RATING', 'scale': 10,
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'OFF_RATING', 'scale': 10,
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+        },
+    },
+    'd_rtg_x10': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'nba': {
+            'player': {'endpoint': 'leaguedashplayerstats', 'field': 'DEF_RATING', 'scale': 10,
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+            'team':   {'endpoint': 'leaguedashteamstats',   'field': 'DEF_RATING', 'scale': 10,
+                       'params': {'measure_type_detailed_defense': 'Advanced'}},
+        },
+    },
+    'off_o_rtg_x10': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'rate_group': 'onoff',
+        'nba': {
+            'player': {
+                'endpoint': 'teamplayeronoffsummary',
+                'tier': 'team_call',
+                'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+                'player_id_field': 'VS_PLAYER_ID',
+                'field': 'OFF_RATING', 'scale': 10,
+                'aggregation': 'minute_weighted',
+            },
+        },
+    },
+    'off_d_rtg_x10': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player'],
+        'rate_group': 'onoff',
+        'nba': {
+            'player': {
+                'endpoint': 'teamplayeronoffsummary',
+                'tier': 'team_call',
+                'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
+                'player_id_field': 'VS_PLAYER_ID',
+                'field': 'DEF_RATING', 'scale': 10,
+                'aggregation': 'minute_weighted',
+            },
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # DEFENSIVE REAL FG% DIFFERENTIALS
+    # ------------------------------------------------------------------
+
+    'real_d_fg_pct_x1000': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'PCT_PLUSMINUS', 'scale': 1000,
+                       'params': {'defense_category': 'Overall'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'PCT_PLUSMINUS', 'scale': 1000,
+                       'params': {'defense_category': 'Overall'}},
+        },
+    },
+    'real_d_rim_fg_pct_x1000': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'PLUSMINUS', 'scale': 1000,
+                       'params': {'defense_category': 'Less Than 10Ft'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'PLUSMINUS', 'scale': 1000,
+                       'params': {'defense_category': 'Less Than 10Ft'}},
+        },
+    },
+    'real_d_fg2_pct_x1000': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'PLUSMINUS', 'scale': 1000,
+                       'params': {'defense_category': '2 Pointers'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'PLUSMINUS', 'scale': 1000,
+                       'params': {'defense_category': '2 Pointers'}},
+        },
+    },
+    'real_d_fg3_pct_x1000': {
+        'type': 'SMALLINT',
+        'scope': ['stats'],
+        'nullable': True,
+        'update_frequency': 'daily',
+        'entity_types': ['player', 'team'],
+        'rate_group': 'tracking',
+        'nba': {
+            'player': {'endpoint': 'leaguedashptdefend',     'field': 'PLUSMINUS', 'scale': 1000,
+                       'params': {'defense_category': '3 Pointers'}},
+            'team':   {'endpoint': 'leaguedashptteamdefend', 'field': 'PLUSMINUS', 'scale': 1000,
+                       'params': {'defense_category': '3 Pointers'}},
+        },
+    },
 }
-
-
-# ============================================================================
-# QUERY HELPERS
-# ============================================================================
-
-def get_entity_columns(entity_type: str) -> list:
-    """Get column names for an entity table (player or team)."""
-    return [
-        col for col, meta in DB_COLUMNS.items()
-        if 'entity' in meta['scope']
-        and entity_type in meta.get('entity_types', [])
-    ]
-
-
-def get_stats_columns() -> list:
-    """Get all column names that belong to stats tables."""
-    return [col for col, meta in DB_COLUMNS.items() if 'stats' in meta['scope']]
-
-
-def get_opponent_columns() -> list:
-    """Get column names that have opponent versions in team_season_stats."""
-    return [col for col, meta in DB_COLUMNS.items() if meta.get('has_opponent')]
-
-
-def get_columns_by_rate_group(rate_group: str) -> list:
-    """Get stat columns associated with a specific rate group."""
-    return [
-        col for col, meta in DB_COLUMNS.items()
-        if meta.get('rate_group') == rate_group
-    ]
-
-
-def get_columns_by_update_frequency(frequency: str) -> list:
-    """Get columns that update at a given frequency ('daily', 'annual')."""
-    return [
-        col for col, meta in DB_COLUMNS.items()
-        if meta.get('update_frequency') == frequency
-    ]

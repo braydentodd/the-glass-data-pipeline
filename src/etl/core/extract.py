@@ -67,7 +67,7 @@ def extract_derived_field(
     if not derived or base_value is None:
         return base_value
 
-    subtract_field = derived.get('subtract_field')
+    subtract_field = derived.get('subtract')
     if subtract_field and subtract_field in headers:
         subtract_raw = row[headers.index(subtract_field)]
         if subtract_raw is not None:
@@ -121,8 +121,8 @@ def extract_columns_from_result(
 
             values = {}
             for col_name, source in columns.items():
-                # Skip columns with transformation pipelines — handled separately
-                if 'transformation' in source:
+                # Skip columns with pipeline or multi_call sources
+                if 'pipeline' in source or 'multi_call' in source:
                     continue
 
                 if source.get('derived'):
@@ -142,20 +142,30 @@ def extract_columns_from_result(
 def get_simple_columns(
     columns: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
-    """Filter to only columns with direct field extraction (no transformation pipeline)."""
+    """Filter to columns with direct field extraction (no pipeline or multi_call)."""
     return {
         name: src for name, src in columns.items()
-        if 'transformation' not in src
+        if 'pipeline' not in src and 'multi_call' not in src
     }
 
 
 def get_pipeline_columns(
     columns: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
-    """Filter to only columns that require a transformation pipeline."""
+    """Filter to columns that require a transformation pipeline."""
     return {
         name: src for name, src in columns.items()
-        if 'transformation' in src
+        if 'pipeline' in src
+    }
+
+
+def get_multi_call_columns(
+    columns: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Filter to columns that aggregate across multiple API calls."""
+    return {
+        name: src for name, src in columns.items()
+        if 'multi_call' in src
     }
 
 

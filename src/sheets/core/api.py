@@ -3,7 +3,7 @@ import time
 from typing import Optional, Any, Dict, Tuple
 from src.sheets.config import (
     SHEETS_COLUMNS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_MODES,
-    STAT_CONSTANTS, DEFAULT_STAT_MODE, SHEET_FORMATTING, COLORS,
+    STAT_CONSTANTS, STAT_MODE_LABELS, DEFAULT_STAT_MODE, SHEET_FORMATTING, COLORS,
     COLOR_THRESHOLDS, SUBSECTIONS, WIDTH_CLASSES
 )
 from src.sheets.core.layout import build_sheet_columns, get_column_index
@@ -15,7 +15,7 @@ def get_config_for_export(league: str,
                           id_column_key: str = 'player_id',
                           server_config: dict = None,
                           google_sheets_config: dict = None,
-                          mode: str = 'per_100') -> dict:
+                          mode: str = 'per_possession') -> dict:
     """
     Build JSON-serializable config for /api/config endpoint.
     Apps Script uses this as single source of truth — zero hardcoding in JS.
@@ -296,15 +296,6 @@ def get_config_for_export(league: str,
     # Reverse mapping: team name → abbreviation
     team_name_to_abbr = {name: abbr for _, (abbr, name) in teams_from_db.items()}
 
-    # Stat mode labels (single source of truth for menu labels)
-    _pm = int(STAT_CONSTANTS['default_per_minute'])
-    _pp = int(STAT_CONSTANTS['default_per_possessions'])
-    stat_mode_labels = {
-        f'per_{_pp}': f'per {_pp} Poss',
-        'per_game': 'per Game',
-        f'per_{_pm}': f'per {_pm} Mins',
-    }
-
     return {
         'api_base_url': f"http://{server_config['production_host']}:{server_config['production_port']}",
         'sheet_id': google_sheets_config.get('spreadsheet_id', ''),
@@ -358,7 +349,7 @@ def get_config_for_export(league: str,
         'sections': {k: v for k, v in SECTION_CONFIG.items()},
         'subsections': SUBSECTIONS,
         'stat_modes': STAT_MODES,
-        'stat_mode_labels': stat_mode_labels,
+        'stat_mode_labels': STAT_MODE_LABELS,
         'max_historical_years': STAT_CONSTANTS.get('max_historical_years', 20),
     }
 

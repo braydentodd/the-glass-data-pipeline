@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, List, Optional
-from src.sheets.config import SHEETS_COLUMNS, STAT_CONSTANTS, SECTION_CONFIG
+from src.sheets.config import SHEETS_COLUMNS, SECTION_CONFIG, STAT_CONSTANTS
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def evaluate_expression(expr, entity_data: dict,
 # ============================================================================
 
 def evaluate_formula(col_key: str, entity_data: dict,
-                     entity_type: str = 'player', mode: str = 'per_game',
+                     entity_type: str = 'player', mode: str = 'per_possession',
                      context: Optional[dict] = None) -> Any:
     """Evaluate a column's value expression against entity data.
 
@@ -133,22 +133,28 @@ def evaluate_formula(col_key: str, entity_data: dict,
 
 def _apply_scaling(raw_value: Any, mode: str, games: float, minutes: float,
                    possessions: float) -> Any:
-    """Apply mode-based scaling to a raw stat value."""
+    """Apply mode-based scaling to a raw stat value.
+
+    Scaling factors are driven by STAT_CONSTANTS so changing the base
+    (e.g. 40 mins -> 48 mins) only requires a config update.
+    """
     if raw_value is None or raw_value == 0:
         return raw_value
 
     if mode == 'per_game':
         return raw_value / max(games, 1)
-    elif mode == f"per_{int(STAT_CONSTANTS.get('default_per_minute', 48))}":
-        return raw_value * STAT_CONSTANTS.get('default_per_minute', 48.0) / max(minutes, 0.1)
-    elif mode == 'per_100':
-        return raw_value * STAT_CONSTANTS['default_per_possessions'] / max(possessions, 1)
+    elif mode == 'per_minute':
+        per_min_base = STAT_CONSTANTS['default_per_minute']
+        return raw_value * per_min_base / max(minutes, 0.1)
+    elif mode == 'per_possession':
+        per_poss_base = STAT_CONSTANTS['default_per_possessions']
+        return raw_value * per_poss_base / max(possessions, 1)
 
     return raw_value
 
 
 def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
-                           mode: str = 'per_game',
+                           mode: str = 'per_possession',
                            context: Optional[dict] = None) -> dict:
     """
     Calculate all stat values for an entity in a given mode.
@@ -190,7 +196,7 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
 
 
 def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
-                              mode: str = 'per_game',
+                              mode: str = 'per_possession',
                               context: Optional[dict] = None) -> dict:
     """
     Calculate minute-weighted percentile populations for all stat columns.

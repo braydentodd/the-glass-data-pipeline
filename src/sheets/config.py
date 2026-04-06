@@ -42,8 +42,8 @@ GOOGLE_SHEETS_CONFIG = {
 # ============================================================================
 
 STAT_CONSTANTS = {
-    'default_per_minute': 48.0,         # Default minutes for per-minute stats across all leagues
-    'default_per_possessions': 100.0,   # Default possessions for per-possession stats
+    'default_per_minute': 40.0,         # Minutes base for per-minute stats
+    'default_per_possessions': 100.0,   # Possessions base for per-possession stats
     'cache_ttl_seconds': 300,           # API response cache TTL
     'max_historical_years': 20,         # Max seasons shown in UI timeframe toggle
 }
@@ -52,11 +52,14 @@ STAT_CONSTANTS = {
 # STAT MODE CONFIGURATION
 # ============================================================================
 
-_pm = int(STAT_CONSTANTS['default_per_minute'])
-_pp = int(STAT_CONSTANTS['default_per_possessions'])
+STAT_MODES = ['per_possession', 'per_game', 'per_minute']
+DEFAULT_STAT_MODE = 'per_possession'
 
-STAT_MODES = [f'per_{_pp}', 'per_game', f'per_{_pm}']
-DEFAULT_STAT_MODE = f'per_{_pp}'
+STAT_MODE_LABELS = {
+    'per_possession': f"per {int(STAT_CONSTANTS['default_per_possessions'])} Poss",
+    'per_game': 'per Game',
+    'per_minute': f"per {int(STAT_CONSTANTS['default_per_minute'])} Mins",
+}
 
 # ============================================================================
 # COLORS & PERCENTILES
@@ -69,7 +72,7 @@ COLORS = {
     'black': {'red': 0, 'green': 0, 'blue': 0},
     'white': {'red': 1, 'green': 1, 'blue': 1},
     'light_gray': {'red': 0.95, 'green': 0.95, 'blue': 0.95},
-    'dark_gray': {'red': 67/255, 'green': 67/255, 'blue': 67/255},
+    'dark_gray': {'red': 0.263, 'green': 0.263, 'blue': 0.263},
     'row_alt': {'red': 0.94, 'green': 0.94, 'blue': 0.94},
 }
 
@@ -468,7 +471,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         }
     },
     'gms': {
-        'description': 'Games Played per Szn',
+        'description': 'Games Played per Season',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
         'tabs': ['teams', 'players', 'team'],
@@ -488,7 +491,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         },
     },
     'min': {
-        'description': 'Minutes Played per Gm',
+        'description': 'Minutes Played per Game',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
         'tabs': ['teams', 'players', 'team'],

@@ -153,9 +153,9 @@ def execute_pipeline(
         Dict mapping entity ID to the final computed value.
     """
     endpoint = pipeline_config['endpoint']
-    execution_tier = pipeline_config.get('execution_tier', 'league')
+    execution_tier = pipeline_config.get('tier', 'league')
     operations = pipeline_config['operations']
-    endpoint_params = pipeline_config.get('endpoint_params', {})
+    endpoint_params = pipeline_config.get('params', {})
 
     # Determine if any operation needs API data
     needs_api = any(op.get('type') not in ('db_copy',) for op in operations)

@@ -23,6 +23,7 @@ def _build_season_filter(historical_config: Optional[dict], current_season_year:
                          season_type: str, season_col: str, season_format_fn) -> Tuple[str, tuple]:
     """
     Build SQL season filter clause and params tuple.
+    Historical/postseason sections never include the current season.
     Takes a format function (season_format_fn) to handle formatting disparities.
     """
     if not historical_config:
@@ -31,19 +32,15 @@ def _build_season_filter(historical_config: Optional[dict], current_season_year:
 
     mode = historical_config.get('mode', 'seasons')
     value = historical_config.get('value', 3)
-    include_current = historical_config.get('include_current', False)
 
     if mode == 'career':
-        if not include_current:
-            seasons = tuple(season_format_fn(current_season_year - i) for i in range(1, 10))
-            return f"AND s.{season_col} IN %s", (seasons,)
-        return "", ()
-        
-    elif mode == 'seasons' and isinstance(value, int):
-        start = 0 if include_current else 1
-        seasons = tuple(season_format_fn(current_season_year - i) for i in range(start, start + value))
+        seasons = tuple(season_format_fn(current_season_year - i) for i in range(1, 10))
         return f"AND s.{season_col} IN %s", (seasons,)
-        
+
+    elif mode == 'seasons' and isinstance(value, int):
+        seasons = tuple(season_format_fn(current_season_year - i) for i in range(1, 1 + value))
+        return f"AND s.{season_col} IN %s", (seasons,)
+
     elif mode == 'seasons' and isinstance(value, list):
         return f"AND s.{season_col} IN %s", (tuple(value),)
     else:

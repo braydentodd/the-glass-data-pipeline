@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
 from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS)
+from src.sheets.config import (STAT_MODE_LABELS, COLORS, COLOR_THRESHOLDS)
 
 def _format_season_label(season_year: int) -> str:
     """Convert end-year integer to season string: 2026 -> '2025-26'."""
@@ -53,55 +53,46 @@ def format_section_header(section: str, historical_config: Optional[dict] = None
     Build the full section header display string.
 
     Current stats:   "2025-26 Regular Season Stats per 100 Poss"
-    Historical/Post: "Last 3 Regular Season Stats (2023-24 to 2025-26) per 48 Mins"
-                     "Career Regular Season Stats per Game"
+    Historical/Post: "Last 3 Previous Regular Season Stats (2022-23 to 2024-25) per 100 Poss"
+                     "Career Previous Regular Season Stats per Game"
 
     Args:
         section: 'current_stats', 'historical_stats', or 'postseason_stats'
-        historical_config: {mode, value, include_current} for hist/post
+        historical_config: {mode, value} for hist/post
         current_season: End-year integer (e.g. 2026 for the 2025-26 season)
         is_postseason: True for postseason sections
-        mode: Stats display mode ('per_game', 'per_48', 'per_100')
+        mode: Stats display mode ('per_possession', 'per_minute', 'per_game')
     """
-    _MODE_LABELS = {
-        'per_game': 'per Game',
-        f"per_{int(STAT_CONSTANTS.get('default_per_minute', 48))}": f"per {int(STAT_CONSTANTS.get('default_per_minute', 48))} Mins",
-        'per_100': 'per 100 Poss',
-    }
-
     season_label = 'Postseason' if is_postseason else 'Regular Season'
 
     # Current stats: just "YYYY-YY Regular Season Stats (mode)"
     if section == 'current_stats':
         season_str = _format_season_label(current_season)
         header = f"{season_str} {season_label} Stats"
-        mode_label = _MODE_LABELS.get(mode, '')
+        mode_label = STAT_MODE_LABELS.get(mode, '')
         return f"{header} {mode_label}" if mode_label else header
 
-    # Historical / Postseason sections
+    # Historical / Postseason sections — never include current season
     mode_cfg = (historical_config or {}).get('mode', 'seasons')
     value = (historical_config or {}).get('value', 3)
-    include_current = (historical_config or {}).get('include_current', False)
 
-    previous = '' if include_current else ' Previous'
-    mode_label = _MODE_LABELS.get(mode, '')
+    mode_label = STAT_MODE_LABELS.get(mode, '')
     mode_suffix = f" {mode_label}" if mode_label else ''
 
     if mode_cfg == 'career':
-        return f"Career{previous} {season_label} Stats{mode_suffix}"
+        return f"Career Previous {season_label} Stats{mode_suffix}"
     elif mode_cfg == 'seasons' and isinstance(value, int):
-        start = 0 if include_current else 1
-        end_season = current_season - start
-        start_season = current_season - (start + value - 1)
+        end_season = current_season - 1
+        start_season = current_season - value
         range_str = f" ({_format_season_label(start_season)} to {_format_season_label(end_season)})"
-        return f"Last {value}{previous} {season_label} Stats{range_str}{mode_suffix}"
+        return f"Last {value} Previous {season_label} Stats{range_str}{mode_suffix}"
     elif mode_cfg == 'seasons' and isinstance(value, list):
         if value:
             n = len(value)
             first = min(value)
             last = max(value)
             range_str = f" ({first} to {last})"
-            return f"Last {n}{previous} {season_label} Stats{range_str}{mode_suffix}"
+            return f"Last {n} Previous {season_label} Stats{range_str}{mode_suffix}"
         return f"{season_label} Stats{mode_suffix}"
     else:
         return f"{season_label} Stats{mode_suffix}"
