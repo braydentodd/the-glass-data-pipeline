@@ -33,15 +33,11 @@ def _build_season_filter(historical_config: Optional[dict], current_season_year:
     mode = historical_config.get('mode', 'seasons')
     value = historical_config.get('value', 3)
 
-    if mode == 'career':
-        seasons = tuple(season_format_fn(current_season_year - i) for i in range(1, 10))
-        return f"AND s.{season_col} IN %s", (seasons,)
-
-    elif mode == 'seasons' and isinstance(value, int):
+    if isinstance(value, int):
         seasons = tuple(season_format_fn(current_season_year - i) for i in range(1, 1 + value))
         return f"AND s.{season_col} IN %s", (seasons,)
 
-    elif mode == 'seasons' and isinstance(value, list):
+    elif isinstance(value, list):
         return f"AND s.{season_col} IN %s", (tuple(value),)
     else:
         return "", ()

@@ -2,7 +2,7 @@ import logging
 from collections import defaultdict
 
 from src.db import get_db_connection
-from src.sheets.config import STAT_MODES
+from src.sheets.config import STAT_RATES
 from src.sheets.core.db import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats
 from src.sheets.core.layout import build_headers, build_sheet_columns, build_merged_entity_row, build_summary_rows
 from src.sheets.google.payloads import build_formatting_requests
@@ -13,8 +13,8 @@ from src.sheets.google.client import get_or_create_worksheet, write_and_format, 
 logger = logging.getLogger(__name__)
 
 
-def _compute_pct_by_mode(section_data, entity_type):
-    """Compute percentile populations for all stat modes.
+def _compute_pct_by_rate(section_data, entity_type):
+    """Compute percentile populations for all stat rates.
 
     Args:
         section_data: {base_section: data_list} e.g.
@@ -22,11 +22,11 @@ def _compute_pct_by_mode(section_data, entity_type):
         entity_type: 'player', 'team', or 'opponents'
 
     Returns:
-        {mode: {base_section: {col_key: sorted_values}}}
+        {rate: {base_section: {col_key: sorted_values}}}
     """
     result = {}
-    for mode in STAT_MODES:
-        result[mode] = {}
+    for rate in STAT_RATES:
+        result[rate] = {}
         for section, data_list in section_data.items():
             if data_list:
                 result[mode][section] = calculate_all_percentiles(
@@ -70,11 +70,11 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
         team_data_post = fetch_team_stats(
             conn, team_abbr, 'postseason_stats', historical_config)
 
-        # ---- Percentile populations (all modes, league-wide) ----
+        # ---- Percentile populations (all rates, league-wide) ----
         if precomputed:
-            player_pct_by_mode = precomputed['player']
-            team_pct_by_mode = precomputed['team']
-            opp_pct_by_mode = precomputed['opponents']
+            player_pct_by_rate = precomputed['player']
+            team_pct_by_rate = precomputed['team']
+            opp_pct_by_rate = precomputed['opponents']
         else:
             all_players_curr = fetch_all_players(conn, 'current_stats')
             all_players_hist = fetch_all_players(
@@ -87,17 +87,17 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
             all_teams_post = fetch_all_teams(
                 conn, 'postseason_stats', historical_config)
 
-            player_pct_by_mode = _compute_pct_by_mode({
+            player_pct_by_rate = _compute_pct_by_rate({
                 'current_stats': all_players_curr,
                 'historical_stats': all_players_hist,
                 'postseason_stats': all_players_post,
             }, 'player')
-            team_pct_by_mode = _compute_pct_by_mode({
+            team_pct_by_rate = _compute_pct_by_rate({
                 'current_stats': all_teams_curr['teams'],
                 'historical_stats': all_teams_hist['teams'],
                 'postseason_stats': all_teams_post['teams'],
             }, 'team')
-            opp_pct_by_mode = _compute_pct_by_mode({
+            opp_pct_by_rate = _compute_pct_by_rate({
                 'current_stats': all_teams_curr['opponents'],
                 'historical_stats': all_teams_hist['opponents'],
                 'postseason_stats': all_teams_post['opponents'],
@@ -145,7 +145,7 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
                 current_data=curr_by_id.get(pid),
                 historical_data=hist_by_id.get(pid),
                 postseason_data=post_by_id.get(pid),
-                pct_by_mode=player_pct_by_mode,
+                pct_by_rate=player_pct_by_rate,
                 entity_type='player',
             )
             for cell in pct_cells:
@@ -162,7 +162,7 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
             current_data=team_data_curr.get('team') or None,
             historical_data=team_data_hist.get('team') or None,
             postseason_data=team_data_post.get('team') or None,
-            pct_by_mode=team_pct_by_mode,
+            pct_by_rate=team_pct_by_rate,
             entity_type='team',
         )
         opp_row, opp_pct_cells = build_merged_entity_row(
@@ -171,7 +171,7 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
             current_data=team_data_curr.get('opponent') or None,
             historical_data=team_data_hist.get('opponent') or None,
             postseason_data=team_data_post.get('opponent') or None,
-            pct_by_mode=opp_pct_by_mode,
+            pct_by_rate=opp_pct_by_rate,
             entity_type='opponents',
         )
 
@@ -256,8 +256,8 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_possession',
         hist_by_abbr = {d.get(ctx.team_abbr_field): d for d in full_hist}
         post_by_abbr = {d.get(ctx.team_abbr_field): d for d in full_post}
 
-        # ---- Team percentile populations (all modes) ----
-        team_pct_by_mode = _compute_pct_by_mode({
+        # ---- Team percentile populations (all rates) ----
+        team_pct_by_rate = _compute_pct_by_rate({
             'current_stats': all_teams_curr['teams'],
             'historical_stats': all_teams_hist['teams'],
             'postseason_stats': all_teams_post['teams'],
@@ -331,7 +331,7 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_possession',
                 current_data=curr_data,
                 historical_data=hist_data,
                 postseason_data=post_data,
-                pct_by_mode=team_pct_by_mode,
+                pct_by_rate=team_pct_by_rate,
                 entity_type='team',
                 opp_percentiles=opp_percentiles,
             )
@@ -344,11 +344,11 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_possession',
 
         # ---- Summary rows ----
         merged_pops = {}
-        for mode_name in STAT_MODES:
-            mode_pcts = team_pct_by_mode.get(mode_name, {})
-            for section, pcts in mode_pcts.items():
+        for rate_name in STAT_RATES:
+            rate_pcts = team_pct_by_rate.get(rate_name, {})
+            for section, pcts in rate_pcts.items():
                 for k, v in pcts.items():
-                    merged_pops[f'{section}__{mode_name}:{k}'] = v
+                    merged_pops[f'{section}__{rate_name}:{k}'] = v
         summary_rows, summary_pct = build_summary_rows(
             columns, merged_pops, mode, opp_percentiles=opp_percentiles)
         summary_start = fmt['data_start_row'] + n_team_rows
@@ -398,8 +398,8 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_possession',
         all_players_post = fetch_all_players(
             conn, 'postseason_stats', historical_config)
 
-        # ---- Percentile populations (all modes) ----
-        player_pct_by_mode = _compute_pct_by_mode({
+        # ---- Percentile populations (all rates) ----
+        player_pct_by_rate = _compute_pct_by_rate({
             'current_stats': all_players_curr,
             'historical_stats': all_players_hist,
             'postseason_stats': all_players_post,
@@ -448,7 +448,7 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_possession',
                 current_data=curr_by_id.get(pid),
                 historical_data=hist_by_id.get(pid),
                 postseason_data=post_by_id.get(pid),
-                pct_by_mode=player_pct_by_mode,
+                pct_by_rate=player_pct_by_rate,
                 entity_type='player',
             )
             for cell in pct_cells:
@@ -460,11 +460,11 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_possession',
 
         # ---- Summary rows ----
         merged_pops = {}
-        for mode_name in STAT_MODES:
-            mode_pcts = player_pct_by_mode.get(mode_name, {})
-            for section, pcts in mode_pcts.items():
+        for rate_name in STAT_RATES:
+            rate_pcts = player_pct_by_rate.get(rate_name, {})
+            for section, pcts in rate_pcts.items():
                 for k, v in pcts.items():
-                    merged_pops[f'{section}__{mode_name}:{k}'] = v
+                    merged_pops[f'{section}__{rate_name}:{k}'] = v
         summary_rows, summary_pct = build_summary_rows(columns, merged_pops, mode)
         summary_start = fmt['data_start_row'] + n_player_rows
         for cell in summary_pct:

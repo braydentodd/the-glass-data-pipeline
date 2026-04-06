@@ -1,25 +1,30 @@
+import json
+import logging
 import os
-import time
-from typing import Optional, Any, Dict, Tuple
+from pathlib import Path
+from typing import Optional, Any, Dict
 from src.sheets.config import (
-    SHEETS_COLUMNS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_MODES,
-    STAT_CONSTANTS, STAT_MODE_LABELS, DEFAULT_STAT_MODE, SHEET_FORMATTING, COLORS,
-    COLOR_THRESHOLDS, SUBSECTIONS, WIDTH_CLASSES
+    SHEETS_COLUMNS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_RATES,
+    STAT_CONSTANTS, STAT_RATE_LABELS, DEFAULT_STAT_RATE, SHEET_FORMATTING, COLORS,
+    COLOR_THRESHOLDS, SUBSECTIONS, WIDTH_CLASSES, MENU_CONFIG
 )
 from src.sheets.core.layout import build_sheet_columns, get_column_index
 from src.sheets.core.formatting import get_reverse_stats, get_editable_fields
 from src.sheets.google.payloads import _get_subsection_boundaries, _get_section_boundaries
 
+logger = logging.getLogger(__name__)
+
+OUTPUT_DIR = Path(__file__).resolve().parents[3] / 'apps-script' / 'config'
+
+
 def get_config_for_export(league: str,
                           get_teams_fn=None,
                           id_column_key: str = 'player_id',
-                          server_config: dict = None,
-                          google_sheets_config: dict = None,
-                          mode: str = 'per_possession') -> dict:
+                          google_sheets_config: dict = None) -> dict:
     """
-    Build JSON-serializable config for /api/config endpoint.
-    Apps Script uses this as single source of truth — zero hardcoding in JS.
+    Build JSON-serializable config dict for Apps Script.
 
+    Apps Script uses this as single source of truth — zero hardcoding in JS.
     League-agnostic: derives league-specific values from the league parameter
     when optional args are not provided.
 
@@ -28,22 +33,16 @@ def get_config_for_export(league: str,
       - advanced_column_ranges:   toggle advanced stat columns
       - percentile_column_ranges: toggle percentile columns
       - column_indices:           edit-detection indices (player_id, team, stats_start)
-      - stat_modes:               available stat modes with display labels
+      - stat_rates:               available stat rates with display labels
       - sections:                 section config (display names, toggleability)
+      - menu:                     menu structure config for Apps Script UI
     """
-    # Derive league dependencies when not explicitly provided
     if get_teams_fn is None:
         if league == 'ncaa':
             import etl.ncaa.lib as _etl_lib
         else:
             import etl.nba.lib as _etl_lib
         get_teams_fn = _etl_lib.get_teams_from_db
-
-    if server_config is None:
-        server_config = {
-            'production_host': os.getenv('API_HOST', '150.136.255.23'),
-            'production_port': int(os.getenv('API_PORT', 5000)),
-        }
 
     if google_sheets_config is None:
         google_sheets_config = GOOGLE_SHEETS_CONFIG.get(league, {})
@@ -297,7 +296,6 @@ def get_config_for_export(league: str,
     team_name_to_abbr = {name: abbr for _, (abbr, name) in teams_from_db.items()}
 
     return {
-        'api_base_url': f"http://{server_config['production_host']}:{server_config['production_port']}",
         'sheet_id': google_sheets_config.get('spreadsheet_id', ''),
         'league': {
             'name': league.upper(),
@@ -306,8 +304,6 @@ def get_config_for_export(league: str,
             'players_sheet_names': [league.upper(), 'PLAYERS'],
             'players_range_key': league_sheet,
             'edit_col_index_key': f'{league}_col_index',
-            'api_prefix': '/api',
-            'sync_endpoint': '/api/update-sheets',
         },
         f'{league}_teams': league_teams,
         'team_name_to_abbr': team_name_to_abbr,
@@ -331,7 +327,7 @@ def get_config_for_export(league: str,
         'stats_section_ranges': stats_section_ranges,
         'column_metadata': column_metadata,
         'column_widths': column_widths,
-        'default_stat_mode': DEFAULT_STAT_MODE,
+        'default_stat_rate': DEFAULT_STAT_RATE,
         'subsection_row_index': SHEET_FORMATTING['subsection_header_row'] + 1,
         'teams_editable_columns': teams_editable,
         'colors': {
@@ -348,63 +344,82 @@ def get_config_for_export(league: str,
         },
         'sections': {k: v for k, v in SECTION_CONFIG.items()},
         'subsections': SUBSECTIONS,
-        'stat_modes': STAT_MODES,
-        'stat_mode_labels': STAT_MODE_LABELS,
-        'max_historical_years': STAT_CONSTANTS.get('max_historical_years', 20),
+        'stat_rates': STAT_RATES,
+        'stat_rate_labels': STAT_RATE_LABELS,
+        'menu': MENU_CONFIG,
+        'max_historical_timeframe': STAT_CONSTANTS.get('max_historical_years', 20),
     }
 
 
 # ============================================================================
-# API RESPONSE CACHE
+# CONFIG EXPORT — generate apps-script/config/<LEAGUE>_generated.js
 # ============================================================================
 
-_stat_cache: Dict[str, Tuple[float, Any]] = {}
+
+def _build_rate_column_ranges(config: dict) -> dict:
+    """Derive per-rate column index sets from column_metadata.
+
+    Returns {sheet_key: {rate_name: [col_indices]}} where col_indices are
+    1-indexed column numbers belonging to that stat rate variant.
+    Non-rate columns (without '__' in sec) are omitted — they are always visible.
+    """
+    result = {}
+    for sheet_key, meta_list in (config.get('column_metadata') or {}).items():
+        by_rate = {}
+        for meta in meta_list:
+            sec = meta.get('sec', '')
+            if '__' not in sec:
+                continue
+            _, rate = sec.split('__', 1)
+            by_rate.setdefault(rate, []).append(meta['col'])
+        result[sheet_key] = by_rate
+    return result
 
 
-def get_cached_stats(key: str) -> Optional[Any]:
-    """Get cached stats if TTL hasn't expired."""
-    if key in _stat_cache:
-        timestamp, data = _stat_cache[key]
-        if time.time() - timestamp < STAT_CONSTANTS['cache_ttl_seconds']:
-            return data
-        del _stat_cache[key]
-    return None
+def _build_editable_lookup(config: dict) -> dict:
+    """Build a lookup for linked-cell propagation.
+
+    Returns {col_key: {db_field, display_name, format, team_row_calc,
+                       indices: {sheet_key: col_index}}}
+    """
+    lookup = {}
+    for ec in config.get('editable_columns') or []:
+        key = ec['col_key']
+        entry = {
+            'db_field': ec['db_field'],
+            'display_name': ec['display_name'],
+            'format': ec.get('format', 'text'),
+            'team_row_calc': ec.get('team_row_calc'),
+            'indices': {},
+        }
+        for k, v in ec.items():
+            if k.endswith('_col_index') and v is not None:
+                sheet_key = k.replace('_col_index', '_sheet')
+                entry['indices'][sheet_key] = v
+            elif k == 'team_col_index' and v is not None:
+                entry['indices']['team_sheet'] = v
+        lookup[key] = entry
+    return lookup
 
 
-def set_cached_stats(key: str, data: Any):
-    """Cache stats with current timestamp."""
-    _stat_cache[key] = (time.time(), data)
+def export_config(league: str) -> Path:
+    """Generate config JS file and return its path."""
+    config = get_config_for_export(league)
 
+    config['rate_column_ranges'] = _build_rate_column_ranges(config)
+    config['editable_lookup'] = _build_editable_lookup(config)
 
-def clear_cache():
-    """Clear the entire stats cache."""
-    _stat_cache.clear()
+    config_json = json.dumps(config, indent=2, ensure_ascii=False)
 
+    output_file = OUTPUT_DIR / f'{league.upper()}_generated.js'
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-def resolve_columns_for_league(league):
-    """Resolve fully expanded SHEETS_COLUMNS into a league-specific flat dict."""
-    resolved = {}
+    js_content = (
+        f'// Auto-generated by src.sheets.core.export — do not edit.\n'
+        f'// Re-generate: python -m src.sheets.config_export --league {league}\n'
+        f'var CONFIG = {config_json};\n'
+    )
 
-    for col_key, col_def in SHEETS_COLUMNS.items():
-        leagues = col_def.get('leagues', ['nba', 'ncaa'])
-        if league not in leagues:
-            continue
-
-        entry = {}
-        _SKIP = {'leagues', 'values', 'width_class', 'width'}
-        for k, v in col_def.items():
-            if k not in _SKIP:
-                entry[k] = v
-
-        values = col_def.get('values', {})
-        entry['player_formula'] = values.get('player')
-        entry['team_formula'] = values.get('team')
-        entry['opponents_formula'] = values.get('opponents')
-
-        wc = col_def.get('width_class', 'auto')
-        pw = WIDTH_CLASSES.get(wc)
-        entry['minimum_width'] = pw if pw is not None else 'auto'
-
-        resolved[col_key] = entry
-
-    return resolved
+    output_file.write_text(js_content, encoding='utf-8')
+    logger.info('Wrote %s (%d bytes)', output_file, len(js_content))
+    return output_file

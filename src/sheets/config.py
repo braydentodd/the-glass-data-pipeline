@@ -49,13 +49,15 @@ STAT_CONSTANTS = {
 }
 
 # ============================================================================
-# STAT MODE CONFIGURATION
+# STAT RATE CONFIGURATION
+# Stats rate = per_game / per_possession / per_minute (the rate scaling)
+# Stats mode = advanced / basic (column visibility level)
 # ============================================================================
 
-STAT_MODES = ['per_possession', 'per_game', 'per_minute']
-DEFAULT_STAT_MODE = 'per_possession'
+STAT_RATES = ['per_possession', 'per_game', 'per_minute']
+DEFAULT_STAT_RATE = 'per_possession'
 
-STAT_MODE_LABELS = {
+STAT_RATE_LABELS = {
     'per_possession': f"per {int(STAT_CONSTANTS['default_per_possessions'])} Poss",
     'per_game': 'per Game',
     'per_minute': f"per {int(STAT_CONSTANTS['default_per_minute'])} Mins",
@@ -192,6 +194,26 @@ SECTION_CONFIG = {
         'display_name': 'ID',
         'is_stats_section': False,
         'toggleable': False,
+    },
+}
+
+# ============================================================================
+# MENU CONFIGURATION
+# Drives the Apps Script "Display Settings" menu structure.
+# ============================================================================
+
+MENU_CONFIG = {
+    'historical_timeframe': {
+        'display_name': 'Historical Timeframe',
+        'max_value': STAT_CONSTANTS['max_historical_years'],
+    },
+    'stats_rate': {
+        'display_name': 'Stats Rate',
+    },
+    'stats_mode': {
+        'display_name': 'Stats Mode',
+        'show_label': 'Show Advanced',
+        'hide_label': 'Show Basic',
     },
 }
 

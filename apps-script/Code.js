@@ -12,7 +12,7 @@
  *
  * Responsibilities:
  *   - Menu creation and user interactions
- *   - Stat mode switching via column show/hide (instant, no API)
+ *   - Stat rate switching via column show/hide (instant, no API)
  *   - Section and advanced stats visibility toggles
  *   - Linked editable cells — edits propagate across all tabs for the same entity
  *   - Vertical border management
@@ -53,13 +53,13 @@ function _getConfig() {
       globalThis['hide_' + key] = function() { _setSectionVisibility(key, false, displayName + ' hidden'); };
     });
 
-    // Stat mode switchers
-    (config.stat_modes || []).forEach(function(mode) {
-      globalThis['switchTo_' + mode] = function() { _switchStatMode(mode); };
+    // Stat rate switchers
+    (config.stat_rates || []).forEach(function(rate) {
+      globalThis['switchTo_' + rate] = function() { _switchStatRate(rate); };
     });
 
     // Timeframe handlers
-    var maxYears = config.max_historical_years || 20;
+    var maxYears = config.max_historical_timeframe || 20;
     for (var y = 1; y <= maxYears; y++) {
       (function(years) {
         globalThis['setTimeframe' + years] = function() { _setTimeframe(years); };
@@ -81,27 +81,31 @@ function onOpen() {
     var config = _getConfig();
 
     var menu = ui.createMenu('Display Settings');
+    var menuConfig = config.menu || {};
 
-    // --- Timeframe submenu (never includes current season) ---
-    var timeMenu = ui.createMenu('Historical Timeframe');
-    var maxYears = config.max_historical_years || 20;
+    // --- Timeframe submenu ---
+    var timeConfig = menuConfig.historical_timeframe || {};
+    var timeMenu = ui.createMenu(timeConfig.display_name || 'Historical Timeframe');
+    var maxYears = config.max_historical_timeframe || 20;
     for (var y = 1; y <= maxYears; y++) {
-      timeMenu.addItem('Last ' + y + ' Season' + (y > 1 ? 's' : ''), 'setTimeframe' + y);
+      timeMenu.addItem('Previous ' + y + ' Season' + (y > 1 ? 's' : ''), 'setTimeframe' + y);
     }
     menu.addSubMenu(timeMenu);
 
-    // --- Stats Mode submenu ---
-    var modeMenu = ui.createMenu('Stats Mode');
-    var modeLabels = config.stat_mode_labels || {};
-    (config.stat_modes || []).forEach(function(mode) {
-      modeMenu.addItem(modeLabels[mode] || mode, 'switchTo_' + mode);
+    // --- Stats Rate submenu ---
+    var rateConfig = menuConfig.stats_rate || {};
+    var rateMenu = ui.createMenu(rateConfig.display_name || 'Stats Rate');
+    var rateLabels = config.stat_rate_labels || {};
+    (config.stat_rates || []).forEach(function(rate) {
+      rateMenu.addItem(rateLabels[rate] || rate, 'switchTo_' + rate);
     });
-    menu.addSubMenu(modeMenu);
+    menu.addSubMenu(rateMenu);
 
-    // --- Advanced stats toggle ---
-    menu.addSubMenu(ui.createMenu('Advanced Stats')
-      .addItem('Show', 'showAdvancedStats')
-      .addItem('Hide', 'hideAdvancedStats'));
+    // --- Stats Mode submenu (advanced/basic toggle) ---
+    var modeConfig = menuConfig.stats_mode || {};
+    menu.addSubMenu(ui.createMenu(modeConfig.display_name || 'Stats Mode')
+      .addItem(modeConfig.show_label || 'Show Advanced', 'showAdvancedStats')
+      .addItem(modeConfig.hide_label || 'Show Basic', 'hideAdvancedStats'));
 
     menu.addSeparator();
 
@@ -123,44 +127,44 @@ function onOpen() {
 }
 
 // ============================================================
-// MODE SWITCHING — instant column show/hide
+// RATE SWITCHING — instant column show/hide
 // ============================================================
 
 /**
- * Switch stat mode by showing/hiding pre-computed column groups.
- * All 3 modes' data is already written by the Python sync — switching
+ * Switch stat rate by showing/hiding pre-computed column groups.
+ * All rates' data is already written by the Python sync — switching
  * is purely a column visibility change (instant, no API call).
  */
-function _switchStatMode(newMode) {
+function _switchStatRate(newRate) {
   var ss     = SpreadsheetApp.getActiveSpreadsheet();
   var config = _getConfig();
   var props  = PropertiesService.getDocumentProperties();
 
-  var currentMode = props.getProperty('STATS_MODE') || config.default_stat_mode;
-  if (newMode === currentMode) {
-    ss.toast('Already in ' + (config.stat_mode_labels[newMode] || newMode) + ' mode', 'Mode', 2);
+  var currentRate = props.getProperty('STATS_RATE') || config.default_stat_rate;
+  if (newRate === currentRate) {
+    ss.toast('Already in ' + (config.stat_rate_labels[newRate] || newRate) + ' mode', 'Rate', 2);
     return;
   }
 
-  props.setProperty('STATS_MODE', newMode);
+  props.setProperty('STATS_RATE', newRate);
 
   // Update section header labels
   var allLabels = [];
-  var labels = config.stat_mode_labels || {};
+  var labels = config.stat_rate_labels || {};
   for (var key in labels) { allLabels.push(labels[key]); }
-  var newLabel = labels[newMode] || '';
+  var newLabel = labels[newRate] || '';
 
   _applyToAllSheets(function(sheet, sheetType) {
     var rangeKey = _getRangeKey(sheetType);
-    var modeRanges = (config.mode_column_ranges || {})[rangeKey] || {};
+    var rateRanges = (config.rate_column_ranges || {})[rangeKey] || {};
 
-    // Show target mode columns, hide all other mode columns
-    var statModes = config.stat_modes || [];
-    for (var i = 0; i < statModes.length; i++) {
-      var mode = statModes[i];
-      var cols = modeRanges[mode] || [];
+    // Show target rate columns, hide all other rate columns
+    var statRates = config.stat_rates || [];
+    for (var i = 0; i < statRates.length; i++) {
+      var rate = statRates[i];
+      var cols = rateRanges[rate] || [];
       if (cols.length > 0) {
-        _batchColumns(sheet, cols, mode === newMode);
+        _batchColumns(sheet, cols, rate === newRate);
       }
     }
 
@@ -170,11 +174,11 @@ function _switchStatMode(newMode) {
 
     // Update header text
     _updateSectionHeaders(sheet, allLabels, newLabel);
-  }, (config.stat_mode_labels[newMode] || newMode) + ' mode');
+  }, (config.stat_rate_labels[newRate] || newRate) + ' mode');
 }
 
 /**
- * Replace any known mode label in section headers (row 1) with the new one.
+ * Replace any known rate label in section headers (row 1) with the new one.
  */
 function _updateSectionHeaders(sheet, allLabels, newLabel) {
   try {
@@ -228,8 +232,7 @@ function _setAdvancedStats(newAdvancedVisible) {
 
 function _setTimeframe(years) {
   var props = PropertiesService.getDocumentProperties();
-  props.setProperty('HIST_MODE', 'seasons');
-  props.setProperty('HIST_SEASONS_COUNT', String(years));
+  props.setProperty('HISTORICAL_TIMEFRAME', String(years));
   var label = years + ' season' + (years > 1 ? 's' : '');
   SpreadsheetApp.getActiveSpreadsheet().toast(
     'Timeframe set to ' + label + '. Run Python sync to apply.', 'Updated', 4
@@ -517,7 +520,7 @@ function _rehideAlwaysHidden(sheet, sheetType) {
 
 /**
  * Re-apply current toggle states after any visibility change.
- * Respects: active stat mode, advanced/basic toggle, section visibility.
+ * Respects: active stat rate, advanced/basic toggle, section visibility.
  */
 function _reapplyToggles(sheet, sheetType) {
   var config   = _getConfig();
@@ -526,7 +529,7 @@ function _reapplyToggles(sheet, sheetType) {
   var maxCols  = sheet.getMaxColumns();
 
   var showAdv = (props.getProperty('SHOW_ADVANCED') === 'true');
-  var activeMode = props.getProperty('STATS_MODE') || config.default_stat_mode;
+  var activeRate = props.getProperty('STATS_RATE') || config.default_stat_rate;
 
   var colMeta = (config.column_metadata || {})[rangeKey] || [];
   var showList = [];
@@ -544,19 +547,19 @@ function _reapplyToggles(sheet, sheetType) {
 
     if (!isStats) continue;
 
-    // Determine base section and mode from composite key
+    // Determine base section and rate from composite key
     var baseSection = secName;
-    var colMode = null;
+    var colRate = null;
     if (secName.indexOf('__') !== -1) {
       var parts = secName.split('__');
       baseSection = parts[0];
-      colMode = parts[1];
+      colRate = parts[1];
     }
 
     var shouldShow = true;
 
-    // Hide columns that belong to a non-active stat mode
-    if (colMode && colMode !== activeMode) {
+    // Hide columns that belong to a non-active stat rate
+    if (colRate && colRate !== activeRate) {
       shouldShow = false;
     } else {
       // Respect section-level visibility

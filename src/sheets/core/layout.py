@@ -1,7 +1,7 @@
 from typing import List, Optional, Any, Tuple
 from src.sheets.config import SHEETS_COLUMNS
 from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING,
-                                STAT_MODES, DEFAULT_STAT_MODE)
+                                STAT_RATES, DEFAULT_STAT_RATE)
 from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
 from .formatting import format_section_header, format_stat_value, format_height
 
@@ -143,15 +143,15 @@ def get_columns_for_section_and_entity(section: str, entity: str,
 def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
                         league_key: str = 'nba',
                         sheet_type: str = 'team',
-                        default_mode: str = DEFAULT_STAT_MODE) -> List[Tuple]:
+                        default_mode: str = DEFAULT_STAT_RATE) -> List[Tuple]:
     """
-    Build complete column structure for a sheet with mode tripling.
+    Build complete column structure for a sheet with rate tripling.
 
     Returns list of (column_key, column_def, visible, context_section) tuples.
 
-    Stats sections are tripled — each appears once per STAT_MODE with a composite
+    Stats sections are tripled — each appears once per STAT_RATE with a composite
     context key like 'current_stats__per_possession'. Only the default_mode variant
-    is visible; others are hidden for instant mode switching via column show/hide.
+    is visible; others are hidden for instant rate switching via column show/hide.
 
     Percentile columns are interleaved immediately after their base stat column.
     Columns are filtered by their 'tabs' array.
@@ -210,10 +210,10 @@ def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
         section_cfg = SECTION_CONFIG.get(section, {})
 
         if section_cfg.get('is_stats_section'):
-            # Triple: emit columns once per stat mode
-            for stat_mode in STAT_MODES:
-                context_key = f'{section}__{stat_mode}'
-                mode_visible = (stat_mode == default_mode)
+            # Triple: emit columns once per stat rate
+            for stat_rate in STAT_RATES:
+                context_key = f'{section}__{stat_rate}'
+                mode_visible = (stat_rate == default_mode)
                 _append_section_columns(section, context_key, mode_visible)
         else:
             # Non-stats sections: single copy, always visible
@@ -622,21 +622,21 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                             current_data: Optional[dict],
                             historical_data: Optional[dict],
                             postseason_data: Optional[dict],
-                            pct_by_mode: dict,
+                            pct_by_rate: dict,
                             entity_type: str = 'player',
                             hist_seasons: str = '', post_seasons: str = '',
                             opp_percentiles: Optional[dict] = None) -> Tuple[list, List[dict]]:
     """
     Build a single merged data row with current + historical + postseason stats.
 
-    All 3 stat modes are written simultaneously via composite section keys
-    (e.g. 'current_stats__per_possession'). Mode switching is handled by
+    All 3 stat rates are written simultaneously via composite section keys
+    (e.g. 'current_stats__per_possession'). Rate switching is handled by
     column visibility in the spreadsheet.
 
-    pct_by_mode: {mode: {base_section: {col_key: sorted_values}}}
+    pct_by_rate: {rate: {base_section: {col_key: sorted_values}}}
     opp_percentiles: {col_key: {composite_section: sorted_vals}}
     """
-    # Build section_data with composite keys for all modes
+    # Build section_data with composite keys for all rates
     _SECTION_TO_DATA = {
         'current_stats': (current_data, ''),
         'historical_stats': (historical_data, hist_seasons),
@@ -644,12 +644,12 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
     }
 
     section_data = {}
-    for mode_name in STAT_MODES:
-        mode_pcts = pct_by_mode.get(mode_name, {})
+    for rate_name in STAT_RATES:
+        rate_pcts = pct_by_rate.get(rate_name, {})
         for base_section, (entity_data, seasons) in _SECTION_TO_DATA.items():
             if entity_data:
-                composite_key = f'{base_section}__{mode_name}'
-                section_pcts = mode_pcts.get(base_section, {})
+                composite_key = f'{base_section}__{rate_name}'
+                section_pcts = rate_pcts.get(base_section, {})
                 section_data[composite_key] = (entity_data, section_pcts, seasons)
 
     primary_entity = current_data or historical_data or postseason_data or {}
@@ -678,7 +678,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             if col_ctx not in section_data:
                 continue
             sec_entity, sec_pcts, _ = section_data[col_ctx]
-            sec_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else DEFAULT_STAT_MODE
+            sec_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else DEFAULT_STAT_RATE
 
             # Opponent companion: compute value from base opponent formula
             if col_def.get('is_opponent_col') and opp_percentiles:
@@ -718,7 +718,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                 })
         else:
             # Non-stats section — use default mode's current_stats percentiles
-            default_current_key = f'current_stats__{DEFAULT_STAT_MODE}'
+            default_current_key = f'current_stats__{DEFAULT_STAT_RATE}'
             if default_current_key in section_data:
                 sec_entity, sec_pcts, _ = section_data[default_current_key]
             elif section_data:
@@ -727,7 +727,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             else:
                 continue
             base_def = SHEETS_COLUMNS.get(base_key, col_def)
-            calculated = calculate_entity_stats(sec_entity, entity_type, DEFAULT_STAT_MODE)
+            calculated = calculate_entity_stats(sec_entity, entity_type, DEFAULT_STAT_RATE)
             value = calculated.get(base_key)
 
             if value is not None and base_key in sec_pcts:

@@ -19,7 +19,7 @@ from src.sheets.core.db import fetch_all_players, fetch_all_teams
 from src.sheets.core.calculations import calculate_all_percentiles
 from src.sheets.google.client import get_sheets_client
 from src.sheets.core.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
-from src.sheets.config import SHEETS_COLUMNS, STAT_MODES, DEFAULT_STAT_MODE, SECTION_CONFIG
+from src.sheets.config import SHEETS_COLUMNS, STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG
 
 load_dotenv()
 
@@ -32,36 +32,34 @@ def main():
                         help='The league to sync')
     parser.add_argument('--tab', metavar='NAME',
                         help='Sync this tab first (team abbr like BOS, or "players"/"teams")')
-    parser.add_argument('--mode',
-                        choices=STAT_MODES,
+    parser.add_argument('--rate',
+                        choices=STAT_RATES,
                         default=None,
-                        help=f'Stats display mode (default: {DEFAULT_STAT_MODE})')
+                        help=f'Stats rate (default: {DEFAULT_STAT_RATE})')
     parser.add_argument('--hist-seasons', type=int, default=None,
-                        help='Number of historical seasons to include')
+                        help='Historical timeframe: number of previous seasons to include')
     parser.add_argument('--partial-update', action='store_true',
                         help='Fast sync: skip structural formatting, only update data + colors')
+    parser.add_argument('--export-config', action='store_true',
+                        help='Export Apps Script config JS file before syncing')
     args = parser.parse_args()
 
     # Priority: CLI arg > env var > hardcoded default
     league = args.league.lower()
-    mode = args.mode or os.environ.get('STATS_MODE', DEFAULT_STAT_MODE)
+    rate = args.rate or os.environ.get('STATS_RATE', DEFAULT_STAT_RATE)
     show_advanced = os.environ.get('SHOW_ADVANCED') == 'true'
     priority_tab = args.tab or os.environ.get('PRIORITY_TAB')
     partial_update = args.partial_update or os.environ.get('PARTIAL_UPDATE') == 'true'
     sync_section = os.environ.get('SYNC_SECTION')
 
-    # Build historical config (never includes current season)
-    hist_mode = os.environ.get('HISTORICAL_MODE', 'seasons')
+    # Export Apps Script config if requested
+    if args.export_config:
+        from src.sheets.core.export import export_config
+        export_config(league)
 
-    if hist_mode == 'career':
-        historical_config = {'mode': 'career'}
-    elif hist_mode == 'seasons':
-        season_str = os.environ.get('HISTORICAL_SEASONS', '')
-        seasons = [s.strip() for s in season_str.split(',') if s.strip()]
-        historical_config = {'mode': 'seasons', 'value': seasons}
-    else:
-        num_seasons = args.hist_seasons or int(os.environ.get('HISTORICAL_SEASONS_COUNT', '3'))
-        historical_config = {'mode': 'seasons', 'value': num_seasons}
+    # Build historical timeframe config (never includes current season)
+    num_seasons = args.hist_seasons or int(os.environ.get('HISTORICAL_TIMEFRAME', '3'))
+    historical_config = {'mode': 'seasons', 'value': num_seasons}
 
     # ---- Build context ----
     class Context:
@@ -117,13 +115,13 @@ def main():
     client = get_sheets_client(ctx.google_sheets_config)
     spreadsheet = client.open_by_key(ctx.google_sheets_config['spreadsheet_id'])
 
-    sync_kwargs = dict(mode=mode,
+    sync_kwargs = dict(mode=rate,
                        show_advanced=show_advanced,
                        historical_config=historical_config,
                        partial_update=partial_update,
                        sync_section=sync_section)
 
-    # ---- Pre-compute league-wide percentile populations ONCE (all modes) ----
+    # ---- Pre-compute league-wide percentile populations ONCE (all rates) ----
     logger.info('  Pre-computing league-wide percentile populations...')
     conn = get_db_connection()
     try:
@@ -143,37 +141,37 @@ def main():
         all_teams_post = fetch_all_teams(
             conn, 'postseason_stats', historical_config) if needs_postseason else _empty_teams
 
-        def _build_pct_by_mode(section_data, entity_type):
-            """Compute percentile populations for all modes."""
+        def _build_pct_by_rate(section_data, entity_type):
+            """Compute percentile populations for all stat rates."""
             result = {}
-            for m in STAT_MODES:
-                result[m] = {}
+            for r in STAT_RATES:
+                result[r] = {}
                 for section, data_list in section_data.items():
                     if data_list:
-                        result[m][section] = calculate_all_percentiles(
-                            data_list, entity_type, m)
+                        result[r][section] = calculate_all_percentiles(
+                            data_list, entity_type, r)
                     else:
-                        result[m][section] = {}
+                        result[r][section] = {}
             return result
 
         precomputed = {
-            'player': _build_pct_by_mode({
+            'player': _build_pct_by_rate({
                 'current_stats': all_players_curr,
                 'historical_stats': all_players_hist,
                 'postseason_stats': all_players_post,
             }, 'player'),
-            'team': _build_pct_by_mode({
+            'team': _build_pct_by_rate({
                 'current_stats': all_teams_curr['teams'],
                 'historical_stats': all_teams_hist['teams'],
                 'postseason_stats': all_teams_post['teams'],
             }, 'team'),
-            'opponents': _build_pct_by_mode({
+            'opponents': _build_pct_by_rate({
                 'current_stats': all_teams_curr['opponents'],
                 'historical_stats': all_teams_hist['opponents'],
                 'postseason_stats': all_teams_post['opponents'],
             }, 'opponents'),
         }
-        logger.info('  Percentile populations ready (%d modes)', len(STAT_MODES))
+        logger.info('  Percentile populations ready (%d rates)', len(STAT_RATES))
     finally:
         conn.close()
 

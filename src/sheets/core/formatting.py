@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
 from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (STAT_MODE_LABELS, COLORS, COLOR_THRESHOLDS)
+from src.sheets.config import (STAT_RATE_LABELS, COLORS, COLOR_THRESHOLDS)
 
 def _format_season_label(season_year: int) -> str:
     """Convert end-year integer to season string: 2026 -> '2025-26'."""
@@ -53,75 +53,66 @@ def format_section_header(section: str, historical_config: Optional[dict] = None
     Build the full section header display string.
 
     Current stats:   "2025-26 Regular Season Stats per 100 Poss"
-    Historical/Post: "Last 3 Previous Regular Season Stats (2022-23 to 2024-25) per 100 Poss"
-                     "Career Previous Regular Season Stats per Game"
+    Historical/Post: "Previous 3 Regular Seasons Stats per 100 Poss"
+                     "Previous Regular Season Stats per 100 Poss"  (1 season)
 
     Args:
         section: 'current_stats', 'historical_stats', or 'postseason_stats'
         historical_config: {mode, value} for hist/post
         current_season: End-year integer (e.g. 2026 for the 2025-26 season)
         is_postseason: True for postseason sections
-        mode: Stats display mode ('per_possession', 'per_minute', 'per_game')
+        mode: Stats rate ('per_possession', 'per_minute', 'per_game')
     """
     season_label = 'Postseason' if is_postseason else 'Regular Season'
 
-    # Current stats: just "YYYY-YY Regular Season Stats (mode)"
+    # Current stats: just "YYYY-YY Regular Season Stats (rate)"
     if section == 'current_stats':
         season_str = _format_season_label(current_season)
         header = f"{season_str} {season_label} Stats"
-        mode_label = STAT_MODE_LABELS.get(mode, '')
-        return f"{header} {mode_label}" if mode_label else header
+        rate_label = STAT_RATE_LABELS.get(mode, '')
+        return f"{header} {rate_label}" if rate_label else header
 
     # Historical / Postseason sections — never include current season
     mode_cfg = (historical_config or {}).get('mode', 'seasons')
     value = (historical_config or {}).get('value', 3)
 
-    mode_label = STAT_MODE_LABELS.get(mode, '')
-    mode_suffix = f" {mode_label}" if mode_label else ''
+    rate_label = STAT_RATE_LABELS.get(mode, '')
+    rate_suffix = f" {rate_label}" if rate_label else ''
 
-    if mode_cfg == 'career':
-        return f"Career Previous {season_label} Stats{mode_suffix}"
-    elif mode_cfg == 'seasons' and isinstance(value, int):
-        end_season = current_season - 1
-        start_season = current_season - value
-        range_str = f" ({_format_season_label(start_season)} to {_format_season_label(end_season)})"
-        return f"Last {value} Previous {season_label} Stats{range_str}{mode_suffix}"
-    elif mode_cfg == 'seasons' and isinstance(value, list):
-        if value:
-            n = len(value)
-            first = min(value)
-            last = max(value)
-            range_str = f" ({first} to {last})"
-            return f"Last {n} Previous {season_label} Stats{range_str}{mode_suffix}"
-        return f"{season_label} Stats{mode_suffix}"
+    if isinstance(value, int):
+        if value == 1:
+            return f"Previous {season_label} Stats{rate_suffix}"
+        plural = 's' if not is_postseason else 's'
+        return f"Previous {value} {season_label}{plural} Stats{rate_suffix}"
+    elif isinstance(value, list) and value:
+        n = len(value)
+        if n == 1:
+            return f"Previous {season_label} Stats{rate_suffix}"
+        plural = 's' if not is_postseason else 's'
+        return f"Previous {n} {season_label}{plural} Stats{rate_suffix}"
     else:
-        return f"{season_label} Stats{mode_suffix}"
+        return f"{season_label} Stats{rate_suffix}"
 
 
 def format_seasons_range(historical_config: Optional[dict], current_season: int) -> str:
     """
-    Legacy wrapper — returns a prefix string for section headers.
-    Kept for backward compatibility; prefer format_section_header() for full headers.
+    Returns a prefix string for section headers.
     """
     if not historical_config:
-        return 'Last 3 Seasons'
+        return 'Previous 3 Seasons'
     mode = historical_config.get('mode', 'seasons')
-    if mode == 'career':
-        return 'Career'
-    elif mode == 'seasons':
+    if mode == 'seasons':
         value = historical_config.get('value', 3)
-        return f'Last {value} Season{"s" if value != 1 else ""}'
-    elif mode == 'since_season':
-        season = historical_config.get('season', historical_config.get('value', ''))
-        return f'Since {season}'
-    elif mode == 'seasons':
-        seasons = historical_config.get('value', [])
-        if seasons:
-            first = min(seasons)
-            last = max(seasons)
-            return f"{_format_season_label(first)} – {_format_season_label(last)}"
-        return ''
-    return ''
+        if isinstance(value, int):
+            if value == 1:
+                return 'Previous Season'
+            return f'Previous {value} Seasons'
+        elif isinstance(value, list):
+            n = len(value)
+            if n == 1:
+                return 'Previous Season'
+            return f'Previous {n} Seasons'
+    return 'Previous 3 Seasons'
 
 
 def get_color_for_percentile(percentile: float, reverse: bool = False) -> dict:
