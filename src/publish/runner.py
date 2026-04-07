@@ -4,7 +4,7 @@ THE GLASS - Universal Google Sheets Sync
 Unified runner for synchronizing league data to Google Sheets.
 
 Entry point:
-    python -m output.runner --league nba [--tab BOS] [--rate per_possession|per_minute|per_game]
+    python -m publish.runner --league nba [--tab BOS] [--rate per_possession|per_minute|per_game]
 """
 
 import argparse
@@ -15,12 +15,12 @@ import time
 from dotenv import load_dotenv
 
 from src.db import get_db_connection
-from src.output.core.db import fetch_all_players, fetch_all_teams, get_teams_from_db
-from src.output.core.calculations import calculate_all_percentiles
-from src.output.destinations.sheets.client import get_sheets_client
-from src.output.core.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
-from src.output.config import SHEETS_COLUMNS, STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG
-from src.input.core.db import get_table_name
+from src.publish.core.db import fetch_all_players, fetch_all_teams, get_teams_from_db
+from src.publish.core.calculations import calculate_all_percentiles
+from src.publish.destinations.sheets.client import get_sheets_client
+from src.publish.core.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
+from src.publish.config import SHEETS_COLUMNS, STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG
+from src.etl.core.db import get_table_name
 
 load_dotenv()
 
@@ -57,7 +57,7 @@ def main():
 
     # Export Apps Script config if requested (standalone action)
     if args.export_config:
-        from src.output.core.export import export_config
+        from src.publish.core.export import export_config
         path = export_config(league)
         logger.info('Config exported to %s', path)
         return
@@ -72,8 +72,8 @@ def main():
 
     ctx = Context()
     ctx.league = league
-    from src.output.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
-    from src.output.config import SHEETS_COLUMNS
+    from src.publish.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
+    from src.publish.config import SHEETS_COLUMNS
     ctx.google_sheets_config = GOOGLE_SHEETS_CONFIG
     ctx.sheet_formatting = SHEET_FORMATTING
     ctx.season_key = 'current_season'
@@ -82,7 +82,7 @@ def main():
     ctx.wrap_opp_pct = lambda vals: sorted(vals)
 
     if league == 'nba':
-        from src.input.sources.nba_api.config import DB_SCHEMA, SEASON_CONFIG as league_config
+        from src.etl.sources.nba_api.config import DB_SCHEMA, SEASON_CONFIG as league_config
     else:
         DB_SCHEMA = league
         from src.db import get_current_season, get_current_season_year
@@ -100,12 +100,12 @@ def main():
     ctx.team_stats_table = get_table_name('team', 'stats', DB_SCHEMA)
 
     ctx.player_entity_fields = {
-        'player_id', 'name', 'team_id', 'height_inches', 'weight_lbs',
-        'wingspan_inches', 'seasons_exp', 'age', 'jersey_num',
+        'nba_api_id', 'name', 'team_id', 'height_ins', 'weight_lbs',
+        'wingspan_ins', 'seasons_exp', 'age', 'jersey_num',
         'hand', 'notes', 'birthdate', 'updated_at',
     }
     ctx.team_entity_fields = {
-        'team_id', 'abbr', 'team_name', 'notes', 'updated_at',
+        'nba_api_id', 'abbr', 'name', 'notes', 'updated_at',
     }
 
     all_cols = {k for k, v in SHEETS_COLUMNS.items()

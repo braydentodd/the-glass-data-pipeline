@@ -162,3 +162,65 @@ def upsert_entity_rows(
     ]
 
     return bulk_upsert(conn, table, columns, data, conflict_columns, batch_size=batch_size)
+
+
+def write_entity_rows(
+    entity: str,
+    scope: str,
+    rows: Dict[Any, Dict[str, Any]],
+    season: str,
+    season_type: int,
+    db_schema: str,
+) -> int:
+    """Write extracted entity rows to the database via upsert.
+
+    Adds identity columns (nba_api_id, season, season_type) to each row
+    for the conflict key, then delegates to ``bulk_upsert``.
+
+    Args:
+        entity:      ``'player'`` or ``'team'``.
+        scope:       ``'stats'`` or ``'entity'``.
+        rows:        ``{nba_api_id: {col_name: value, ...}, ...}``
+        season:      Season string (e.g. ``'2024-25'``).
+        season_type: Season type integer (1=Regular, 2=Playoffs, 3=PlayIn).
+        db_schema:   Database schema name (e.g. ``'nba'``).
+
+    Returns:
+        Number of rows written.
+    """
+    if not rows:
+        return 0
+
+    from src.etl.config import TABLES
+    from src.etl.core.db import get_table_name
+
+    table = get_table_name(entity, scope, db_schema)
+    table_name = table.split('.', 1)[1]
+    table_meta = TABLES[table_name]
+    conflict_columns = table_meta['unique_key']
+
+    all_cols: set = set()
+    for vals in rows.values():
+        all_cols.update(vals.keys())
+
+    data_cols = sorted(all_cols)
+    columns = list(conflict_columns) + data_cols
+
+    data = []
+    for entity_id, vals in rows.items():
+        identity_values = []
+        for ck in conflict_columns:
+            if ck == 'nba_api_id':
+                identity_values.append(str(entity_id))
+            elif ck == 'season':
+                identity_values.append(season)
+            elif ck == 'season_type':
+                identity_values.append(str(season_type))
+            else:
+                identity_values.append(None)
+
+        row_values = [vals.get(c) for c in data_cols]
+        data.append(tuple(identity_values + row_values))
+
+    with db_connection() as conn:
+        return bulk_upsert(conn, table, columns, data, conflict_columns)

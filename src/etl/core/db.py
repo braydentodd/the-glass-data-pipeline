@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from src.db import get_db_connection, quote_col
-from src.input.config import DB_COLUMNS, TABLES
+from src.etl.config import DB_COLUMNS, ETL_TABLES, TABLES
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +169,65 @@ def ensure_tables(db_schema: str, conn=None) -> Dict[str, List[str]]:
                     if table_actions:
                         logger.info(
                             'Updated %s: %s',
+                            qual_table, ', '.join(table_actions),
+                        )
+
+                actions[qual_table] = table_actions
+
+            # ---- ETL operational tables (inline column definitions) ----
+            for table_name, table_meta in ETL_TABLES.items():
+                qual_table = f"{db_schema}.{table_name}"
+                table_actions: List[str] = []
+                inline_cols = table_meta.get('columns', {})
+
+                cur.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = %s AND table_name = %s",
+                    (db_schema, table_name),
+                )
+
+                if cur.fetchone() is None:
+                    col_defs = [
+                        _col_ddl(cn, cm) for cn, cm in inline_cols.items()
+                    ]
+                    unique_key = table_meta.get('unique_key', [])
+                    if unique_key:
+                        uk_cols = ', '.join(quote_col(c) for c in unique_key)
+                        col_defs.append(f'UNIQUE ({uk_cols})')
+
+                    create_sql = (
+                        f"CREATE TABLE {qual_table} (\n  "
+                        + ",\n  ".join(col_defs)
+                        + "\n)"
+                    )
+                    cur.execute(create_sql)
+                    table_actions.append(
+                        f'created ({len(inline_cols)} columns)'
+                    )
+                    logger.info(
+                        'Created ETL table %s with %d columns',
+                        qual_table, len(inline_cols),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = %s AND table_name = %s",
+                        (db_schema, table_name),
+                    )
+                    existing = {row[0] for row in cur.fetchall()}
+
+                    for col_name, col_meta in inline_cols.items():
+                        if col_name not in existing:
+                            cur.execute(
+                                f'ALTER TABLE {qual_table} '
+                                f'ADD COLUMN IF NOT EXISTS '
+                                f'{quote_col(col_name)} {col_meta["type"]}'
+                            )
+                            table_actions.append(f'added {col_name}')
+
+                    if table_actions:
+                        logger.info(
+                            'Updated ETL table %s: %s',
                             qual_table, ', '.join(table_actions),
                         )
 

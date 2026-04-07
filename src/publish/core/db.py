@@ -14,16 +14,16 @@ from src.db import get_db_connection
 logger = logging.getLogger(__name__)
 
 
-def get_teams_from_db(db_schema: str) -> Dict[int, Tuple[str, str]]:
+def get_teams_from_db(db_schema: str) -> Dict[str, Tuple[str, str]]:
     """Fetch all teams from the database.
 
-    Returns {team_id: (abbr, team_name)} for the given schema.
+    Returns {nba_api_id: (abbr, name)} for the given schema.
     """
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT team_id, abbr, team_name FROM {db_schema}.teams "
+                f"SELECT nba_api_id, abbr, name FROM {db_schema}.teams "
                 f"ORDER BY abbr"
             )
             return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
@@ -91,9 +91,9 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
         query = f"""
         SELECT {', '.join(all_fields)}
         FROM {players_tbl} p
-        INNER JOIN {teams_tbl} t ON p.team_id = t.team_id
+        INNER JOIN {teams_tbl} t ON p.team_id::text = t.nba_api_id
         LEFT JOIN {stats_tbl} s
-            ON s.player_id = p.player_id
+            ON s.nba_api_id = p.nba_api_id
             AND s.{season_col_name} = %s AND s.season_type = %s
         WHERE t.{ctx.team_abbr_col} = %s
         ORDER BY COALESCE(s.{ctx.primary_minutes_col}, 0) DESC, p.name
@@ -122,9 +122,9 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
         query = f"""
         SELECT {', '.join(all_fields)}
         FROM {players_tbl} p
-        INNER JOIN {teams_tbl} t ON p.team_id = t.team_id
+        INNER JOIN {teams_tbl} t ON p.team_id::text = t.nba_api_id
         LEFT JOIN {stats_tbl} s
-            ON s.player_id = p.player_id
+            ON s.nba_api_id = p.nba_api_id
             {season_filter}
             AND s.season_type IN ({st})
         WHERE t.{ctx.team_abbr_col} = %s
@@ -153,8 +153,8 @@ def fetch_all_players(conn, section: str, historical_config: Optional[dict],
         query = f"""
             SELECT {', '.join(all_f)}
             FROM {stats_tbl} s
-            INNER JOIN {players_tbl} p ON s.player_id = p.player_id
-            INNER JOIN {teams_tbl} t ON p.team_id = t.team_id
+            INNER JOIN {players_tbl} p ON s.nba_api_id = p.nba_api_id
+            INNER JOIN {teams_tbl} t ON p.team_id::text = t.nba_api_id
             WHERE s.{season_col_name} = %s AND s.season_type = %s
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -175,8 +175,8 @@ def fetch_all_players(conn, section: str, historical_config: Optional[dict],
         query = f"""
             SELECT {', '.join(all_aggregates)}
             FROM {stats_tbl} s
-            INNER JOIN {players_tbl} p ON s.player_id = p.player_id
-            INNER JOIN {teams_tbl} t ON p.team_id = t.team_id
+            INNER JOIN {players_tbl} p ON s.nba_api_id = p.nba_api_id
+            INNER JOIN {teams_tbl} t ON p.team_id::text = t.nba_api_id
             WHERE s.season_type IN ({st}) {season_filter}
             GROUP BY {', '.join(group_f)}
         """
@@ -201,7 +201,7 @@ def fetch_team_stats(conn, team_abbr: str, section: str, historical_config: Opti
         SELECT {', '.join(all_fields)}
         FROM {teams_tbl} t
         LEFT JOIN {stats_tbl} s
-            ON s.team_id = t.team_id
+            ON s.nba_api_id = t.nba_api_id
             AND s.{season_col_name} = %s AND s.season_type = %s
         WHERE t.{ctx.team_abbr_col} = %s
         """
@@ -222,7 +222,7 @@ def fetch_team_stats(conn, team_abbr: str, section: str, historical_config: Opti
         SELECT {', '.join(all_aggregates)}
         FROM {teams_tbl} t
         LEFT JOIN {stats_tbl} s
-            ON s.team_id = t.team_id
+            ON s.nba_api_id = t.nba_api_id
             {season_filter}
             AND s.season_type IN ({st})
         WHERE t.{ctx.team_abbr_col} = %s
@@ -262,7 +262,7 @@ def fetch_all_teams(conn, section: str, historical_config: Optional[dict],
         query = f"""
         SELECT {', '.join(all_fields)}
         FROM {teams_tbl} t
-        INNER JOIN {stats_tbl} s ON s.team_id = t.team_id
+        INNER JOIN {stats_tbl} s ON s.nba_api_id = t.nba_api_id
         WHERE s.{season_col_name} = %s AND s.season_type = %s
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -281,7 +281,7 @@ def fetch_all_teams(conn, section: str, historical_config: Optional[dict],
         query = f"""
         SELECT {', '.join(all_aggregates)}
         FROM {stats_tbl} s
-        INNER JOIN {teams_tbl} t ON s.team_id = t.team_id
+        INNER JOIN {teams_tbl} t ON s.nba_api_id = t.nba_api_id
         WHERE s.season_type IN ({st}) {season_filter}
         GROUP BY {', '.join(t_fields)}
         """

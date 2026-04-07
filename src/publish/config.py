@@ -8,7 +8,7 @@ and spreadsheet settings across all leagues.
 import os
 from typing import Any, Dict
 
-from src.output.core.formulas import (
+from src.publish.core.formulas import (
     add, subtract, multiply, divide, lookup, team_average, seasons_in_query
 )
 
@@ -1724,7 +1724,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba'],
         'default': None,
         'values': {
-            'player': 'player_id',
+            'player': 'nba_api_id',
         }
     }
 }

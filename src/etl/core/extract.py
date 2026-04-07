@@ -12,7 +12,7 @@ JSON response that the provider client returns.
 import logging
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from src.input.core.transform import apply_transform
+from src.etl.core.transform import apply_transform, safe_int
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +169,64 @@ def get_multi_call_columns(
     }
 
 
-def get_entity_id_field(entity: str) -> str:
-    """Return the API header name for an entity's ID."""
-    return 'PLAYER_ID' if entity == 'player' else 'TEAM_ID'
+# ============================================================================
+# SINGLE-FIELD & RAW EXTRACTION  (for multi-call and team-call patterns)
+# ============================================================================
+
+def extract_single_field(
+    api_result: Dict[str, Any],
+    field: str,
+    entity_id_field: str,
+    result_set_name: Optional[str] = None,
+) -> Dict[int, Optional[int]]:
+    """Extract a single field from an API result, keyed by entity ID.
+
+    Returns ``{entity_id: safe_int(value)}`` for each entity in the result.
+    Used by multi-call columns that accumulate a field across API calls.
+    """
+    extracted: Dict[int, Optional[int]] = {}
+
+    for rs in api_result.get('resultSets', []):
+        if result_set_name and rs['name'] != result_set_name:
+            continue
+        headers = rs['headers']
+        if entity_id_field not in headers or field not in headers:
+            continue
+        id_idx = headers.index(entity_id_field)
+        field_idx = headers.index(field)
+        for row in rs['rowSet']:
+            eid = row[id_idx]
+            val = safe_int(row[field_idx])
+            if val is not None:
+                extracted[eid] = val
+        break
+
+    return extracted
+
+
+def extract_raw_rows(
+    api_result: Dict[str, Any],
+    entity_id_field: str,
+    result_set_name: Optional[str] = None,
+) -> Dict[int, List[Dict[str, Any]]]:
+    """Extract raw row dicts from an API result, grouped by entity ID.
+
+    Returns ``{entity_id: [row_dict, ...]}``.
+    Used by team-call patterns that collect per-team rows for later aggregation.
+    """
+    grouped: Dict[int, List[Dict[str, Any]]] = {}
+
+    for rs in api_result.get('resultSets', []):
+        if result_set_name and rs['name'] != result_set_name:
+            continue
+        headers = rs['headers']
+        if entity_id_field not in headers:
+            continue
+        id_idx = headers.index(entity_id_field)
+        for row in rs['rowSet']:
+            eid = row[id_idx]
+            if eid is not None:
+                grouped.setdefault(eid, []).append(dict(zip(headers, row)))
+
+    return grouped
+

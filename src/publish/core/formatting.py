@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
-from src.output.config import SHEETS_COLUMNS
-from src.output.config import (STAT_RATE_LABELS, COLORS, COLOR_THRESHOLDS)
+from src.publish.config import SHEETS_COLUMNS
+from src.publish.config import (STAT_RATE_LABELS, COLORS, COLOR_THRESHOLDS)
 
 def _format_season_label(season_year: int) -> str:
     """Convert end-year integer to season string: 2026 -> '2025-26'."""

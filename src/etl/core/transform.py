@@ -138,6 +138,7 @@ def execute_pipeline(
     entity: Literal['player', 'team'],
     season: str,
     season_type_name: str,
+    entity_id_field: str,
 ) -> Dict[int, Any]:
     """Execute a transformation pipeline and return ``{entity_id: value}``.
 
@@ -148,6 +149,8 @@ def execute_pipeline(
         entity: 'player' or 'team'.
         season: Season string.
         season_type_name: e.g. 'Regular Season'.
+        entity_id_field: API header name for the entity's ID
+            (e.g. 'PLAYER_ID', 'TEAM_ID').
 
     Returns:
         Dict mapping entity ID to the final computed value.
@@ -168,9 +171,9 @@ def execute_pipeline(
     for op in operations:
         op_type = op['type']
         if op_type == 'extract':
-            data = _op_extract(api_result, op, entity)
+            data = _op_extract(api_result, op, entity_id_field)
         elif op_type == 'multi_league_extract':
-            data = _op_multi_league_extract(op, api_fetcher, endpoint, entity, season, season_type_name)
+            data = _op_multi_league_extract(op, api_fetcher, endpoint, entity_id_field, season, season_type_name)
         elif op_type == 'filter':
             data = _op_filter(data, op)
         elif op_type == 'aggregate':
@@ -191,15 +194,10 @@ def execute_pipeline(
 # PIPELINE OPERATIONS (private)
 # ============================================================================
 
-def _entity_id_field(entity: str) -> str:
-    """Return the API header name for the entity's ID column."""
-    return 'PLAYER_ID' if entity == 'player' else 'TEAM_ID'
-
-
 def _op_extract(
     api_result: Dict[str, Any],
     op: Dict[str, Any],
-    entity: str,
+    entity_id_field: str,
 ) -> Dict[int, Any]:
     """Extract a field from a specific result set, keyed by entity ID.
 
@@ -207,7 +205,7 @@ def _op_extract(
     matching rows, and ``fields`` (dict) for multi-field extraction.
     """
     target_rs = op.get('result_set')
-    id_field = _entity_id_field(entity)
+    id_field = entity_id_field
 
     for rs in api_result.get('resultSets', []):
         if target_rs and rs['name'] != target_rs:
@@ -270,7 +268,7 @@ def _op_multi_league_extract(
     op: Dict[str, Any],
     api_fetcher: Callable,
     base_endpoint: str,
-    entity: str,
+    entity_id_field: str,
     season: str,
     season_type_name: str,
 ) -> Dict[int, Any]:
@@ -278,7 +276,7 @@ def _op_multi_league_extract(
     field = op['field']
     result_set = op.get('result_set')
     calls = op['calls']
-    id_field = _entity_id_field(entity)
+    id_field = entity_id_field
 
     totals: Dict[int, int] = {}
 
@@ -362,3 +360,50 @@ def _op_db_copy(op: Dict[str, Any]) -> Dict[int, Any]:
     """Copy values from another DB column. Caller must populate during load phase."""
     # Returns an empty dict — the load module resolves db_copy at write time
     return {}
+
+
+# ============================================================================
+# TEAM-CALL AGGREGATION
+# ============================================================================
+
+def aggregate_team_rows(
+    entity_team_rows: Dict[int, List[Dict[str, Any]]],
+    columns: Dict[str, Dict[str, Any]],
+    minutes_field: str = 'MIN',
+) -> Dict[int, Dict[str, Any]]:
+    """Aggregate per-team rows into per-entity values.
+
+    For traded entities who appear on multiple teams, supports two
+    aggregation modes per column (set via ``source['aggregation']``):
+
+      - ``'sum'``: simple sum across all team stints (default)
+      - ``'minute_weighted'``: weighted average by minutes played
+    """
+    rows: Dict[int, Dict[str, Any]] = {}
+
+    for entity_id, team_rows in entity_team_rows.items():
+        total_minutes = sum(float(r.get(minutes_field) or 0) for r in team_rows)
+        values: Dict[str, Any] = {}
+
+        for col_name, source in columns.items():
+            nba_field = source.get('field')
+            scale = source.get('scale', 1)
+            transform_name = source.get('transform', 'safe_int')
+            aggregation = source.get('aggregation', 'sum')
+
+            if aggregation == 'minute_weighted' and total_minutes > 0:
+                weighted_sum = 0.0
+                for r in team_rows:
+                    val = r.get(nba_field)
+                    mins = float(r.get(minutes_field) or 0)
+                    if val is not None and mins > 0:
+                        weighted_sum += float(val) * mins
+                raw = weighted_sum / total_minutes
+            else:
+                raw = sum(float(r.get(nba_field) or 0) for r in team_rows)
+
+            values[col_name] = apply_transform(raw, transform_name, scale)
+
+        rows[entity_id] = values
+
+    return rows

@@ -1,19 +1,18 @@
 """
 The Glass - NBA Provider Configuration
 
-Operational settings for the NBA API: endpoint definitions, rate limits,
-season boundaries, team ID resolution, and query helpers.
+Pure data definitions for the NBA API provider: endpoint metadata,
+rate limits, season boundaries, and field name mappings.
 
-Column schema lives in the unified config (src/input/config.py).
-NBA source mappings (endpoint/field/transform per column) live in sources.py.
+All query logic (column lookups, call grouping, team ID resolution)
+lives in nba_api/resolver.py.  Column schema and NBA source mappings
+live in the unified config (src/input/config.py).
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from src.db import get_current_season, get_current_season_year
-from src.input.config import DB_COLUMNS, TYPE_TRANSFORMS
-from src.input.sources.nba_api.sources import NBA_SOURCES
 
 
 # ============================================================================
@@ -43,31 +42,6 @@ SEASON_TYPES = {
     2: {'name': 'Playoffs',       'param': 'Playoffs',       'min_season': None},
     3: {'name': 'PlayIn',         'param': 'PlayIn',         'min_season': '2020-21'},
 }
-
-
-# ============================================================================
-# TEAM IDS  (lazy-loaded from database, cached)
-# ============================================================================
-
-_team_ids_cache: Optional[Dict[str, int]] = None
-
-
-def get_team_ids() -> Dict[str, int]:
-    """Load team nba_api_id->abbr mapping from the database.
-
-    Cached after first call so only one query per process lifetime.
-    """
-    global _team_ids_cache
-    if _team_ids_cache is None:
-        from src.db import db_connection
-        with db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT nba_api_id, abbr FROM {DB_SCHEMA}.teams "
-                    f"ORDER BY nba_api_id"
-                )
-                _team_ids_cache = {row[1]: int(row[0]) for row in cur.fetchall()}
-    return _team_ids_cache
 
 
 # ============================================================================
@@ -280,105 +254,3 @@ API_FIELD_NAMES = {
     'entity_name': {'player': 'PLAYER_NAME', 'team': 'TEAM_NAME'},
     'special_ids': {'person': 'PERSON_ID'},
 }
-
-
-def get_entity_id_field(entity: str) -> str:
-    """Return the NBA API header name for a given entity's ID column."""
-    return API_FIELD_NAMES['entity_id'][entity]
-
-
-# ============================================================================
-# QUERY HELPERS
-# ============================================================================
-
-def get_columns_for_endpoint(
-    endpoint_name: str,
-    entity: str,
-    params: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Dict[str, Any]]:
-    """Find all columns whose NBA source maps to the given endpoint.
-
-    Walks NBA_SOURCES and returns ``{col_name: enriched_source_dict}`` with
-    default transforms injected.  Columns with ``multi_call`` or ``pipeline``
-    sources are included so the runner can classify them.
-
-    Args:
-        endpoint_name: NBA API endpoint (e.g. ``'leaguedashplayerstats'``).
-        entity:        ``'player'`` or ``'team'``.
-        params:        Optional param filter — only include columns whose
-                       source params are a superset of these.
-    """
-    matched: Dict[str, Dict[str, Any]] = {}
-
-    for col_name, sources in NBA_SOURCES.items():
-        source = sources.get(entity)
-        if not source:
-            continue
-
-        # Determine the endpoint from the source (may be nested in pipeline)
-        ep = source.get('endpoint')
-        if not ep:
-            pipeline = source.get('pipeline', {})
-            ep = pipeline.get('endpoint')
-        if ep != endpoint_name:
-            continue
-
-        # Optional param matching (for sources with extra params)
-        if params:
-            source_params = source.get('params', {})
-            if not all(source_params.get(k) == v for k, v in params.items()):
-                continue
-
-        # Enrich with default transform based on column type
-        enriched = {**source}
-        if 'transform' not in enriched and 'pipeline' not in enriched and 'multi_call' not in enriched:
-            col_meta = DB_COLUMNS.get(col_name, {})
-            base_type = col_meta.get('type', '').split('(')[0]
-            enriched['transform'] = TYPE_TRANSFORMS.get(base_type, 'safe_int')
-
-        matched[col_name] = enriched
-
-    return matched
-
-
-def get_all_sources_for_entity(
-    entity: str,
-    season: Optional[str] = None,
-) -> Dict[str, Dict[str, Any]]:
-    """Return every column with an NBA source for the given entity.
-
-    If *season* is provided, excludes endpoints that aren't available
-    for that season.
-    """
-    matched: Dict[str, Dict[str, Any]] = {}
-
-    for col_name, sources in NBA_SOURCES.items():
-        source = sources.get(entity)
-        if not source:
-            continue
-
-        if season:
-            ep = source.get('endpoint') or source.get('pipeline', {}).get('endpoint', '')
-            if not is_endpoint_available(ep, season):
-                continue
-
-        enriched = {**source}
-        if 'transform' not in enriched and 'pipeline' not in enriched and 'multi_call' not in enriched:
-            col_meta = DB_COLUMNS.get(col_name, {})
-            base_type = col_meta.get('type', '').split('(')[0]
-            enriched['transform'] = TYPE_TRANSFORMS.get(base_type, 'safe_int')
-
-        matched[col_name] = enriched
-
-    return matched
-
-
-def is_endpoint_available(endpoint_name: str, season: str) -> bool:
-    """Check whether an endpoint has data for the given season."""
-    ep = ENDPOINTS.get(endpoint_name)
-    if not ep:
-        return False
-    min_season = ep.get('min_season')
-    if min_season is None:
-        return True
-    return season >= min_season

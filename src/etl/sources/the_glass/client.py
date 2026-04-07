@@ -6,7 +6,7 @@ values (wingspan, hand, notes).  This CLI reads those sheets and writes
 the values back to the PostgreSQL database.
 
 Usage:
-    python -m input.sources.the_glass.client --league nba [--dry-run]
+    python -m etl.sources.the_glass.client --league nba [--dry-run]
 """
 
 import argparse
@@ -16,11 +16,11 @@ from typing import Dict, List, Tuple
 from dotenv import load_dotenv
 
 from src.db import db_connection, quote_col
-from src.output.config import (
+from src.publish.config import (
     GOOGLE_SHEETS_CONFIG, SHEETS_COLUMNS, SHEET_FORMATTING
 )
-from src.output.core.layout import build_sheet_columns, get_column_index
-from src.output.destinations.sheets.client import get_sheets_client
+from src.publish.core.layout import build_sheet_columns, get_column_index
+from src.publish.destinations.sheets.client import get_sheets_client
 
 load_dotenv()
 
@@ -169,7 +169,7 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
         _, data_rows = _read_sheet_data(ws, header_rows)
         logger.info('Read %d data rows from TEAMS sheet', len(data_rows))
 
-        from src.output.core.db import get_teams_from_db
+        from src.publish.core.db import get_teams_from_db
 
         teams_db = get_teams_from_db(db_schema)
         name_to_id = {name: tid for tid, (abbr, name) in teams_db.items()}
