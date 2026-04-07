@@ -18,6 +18,47 @@ from typing import Any, Dict
 
 
 # ============================================================================
+# VALIDATION SCHEMAS  (co-located with the config they describe)
+# ============================================================================
+
+VALID_PG_TYPES = {
+    'SERIAL', 'SMALLINT', 'INTEGER', 'BIGINT', 'VARCHAR', 'TEXT', 'CHAR',
+    'BOOLEAN', 'TIMESTAMP', 'DATE', 'NUMERIC', 'REAL', 'DOUBLE PRECISION',
+}
+VALID_ENTITY_TYPES = {'player', 'team', 'opponent'}
+VALID_SCOPES = {'entity', 'stats'}
+VALID_UPDATE_FREQUENCIES = {'daily', 'annual', None}
+
+DB_COLUMNS_SCHEMA = {
+    'type': {'required': True, 'types': (str,)},
+    'scope': {'required': True, 'types': (list,), 'list_item_values': VALID_SCOPES},
+    'nullable': {'required': True, 'types': (bool,)},
+    'default': {'required': True, 'types': (str, type(None))},
+    'entity_types': {'required': True, 'types': (list,), 'list_item_values': VALID_ENTITY_TYPES},
+    'update_frequency': {'required': True, 'types': (str, type(None)), 'allowed_values': VALID_UPDATE_FREQUENCIES},
+    'rate_group': {'required': True, 'types': (str, type(None))},
+    'comment': {'required': True, 'types': (str, type(None))},
+    'sources': {'required': True, 'types': (dict, type(None))},
+}
+
+TABLES_SCHEMA = {
+    'entity': {'required': True, 'types': (str,), 'allowed_values': {'player', 'team'}},
+    'scope': {'required': True, 'types': (str,), 'allowed_values': VALID_SCOPES},
+    'unique_key': {'required': True, 'types': (list,)},
+    'has_opponent_columns': {'required': False, 'types': (bool,)},
+}
+
+ETL_CONFIG_SCHEMA = {
+    'retention_seasons': {'required': True, 'types': (int,)},
+    'calendar_flip_month': {'required': True, 'types': (int,)},
+    'calendar_flip_day': {'required': True, 'types': (int,)},
+    'max_retry_attempts': {'required': True, 'types': (int,)},
+    'retry_delay_seconds': {'required': True, 'types': (int,)},
+    'auto_resume': {'required': True, 'types': (bool,)},
+}
+
+
+# ============================================================================
 # DEFAULT TRANSFORMS BY COLUMN TYPE
 # ============================================================================
 
@@ -48,12 +89,12 @@ TABLES = {
     'player_season_stats': {
         'entity': 'player',
         'scope': 'stats',
-        'unique_key': ['nba_api_id', 'season', 'season_type'],
+        'unique_key': ['entity_id', 'season', 'season_type'],
     },
     'team_season_stats': {
         'entity': 'team',
         'scope': 'stats',
-        'unique_key': ['nba_api_id', 'season', 'season_type'],
+        'unique_key': ['entity_id', 'season', 'season_type'],
         'has_opponent_columns': True,
     },
 }
@@ -137,7 +178,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'nba_api_id': {
         'type': 'VARCHAR(10)',
-        'scope': ['entity', 'stats'],
+        'scope': ['entity'],
         'nullable': False,
         'default': None,
         'entity_types': ['player', 'team'],
@@ -158,6 +199,17 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
                 },
             },
         },
+    },
+    'entity_id': {
+        'type': 'INTEGER',
+        'scope': ['stats'],
+        'nullable': False,
+        'default': None,
+        'entity_types': ['player', 'team'],
+        'update_frequency': None,
+        'rate_group': None,
+        'comment': 'FK to entity table serial id',
+        'sources': None,
     },
     'updated_at': {
         'type': 'TIMESTAMP',

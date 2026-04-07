@@ -174,13 +174,14 @@ def write_entity_rows(
 ) -> int:
     """Write extracted entity rows to the database via upsert.
 
-    Adds identity columns (nba_api_id, season, season_type) to each row
-    for the conflict key, then delegates to ``bulk_upsert``.
+    For entity scope: upserts directly with nba_api_id as conflict key.
+    For stats scope: looks up the entity's serial id from the entity
+    table, then upserts with (entity_id, season, season_type) conflict key.
 
     Args:
         entity:      ``'player'`` or ``'team'``.
         scope:       ``'stats'`` or ``'entity'``.
-        rows:        ``{nba_api_id: {col_name: value, ...}, ...}``
+        rows:        ``{source_entity_id: {col_name: value, ...}, ...}``
         season:      Season string (e.g. ``'2024-25'``).
         season_type: Season type integer (1=Regular, 2=Playoffs, 3=PlayIn).
         db_schema:   Database schema name (e.g. ``'nba'``).
@@ -204,23 +205,59 @@ def write_entity_rows(
         all_cols.update(vals.keys())
 
     data_cols = sorted(all_cols)
-    columns = list(conflict_columns) + data_cols
-
-    data = []
-    for entity_id, vals in rows.items():
-        identity_values = []
-        for ck in conflict_columns:
-            if ck == 'nba_api_id':
-                identity_values.append(str(entity_id))
-            elif ck == 'season':
-                identity_values.append(season)
-            elif ck == 'season_type':
-                identity_values.append(str(season_type))
-            else:
-                identity_values.append(None)
-
-        row_values = [vals.get(c) for c in data_cols]
-        data.append(tuple(identity_values + row_values))
 
     with db_connection() as conn:
-        return bulk_upsert(conn, table, columns, data, conflict_columns)
+        if scope == 'stats':
+            entity_table = get_table_name(entity, 'entity', db_schema)
+            id_map = _load_entity_id_map(conn, entity_table)
+
+            columns = list(conflict_columns) + data_cols
+            data = []
+            for source_id, vals in rows.items():
+                serial_id = id_map.get(str(source_id))
+                if serial_id is None:
+                    logger.warning(
+                        'No entity row for source_id=%s in %s, skipping stats',
+                        source_id, entity_table,
+                    )
+                    continue
+
+                identity_values = []
+                for ck in conflict_columns:
+                    if ck == 'entity_id':
+                        identity_values.append(serial_id)
+                    elif ck == 'season':
+                        identity_values.append(season)
+                    elif ck == 'season_type':
+                        identity_values.append(str(season_type))
+                    else:
+                        identity_values.append(None)
+
+                row_values = [vals.get(c) for c in data_cols]
+                data.append(tuple(identity_values + row_values))
+
+            if not data:
+                return 0
+            return bulk_upsert(conn, table, columns, data, conflict_columns)
+        else:
+            columns = list(conflict_columns) + data_cols
+            data = []
+            for source_id, vals in rows.items():
+                identity_values = []
+                for ck in conflict_columns:
+                    if ck == 'nba_api_id':
+                        identity_values.append(str(source_id))
+                    else:
+                        identity_values.append(None)
+
+                row_values = [vals.get(c) for c in data_cols]
+                data.append(tuple(identity_values + row_values))
+
+            return bulk_upsert(conn, table, columns, data, conflict_columns)
+
+
+def _load_entity_id_map(conn: Any, entity_table: str) -> Dict[str, int]:
+    """Load nba_api_id -> serial id mapping from an entity table."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT nba_api_id, id FROM {entity_table}")
+        return {str(row[0]): row[1] for row in cur.fetchall()}

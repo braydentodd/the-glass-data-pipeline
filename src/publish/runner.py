@@ -99,20 +99,25 @@ def main():
     ctx.player_stats_table = get_table_name('player', 'stats', DB_SCHEMA)
     ctx.team_stats_table = get_table_name('team', 'stats', DB_SCHEMA)
 
+    from src.etl.config import DB_COLUMNS
     ctx.player_entity_fields = {
-        'nba_api_id', 'name', 'team_id', 'height_ins', 'weight_lbs',
-        'wingspan_ins', 'seasons_exp', 'age', 'jersey_num',
-        'hand', 'notes', 'birthdate', 'updated_at',
+        col for col, meta in DB_COLUMNS.items()
+        if 'entity' in meta['scope'] and 'player' in meta['entity_types']
     }
     ctx.team_entity_fields = {
-        'nba_api_id', 'abbr', 'name', 'notes', 'updated_at',
+        col for col, meta in DB_COLUMNS.items()
+        if 'entity' in meta['scope'] and 'team' in meta['entity_types']
     }
-
-    all_cols = {k for k, v in SHEETS_COLUMNS.items()
-                if league in v.get('leagues', [])
-                and any(SECTION_CONFIG.get(s, {}).get('is_stats_section') for s in v.get('sections', []))}
-    ctx.stat_fields = {c for c in (all_cols - ctx.player_entity_fields - ctx.team_entity_fields) if not c[0].isupper()}
-    ctx.team_stat_fields = {c for c in (all_cols - ctx.team_entity_fields) if not c[0].isupper()}
+    ctx.stat_fields = {
+        col for col, meta in DB_COLUMNS.items()
+        if 'stats' in meta['scope'] and 'player' in meta['entity_types']
+        and col not in ('id', 'entity_id', 'season', 'season_type', 'updated_at', 'created_at')
+    }
+    ctx.team_stat_fields = {
+        col for col, meta in DB_COLUMNS.items()
+        if 'stats' in meta['scope'] and 'team' in meta['entity_types']
+        and col not in ('id', 'entity_id', 'season', 'season_type', 'updated_at', 'created_at')
+    }
     ctx.team_abbr_col = 'abbr'
     ctx.primary_minutes_col = 'minutes_x10' if 'minutes_x10' in ctx.stat_fields else 'minutes'
     ctx.season_format_fn = str

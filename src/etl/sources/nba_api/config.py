@@ -254,3 +254,26 @@ API_FIELD_NAMES = {
     'entity_name': {'player': 'PLAYER_NAME', 'team': 'TEAM_NAME'},
     'special_ids': {'person': 'PERSON_ID'},
 }
+
+
+# ============================================================================
+# VALIDATION SCHEMAS  (co-located with the config they describe)
+# ============================================================================
+
+VALID_EXECUTION_TIERS = {'league', 'player', 'team', 'team_call'}
+
+ENDPOINTS_SCHEMA = {
+    'min_season': {'required': True, 'types': (str, type(None))},
+    'execution_tier': {'required': True, 'types': (str,), 'allowed_values': VALID_EXECUTION_TIERS},
+    'default_result_set': {'required': True, 'types': (str,)},
+    'season_type_param': {'required': True, 'types': (str, type(None))},
+    'per_mode_param': {'required': True, 'types': (str, type(None))},
+    'entity_types': {'required': True, 'types': (list,), 'list_item_values': {'player', 'team'}},
+    'requires_params': {'required': False, 'types': (list,)},
+}
+
+SEASON_TYPES_SCHEMA = {
+    'name': {'required': True, 'types': (str,)},
+    'param': {'required': True, 'types': (str,)},
+    'min_season': {'required': True, 'types': (str, type(None))},
+}

@@ -1,92 +1,25 @@
 """
 The Glass - Schema-Driven Config Validation
 
-Validates all configuration dictionaries at startup using declarative
-schemas.  Each schema defines required/optional attributes, types,
-allowed values, and cross-references — the validation engine is generic.
+Generic validation engine that checks configuration dictionaries against
+declarative schemas.  Schemas are co-located with their config files:
 
-Add a new config?  Define a schema dict, add it to ``ALL_VALIDATIONS``.
+  - DB_COLUMNS_SCHEMA, TABLES_SCHEMA, ETL_CONFIG_SCHEMA -> src/etl/config.py
+  - ENDPOINTS_SCHEMA, SEASON_TYPES_SCHEMA -> src/etl/sources/nba_api/config.py
+
+Add a new config?  Define a schema dict next to the data, then register
+it in ``validate_config()``.
 """
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# VALIDATION SCHEMAS
-#
-# Each schema is a dict of {attribute_name: constraint_dict}.
-# Constraint keys:
-#   required        : bool — must be present (default: True)
-#   types           : tuple of types — acceptable Python types (use None for NoneType)
-#   allowed_values  : set — restrict to these values
-#   list_item_values: set — if value is a list, restrict each item
-#   dict_required   : dict — nested schema for dict values
-# ============================================================================
-
-VALID_PG_TYPES = {
-    'SERIAL', 'SMALLINT', 'INTEGER', 'BIGINT', 'VARCHAR', 'TEXT', 'CHAR',
-    'BOOLEAN', 'TIMESTAMP', 'DATE', 'NUMERIC', 'REAL', 'DOUBLE PRECISION',
-}
-
-VALID_ENTITY_TYPES = {'player', 'team', 'opponent'}
-VALID_SCOPES = {'entity', 'stats'}
 VALID_TRANSFORMS = {
     'safe_int', 'safe_float', 'safe_str',
     'parse_height', 'parse_birthdate', 'format_season',
-}
-VALID_EXECUTION_TIERS = {'league', 'player', 'team', 'team_call'}
-VALID_UPDATE_FREQUENCIES = {'daily', 'annual', None}
-
-# -- DB_COLUMNS entry schema --
-DB_COLUMNS_SCHEMA = {
-    'type': {'required': True, 'types': (str,)},
-    'scope': {'required': True, 'types': (list,), 'list_item_values': VALID_SCOPES},
-    'nullable': {'required': True, 'types': (bool,)},
-    'default': {'required': True, 'types': (str, type(None))},
-    'entity_types': {'required': True, 'types': (list,), 'list_item_values': VALID_ENTITY_TYPES},
-    'update_frequency': {'required': True, 'types': (str, type(None)), 'allowed_values': VALID_UPDATE_FREQUENCIES},
-    'rate_group': {'required': True, 'types': (str, type(None))},
-    'comment': {'required': True, 'types': (str, type(None))},
-    'sources': {'required': True, 'types': (dict, type(None))},
-}
-
-# -- TABLES entry schema --
-TABLES_SCHEMA = {
-    'entity': {'required': True, 'types': (str,), 'allowed_values': {'player', 'team'}},
-    'scope': {'required': True, 'types': (str,), 'allowed_values': VALID_SCOPES},
-    'unique_key': {'required': True, 'types': (list,)},
-    'has_opponent_columns': {'required': False, 'types': (bool,)},
-}
-
-# -- ENDPOINTS entry schema --
-ENDPOINTS_SCHEMA = {
-    'min_season': {'required': True, 'types': (str, type(None))},
-    'execution_tier': {'required': True, 'types': (str,), 'allowed_values': VALID_EXECUTION_TIERS},
-    'default_result_set': {'required': True, 'types': (str,)},
-    'season_type_param': {'required': True, 'types': (str, type(None))},
-    'per_mode_param': {'required': True, 'types': (str, type(None))},
-    'entity_types': {'required': True, 'types': (list,), 'list_item_values': {'player', 'team'}},
-    'requires_params': {'required': False, 'types': (list,)},
-}
-
-# -- ETL_CONFIG schema (flat, keys validated directly) --
-ETL_CONFIG_SCHEMA = {
-    'retention_seasons': {'required': True, 'types': (int,)},
-    'calendar_flip_month': {'required': True, 'types': (int,)},
-    'calendar_flip_day': {'required': True, 'types': (int,)},
-    'max_retry_attempts': {'required': True, 'types': (int,)},
-    'retry_delay_seconds': {'required': True, 'types': (int,)},
-    'auto_resume': {'required': True, 'types': (bool,)},
-}
-
-# -- SEASON_TYPES entry schema --
-SEASON_TYPES_SCHEMA = {
-    'name': {'required': True, 'types': (str,)},
-    'param': {'required': True, 'types': (str,)},
-    'min_season': {'required': True, 'types': (str, type(None))},
 }
 
 
@@ -173,6 +106,8 @@ def _validate_flat_config(
 
 def _validate_pg_types(db_columns: Dict[str, Dict]) -> List[str]:
     """Validate that all DB_COLUMNS types are valid PostgreSQL types."""
+    from src.etl.config import VALID_PG_TYPES
+
     errors = []
     for col_name, meta in db_columns.items():
         col_type = meta.get('type', '')
@@ -184,6 +119,7 @@ def _validate_pg_types(db_columns: Dict[str, Dict]) -> List[str]:
 
 def _validate_source_structure(db_columns: Dict[str, Dict]) -> List[str]:
     """Validate the nested sources structure in DB_COLUMNS."""
+    from src.etl.config import VALID_ENTITY_TYPES
     errors = []
     for col_name, meta in db_columns.items():
         sources = meta.get('sources')
@@ -276,7 +212,10 @@ def validate_config(
     Raises:
         RuntimeError: If any validation errors are found.
     """
-    from src.etl.config import DB_COLUMNS, TABLES, ETL_CONFIG, ETL_TABLES
+    from src.etl.config import (
+        DB_COLUMNS, TABLES, ETL_CONFIG, ETL_TABLES,
+        DB_COLUMNS_SCHEMA, TABLES_SCHEMA, ETL_CONFIG_SCHEMA,
+    )
 
     errors: List[str] = []
 
@@ -286,6 +225,7 @@ def validate_config(
     errors.extend(_validate_flat_config(ETL_CONFIG, ETL_CONFIG_SCHEMA, 'ETL_CONFIG'))
 
     if endpoints:
+        from src.etl.sources.nba_api.config import ENDPOINTS_SCHEMA
         errors.extend(_validate_dict_config(endpoints, ENDPOINTS_SCHEMA, 'ENDPOINTS'))
 
     # Type and structural validations
