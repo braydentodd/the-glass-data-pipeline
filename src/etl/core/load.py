@@ -261,3 +261,46 @@ def _load_entity_id_map(conn: Any, entity_table: str) -> Dict[str, int]:
     with conn.cursor() as cur:
         cur.execute(f"SELECT nba_api_id, id FROM {entity_table}")
         return {str(row[0]): row[1] for row in cur.fetchall()}
+
+
+def seed_empty_stats(
+    entity: str,
+    season: str,
+    season_type: int,
+    db_schema: str,
+) -> int:
+    """Insert skeleton stats rows for entities missing data this season.
+
+    Creates rows with only (entity_id, season, season_type) populated --
+    all stat columns remain NULL.  Idempotent: skips entities that already
+    have a row for the given season + season_type.
+
+    Used after discover to ensure newly rostered players appear in stats
+    tables, and at the start of each season to seed empty rows for all
+    existing entities.
+    """
+    from src.db import get_table_name
+
+    entity_table = get_table_name(entity, 'entity', db_schema)
+    stats_table = get_table_name(entity, 'stats', db_schema)
+
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO {stats_table} (entity_id, season, season_type) "
+                f"SELECT e.id, %s, %s "
+                f"FROM {entity_table} e "
+                f"WHERE NOT EXISTS ("
+                f"  SELECT 1 FROM {stats_table} s "
+                f"  WHERE s.entity_id = e.id "
+                f"  AND s.season = %s AND s.season_type = %s"
+                f")",
+                (season, str(season_type), season, str(season_type)),
+            )
+            count = cur.rowcount
+    if count:
+        logger.info(
+            'Seeded %d empty %s stats rows for %s (type %d)',
+            count, entity, season, season_type,
+        )
+    return count

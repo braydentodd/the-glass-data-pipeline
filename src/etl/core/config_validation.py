@@ -141,7 +141,7 @@ def validate_config(
         RuntimeError: If any validation errors are found.
     """
     from src.etl.config import (
-        DB_COLUMNS, TABLES, ETL_CONFIG, ETL_TABLES,
+        DB_COLUMNS, TABLES, ETL_CONFIG,
         DB_COLUMNS_SCHEMA, TABLES_SCHEMA, ETL_CONFIG_SCHEMA,
     )
 

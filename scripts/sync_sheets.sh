@@ -55,5 +55,5 @@ else
     echo "Syncing all ${LABEL} team sheets..."
 fi
 
-export PYTHONPATH="$REPO_ROOT/src:$PYTHONPATH"
-python3 -m output.runner --league "$LEAGUE" $ARGS 2>&1
+export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+python3 -m src.publish.runner --league "$LEAGUE" $ARGS 2>&1

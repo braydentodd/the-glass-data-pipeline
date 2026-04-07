@@ -24,15 +24,10 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-warnings.filterwarnings(
-    'ignore',
-    message='Failed to return connection to pool',
-    module='urllib3',
-)
-
 from src.db import db_connection
 from src.etl.config import ETL_CONFIG
 from src.etl.core.db import ensure_tables
+from src.etl.core.config_validation import validate_config
 from src.etl.core.extract import (
     extract_columns_from_result,
     extract_raw_rows,
@@ -41,7 +36,7 @@ from src.etl.core.extract import (
     get_pipeline_columns,
     get_simple_columns,
 )
-from src.etl.core.load import write_entity_rows
+from src.etl.core.load import seed_empty_stats, write_entity_rows
 from src.etl.core.progress import (
     complete_run,
     create_run,
@@ -69,6 +64,12 @@ from src.etl.sources.nba_api.config import (
     ENDPOINTS,
     SEASON_CONFIG,
     SEASON_TYPES,
+)
+
+warnings.filterwarnings(
+    'ignore',
+    message='Failed to return connection to pool',
+    module='urllib3',
 )
 
 logging.basicConfig(
@@ -618,6 +619,7 @@ def run_etl(
         phase, season, season_type_name, entity,
     )
 
+    validate_config(ENDPOINTS)
     ensure_tables(DB_SCHEMA)
 
     entities = ['player', 'team'] if entity == 'all' else [entity]
@@ -632,6 +634,10 @@ def run_etl(
         total_rows += _discover_entities(
             entities, season, season_type, season_type_name, team_ids, failed,
         )
+        # Seed empty stats rows so newly rostered entities appear in stats
+        # tables even before their first game data arrives.
+        for ent in entities:
+            total_rows += seed_empty_stats(ent, season, season_type, DB_SCHEMA)
 
     if phase in ('full', 'backfill'):
         total_rows += _backfill(
