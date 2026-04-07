@@ -11,20 +11,55 @@ import argparse
 import os
 import logging
 import time
+from dataclasses import dataclass, field
+from typing import Callable, Set
 
 from dotenv import load_dotenv
 
-from src.db import get_db_connection
-from src.publish.core.db import fetch_all_players, fetch_all_teams, get_teams_from_db
+from src.db import get_db_connection, get_table_name
+from src.publish.core.queries import fetch_all_players, fetch_all_teams, get_teams_from_db
 from src.publish.core.calculations import calculate_all_percentiles
 from src.publish.destinations.sheets.client import get_sheets_client
 from src.publish.core.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
-from src.publish.config import SHEETS_COLUMNS, STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG
-from src.etl.core.db import get_table_name
+from src.publish.config import (
+    STAT_RATES, DEFAULT_STAT_RATE,
+    derive_db_fields,
+)
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SyncContext:
+    """Bundles everything the sheets sync needs for a league run."""
+
+    league: str
+    google_sheets_config: dict
+    sheet_formatting: dict
+    league_config: dict
+    db_schema: str
+
+    # Table names (schema-qualified)
+    player_entity_table: str
+    team_entity_table: str
+    player_stats_table: str
+    team_stats_table: str
+
+    # DB column sets for query construction
+    player_entity_fields: Set[str] = field(default_factory=set)
+    team_entity_fields: Set[str] = field(default_factory=set)
+    stat_fields: Set[str] = field(default_factory=set)
+    team_stat_fields: Set[str] = field(default_factory=set)
+
+    # League-specific settings
+    team_abbr_col: str = 'abbr'
+    team_abbr_field: str = 'abbr'
+    primary_minutes_col: str = 'minutes_x10'
+    season_format_fn: Callable = str
+    season_key: str = 'current_season'
+    include_hist_post_players: bool = True
 
 
 def main():
@@ -57,7 +92,7 @@ def main():
 
     # Export Apps Script config if requested (standalone action)
     if args.export_config:
-        from src.publish.core.export import export_config
+        from src.publish.core.export_config import export_config
         path = export_config(league)
         logger.info('Config exported to %s', path)
         return
@@ -67,19 +102,7 @@ def main():
     historical_config = {'mode': 'seasons', 'value': num_seasons}
 
     # ---- Build context ----
-    class Context:
-        pass
-
-    ctx = Context()
-    ctx.league = league
     from src.publish.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
-    from src.publish.config import SHEETS_COLUMNS
-    ctx.google_sheets_config = GOOGLE_SHEETS_CONFIG
-    ctx.sheet_formatting = SHEET_FORMATTING
-    ctx.season_key = 'current_season'
-    ctx.team_abbr_field = 'abbr'
-    ctx.include_hist_post_players = True
-    ctx.wrap_opp_pct = lambda vals: sorted(vals)
 
     if league == 'nba':
         from src.etl.sources.nba_api.config import DB_SCHEMA, SEASON_CONFIG as league_config
@@ -91,36 +114,24 @@ def main():
             'current_season_year': get_current_season_year(),
         }
 
-    ctx.get_teams_from_db = lambda: get_teams_from_db(DB_SCHEMA)
-    ctx.league_config = league_config
+    db_fields = derive_db_fields()
 
-    ctx.player_entity_table = get_table_name('player', 'entity', DB_SCHEMA)
-    ctx.team_entity_table = get_table_name('team', 'entity', DB_SCHEMA)
-    ctx.player_stats_table = get_table_name('player', 'stats', DB_SCHEMA)
-    ctx.team_stats_table = get_table_name('team', 'stats', DB_SCHEMA)
-
-    from src.etl.config import DB_COLUMNS
-    ctx.player_entity_fields = {
-        col for col, meta in DB_COLUMNS.items()
-        if 'entity' in meta['scope'] and 'player' in meta['entity_types']
-    }
-    ctx.team_entity_fields = {
-        col for col, meta in DB_COLUMNS.items()
-        if 'entity' in meta['scope'] and 'team' in meta['entity_types']
-    }
-    ctx.stat_fields = {
-        col for col, meta in DB_COLUMNS.items()
-        if 'stats' in meta['scope'] and 'player' in meta['entity_types']
-        and col not in ('id', 'entity_id', 'season', 'season_type', 'updated_at', 'created_at')
-    }
-    ctx.team_stat_fields = {
-        col for col, meta in DB_COLUMNS.items()
-        if 'stats' in meta['scope'] and 'team' in meta['entity_types']
-        and col not in ('id', 'entity_id', 'season', 'season_type', 'updated_at', 'created_at')
-    }
-    ctx.team_abbr_col = 'abbr'
-    ctx.primary_minutes_col = 'minutes_x10' if 'minutes_x10' in ctx.stat_fields else 'minutes'
-    ctx.season_format_fn = str
+    ctx = SyncContext(
+        league=league,
+        google_sheets_config=GOOGLE_SHEETS_CONFIG,
+        sheet_formatting=SHEET_FORMATTING,
+        league_config=league_config,
+        db_schema=DB_SCHEMA,
+        player_entity_table=get_table_name('player', 'entity', DB_SCHEMA),
+        team_entity_table=get_table_name('team', 'entity', DB_SCHEMA),
+        player_stats_table=get_table_name('player', 'stats', DB_SCHEMA),
+        team_stats_table=get_table_name('team', 'stats', DB_SCHEMA),
+        player_entity_fields=db_fields['player_entity_fields'],
+        team_entity_fields=db_fields['team_entity_fields'],
+        stat_fields=db_fields['stat_fields'],
+        team_stat_fields=db_fields['team_stat_fields'],
+        primary_minutes_col='minutes_x10' if 'minutes_x10' in db_fields['stat_fields'] else 'minutes',
+    )
 
     logger.info('Starting %s sync...', 'partial update' if partial_update else 'full')
     delay = 0.5 if partial_update else ctx.sheet_formatting.get('sync_delay_seconds', 3)
@@ -189,7 +200,7 @@ def main():
         conn.close()
 
     # ---- Build team list ----
-    teams_db = ctx.get_teams_from_db()
+    teams_db = get_teams_from_db(ctx.db_schema)
     team_names = {abbr: name for _, (abbr, name) in teams_db.items()}
     abbrs = sorted(team_names.keys())
 

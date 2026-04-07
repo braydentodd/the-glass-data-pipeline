@@ -16,21 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# TABLE RESOLUTION
-# ============================================================================
-
-def get_table_name(entity: str, scope: str, db_schema: str) -> str:
-    """Resolve a schema-qualified table name.
-
-    Example: get_table_name('player', 'stats', 'nba') -> 'nba.player_season_stats'
-    """
-    for name, meta in TABLES.items():
-        if meta['entity'] == entity and meta['scope'] == scope:
-            return f"{db_schema}.{name}"
-    raise ValueError(f"No table for entity={entity!r}, scope={scope!r}")
-
-
-# ============================================================================
 # COLUMN RESOLUTION
 # ============================================================================
 

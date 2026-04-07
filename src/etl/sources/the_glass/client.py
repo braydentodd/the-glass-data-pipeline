@@ -169,7 +169,7 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
         _, data_rows = _read_sheet_data(ws, header_rows)
         logger.info('Read %d data rows from TEAMS sheet', len(data_rows))
 
-        from src.publish.core.db import get_teams_from_db
+        from src.publish.core.queries import get_teams_from_db
 
         teams_db = get_teams_from_db(db_schema)
         name_to_id = {name: tid for tid, (abbr, name) in teams_db.items()}

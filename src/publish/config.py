@@ -1709,8 +1709,8 @@ SHEETS_COLUMNS: Dict[str, Any] = {
             'teams': subtract(divide('d_rtg_x10', 10), divide('off_d_rtg_x10', 10))
         }
     },
-    'ID#1': {
-        'description': 'NBA_API Player ID',
+    'ID': {
+        'description': 'The Glass Entity ID',
         'sections': ['identity'],
         'subsection': 'nba',
         'tabs': ['teams', 'players', 'team'],
@@ -1724,7 +1724,90 @@ SHEETS_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba'],
         'default': None,
         'values': {
-            'player': 'nba_api_id',
+            'player': 'id',
+            'team': 'id',
+            'teams': 'id'
         }
     }
 }
+
+
+# ============================================================================
+# FIELD DERIVATION — extract DB column references from SHEETS_COLUMNS
+# ============================================================================
+
+# Entity type mapping: SHEETS_COLUMNS values key -> (entity, db_entity_type)
+_VALUES_KEY_ENTITY = {
+    'player': 'player',
+    'team': 'team',
+    'teams': 'team',
+    'opponents': 'team',
+}
+
+_STATS_SECTIONS = frozenset(
+    name for name, cfg in SECTION_CONFIG.items() if cfg['is_stats_section']
+)
+
+
+def _extract_db_refs(expr) -> set:
+    """Walk an expression tree and return all referenced DB column names."""
+    if expr is None:
+        return set()
+    if isinstance(expr, (int, float)):
+        return set()
+    if isinstance(expr, str):
+        if expr.startswith('{') and expr.endswith('}'):
+            return {expr[1:-1]}
+        if expr and expr[0].isupper():
+            return set()
+        return {expr}
+    if isinstance(expr, tuple):
+        refs = set()
+        for item in expr[1:]:
+            refs |= _extract_db_refs(item)
+        return refs
+    return set()
+
+
+def derive_db_fields() -> Dict[str, set]:
+    """Derive the DB column sets needed by publish queries from SHEETS_COLUMNS.
+
+    Returns a dict with keys:
+        player_entity_fields, team_entity_fields, stat_fields, team_stat_fields
+    """
+    player_entity = set()
+    team_entity = set()
+    player_stats = set()
+    team_stats = set()
+
+    for col_def in SHEETS_COLUMNS.values():
+        sections = set(col_def.get('sections', []))
+        is_stats = bool(sections & _STATS_SECTIONS)
+        values = col_def.get('values', {})
+
+        for values_key, expr in values.items():
+            entity_type = _VALUES_KEY_ENTITY.get(values_key)
+            if entity_type is None:
+                continue
+
+            refs = _extract_db_refs(expr)
+            if not refs:
+                continue
+
+            if is_stats:
+                if entity_type == 'player':
+                    player_stats |= refs
+                else:
+                    team_stats |= refs
+            else:
+                if entity_type == 'player':
+                    player_entity |= refs
+                else:
+                    team_entity |= refs
+
+    return {
+        'player_entity_fields': player_entity,
+        'team_entity_fields': team_entity,
+        'stat_fields': player_stats,
+        'team_stat_fields': team_stats,
+    }

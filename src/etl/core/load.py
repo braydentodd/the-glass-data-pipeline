@@ -193,7 +193,7 @@ def write_entity_rows(
         return 0
 
     from src.etl.config import TABLES
-    from src.etl.core.db import get_table_name
+    from src.db import get_table_name
 
     table = get_table_name(entity, scope, db_schema)
     table_name = table.split('.', 1)[1]

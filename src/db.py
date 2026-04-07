@@ -27,6 +27,26 @@ logger = logging.getLogger(__name__)
 # SHARED UTILITIES
 # ============================================================================
 
+# Table naming convention: maps (entity, scope) to table name
+_TABLE_NAMES = {
+    ('player', 'entity'): 'players',
+    ('team', 'entity'): 'teams',
+    ('player', 'stats'): 'player_season_stats',
+    ('team', 'stats'): 'team_season_stats',
+}
+
+
+def get_table_name(entity: str, scope: str, db_schema: str) -> str:
+    """Resolve a schema-qualified table name.
+
+    Example: get_table_name('player', 'stats', 'nba') -> 'nba.player_season_stats'
+    """
+    key = (entity, scope)
+    if key not in _TABLE_NAMES:
+        raise ValueError(f"No table for entity={entity!r}, scope={scope!r}")
+    return f"{db_schema}.{_TABLE_NAMES[key]}"
+
+
 def quote_col(col: str) -> str:
     """Quote a column name for PostgreSQL. Handles digit-starting names like 2fgm."""
     return f'"{col}"'

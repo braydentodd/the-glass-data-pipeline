@@ -3,7 +3,7 @@ from collections import defaultdict
 
 from src.db import get_db_connection
 from src.publish.config import STAT_RATES
-from src.publish.core.db import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats
+from src.publish.core.queries import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats, get_teams_from_db
 from src.publish.core.layout import build_headers, build_sheet_columns, build_merged_entity_row, build_summary_rows
 from src.publish.destinations.sheets.payloads import build_formatting_requests
 from src.publish.core.calculations import calculate_all_percentiles, evaluate_expression
@@ -299,10 +299,10 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_possession',
             if values:
                 if col_key not in opp_percentiles:
                     opp_percentiles[col_key] = {}
-                opp_percentiles[col_key][base_section] = ctx.wrap_opp_pct(values)
+                opp_percentiles[col_key][base_section] = sorted(values)
 
         # ---- Team names ----
-        teams_db = ctx.get_teams_from_db()
+        teams_db = get_teams_from_db(ctx.db_schema)
         team_names_map = {abbr: name for _, (abbr, name) in teams_db.items()}
         abbrs = [abbr for _, (abbr, name) in teams_db.items()]
 

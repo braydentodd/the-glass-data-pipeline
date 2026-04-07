@@ -533,12 +533,14 @@ def _prune_stale(
     oldest_season: str,
     db_schema: str,
 ) -> int:
-    """Phase 4: Delete stats rows older than the retention window."""
+    """Phase 4: Delete stats rows older than the retention window,
+    then remove orphaned entity rows with no remaining stats."""
     logger.info('Phase: prune_stale (before %s)', oldest_season)
     pruned = 0
     from src.etl.config import TABLES
     with db_connection() as conn:
         with conn.cursor() as cur:
+            # Prune old stats rows
             for table_name, meta in TABLES.items():
                 if meta['scope'] != 'stats':
                     continue
@@ -550,6 +552,32 @@ def _prune_stale(
                 count = cur.rowcount
                 if count:
                     logger.info('Pruned %d rows from %s', count, qualified)
+                    pruned += count
+
+            # Prune orphaned entity rows (no stats remaining)
+            for table_name, meta in TABLES.items():
+                if meta['scope'] != 'entity':
+                    continue
+                entity_type = meta['entity']
+                if entity_type not in entities:
+                    continue
+                stats_table = None
+                for st_name, st_meta in TABLES.items():
+                    if st_meta['scope'] == 'stats' and st_meta['entity'] == entity_type:
+                        stats_table = f"{db_schema}.{st_name}"
+                        break
+                if not stats_table:
+                    continue
+                entity_qualified = f"{db_schema}.{table_name}"
+                cur.execute(
+                    f"DELETE FROM {entity_qualified} e "
+                    f"WHERE NOT EXISTS ("
+                    f"  SELECT 1 FROM {stats_table} s WHERE s.entity_id = e.id"
+                    f")",
+                )
+                count = cur.rowcount
+                if count:
+                    logger.info('Pruned %d orphaned entities from %s', count, entity_qualified)
                     pruned += count
     return pruned
 
