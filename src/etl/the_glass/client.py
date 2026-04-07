@@ -175,7 +175,7 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
         logger.info('Read %d data rows from TEAMS sheet', len(data_rows))
 
         if league == 'nba':
-            import etl.nba.lib as etl_lib
+            import etl.nba_api.lib as etl_lib
         else:
             import etl.ncaa.lib as etl_lib
 

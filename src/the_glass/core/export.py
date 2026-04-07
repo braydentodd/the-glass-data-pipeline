@@ -41,7 +41,7 @@ def get_config_for_export(league: str,
         if league == 'ncaa':
             import etl.ncaa.lib as _etl_lib
         else:
-            import etl.nba.lib as _etl_lib
+            import etl.nba_api.lib as _etl_lib
         get_teams_fn = _etl_lib.get_teams_from_db
 
     if google_sheets_config is None:

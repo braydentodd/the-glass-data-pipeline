@@ -1,9 +1,11 @@
 """
 The Glass - NBA API Client
 
-Wraps the nba_api library with session management, browser headers,
-rate limiting, and retry logic.  Abstracts away all NBA-specific HTTP
-concerns so the core pipeline never touches requests directly.
+Wraps the nba_api library with browser header patching, dynamic endpoint
+loading, retry logic, and parameter building.  Abstracts NBA-specific
+HTTP concerns so the core pipeline never touches requests directly.
+
+No classes -- all functions operate on plain data.
 """
 
 import importlib
@@ -14,7 +16,6 @@ from typing import Any, Callable, Dict, Optional
 
 from src.etl.nba_api.config import API_CONFIG, ENDPOINTS, RETRY_CONFIG
 
-# Suppress urllib3's harmless "Failed to return connection to pool" warning
 warnings.filterwarnings(
     "ignore",
     message="Failed to return connection to pool",
@@ -23,7 +24,11 @@ warnings.filterwarnings(
 
 logger = logging.getLogger(__name__)
 
-# Browser-like headers required by stats.nba.com
+
+# ============================================================================
+# BROWSER HEADERS  (required by stats.nba.com)
+# ============================================================================
+
 _NBA_STATS_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Encoding": "gzip, deflate, br",
@@ -70,21 +75,20 @@ def _patch_nba_api_headers() -> None:
         _base_http.NBAHTTP._session = None
         _session_patched = True
     except ImportError:
-        logger.warning("nba_api not installed — header patching skipped")
+        logger.warning("nba_api not installed -- header patching skipped")
 
 
 # ============================================================================
 # ENDPOINT CLASS LOADING
 # ============================================================================
 
-# Cache of endpoint name -> class to avoid repeated importlib lookups
 _endpoint_class_cache: Dict[str, Any] = {}
 
 
 def load_endpoint_class(endpoint_name: str) -> Optional[Any]:
-    """Dynamically load an nba_api endpoint class by name.
+    """Dynamically import and cache an nba_api endpoint class by name.
 
-    Returns None (with a warning) if the endpoint module doesn't exist.
+    Returns ``None`` (with a warning) if the module doesn't exist.
     """
     if endpoint_name in _endpoint_class_cache:
         return _endpoint_class_cache[endpoint_name]
@@ -96,14 +100,12 @@ def load_endpoint_class(endpoint_name: str) -> Optional[Any]:
         logger.warning("Could not import endpoint module: %s", module_path)
         return None
 
-    # The class name is the endpoint name in PascalCase
     class_name = endpoint_name[0].upper() + endpoint_name[1:]
     cls = getattr(module, class_name, None)
     if cls is None:
-        # Some endpoints use all-caps class names
         cls = getattr(module, endpoint_name.upper(), None)
     if cls is None:
-        logger.warning("No class found in %s for endpoint %s", module_path, endpoint_name)
+        logger.warning("No class found in %s", module_path)
         return None
 
     _endpoint_class_cache[endpoint_name] = cls
@@ -122,8 +124,8 @@ def create_api_call(
 ) -> Callable:
     """Build a zero-arg callable that executes an NBA API request.
 
-    The returned callable handles timeout and returns the raw JSON dict
-    (with ``resultSets``).  Internal params (prefixed ``_``) are stripped.
+    Internal params (keys starting with ``_``) are stripped before the call.
+    Returns raw JSON dict with ``resultSets``.
     """
     _patch_nba_api_headers()
 
@@ -142,9 +144,10 @@ def create_api_call(
 # ============================================================================
 
 def with_retry(func: Callable, max_retries: Optional[int] = None) -> Any:
-    """Execute *func* with exponential back-off retries.
+    """Execute *func* with exponential back-off on failure.
 
-    Returns the first successful result or raises the last exception.
+    Always applies the configured rate-limit delay before each attempt.
+    Returns the first successful result or re-raises the last exception.
     """
     retries = max_retries or RETRY_CONFIG['max_retries']
     backoff = RETRY_CONFIG['backoff_base']
@@ -157,6 +160,9 @@ def with_retry(func: Callable, max_retries: Optional[int] = None) -> Any:
             if attempt >= retries:
                 raise
             wait = attempt * (backoff // API_CONFIG['backoff_divisor'])
+            logger.warning(
+                'Attempt %d failed, retrying in %ds...', attempt, wait,
+            )
             time.sleep(wait)
 
     raise RuntimeError(f"with_retry exhausted {retries} attempts")
@@ -175,11 +181,10 @@ def build_endpoint_params(
 ) -> Dict[str, Any]:
     """Assemble the full parameter dict for an NBA API call.
 
-    Merges standard parameters (season, season_type, per_mode, league_id)
-    with endpoint-specific and caller-supplied overrides.
+    Merges standard parameters (season, league_id, per_mode, season_type)
+    with endpoint-specific defaults and caller-supplied overrides.
     """
     ep_cfg = ENDPOINTS.get(endpoint_name, {})
-
     params: Dict[str, Any] = {'season': season}
 
     # Season type
@@ -192,35 +197,21 @@ def build_endpoint_params(
     if pm_param and pm_param in API_CONFIG:
         params[pm_param] = API_CONFIG[pm_param]
 
-    # Player / Team discriminator for shared endpoints (leaguedashptstats)
-    if 'player' in ep_cfg.get('entity_types', []) and 'team' in ep_cfg.get('entity_types', []):
+    # Player / Team discriminator for shared endpoints
+    if (
+        'player' in ep_cfg.get('entity_types', [])
+        and 'team' in ep_cfg.get('entity_types', [])
+    ):
         if entity == 'player':
-            params['player_or_team'] = API_CONFIG['player_or_team_player']
+            params['player_or_team'] = 'Player'
         else:
-            params['player_or_team'] = API_CONFIG['player_or_team_team']
+            params['player_or_team'] = 'Team'
 
     # League ID
     params['league_id'] = API_CONFIG['league_id']
 
-    # Merge caller overrides last (they win)
+    # Caller overrides win
     if extra_params:
         params.update(extra_params)
 
     return params
-
-
-# ============================================================================
-# CUSTOM EXCEPTIONS
-# ============================================================================
-
-class APISessionExhausted(Exception):
-    """Raised when the NBA API session is exhausted and a restart is needed."""
-
-class DatabaseConnectionError(Exception):
-    """Raised when database connection fails."""
-
-class ConfigurationError(Exception):
-    """Raised when configuration is invalid."""
-
-class DataValidationError(Exception):
-    """Raised when data validation fails."""

@@ -41,13 +41,13 @@ from src.etl.core.extract import (
 from src.etl.core.load import bulk_upsert
 from src.etl.core.transform import apply_transform, execute_pipeline, safe_int
 from src.etl.db import ensure_tables, get_table_name
-from src.etl.nba.client import (
+from src.etl.nba_api.client import (
     build_endpoint_params,
     create_api_call,
     load_endpoint_class,
     with_retry,
 )
-from src.etl.nba.config import (
+from src.etl.nba_api.config import (
     API_CONFIG,
     DB_SCHEMA,
     ENDPOINTS,

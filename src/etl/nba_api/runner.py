@@ -66,7 +66,7 @@ except ImportError:
     pass
 
 # Configuration data (pure data structures)
-from etl.nba.config import (
+from etl.nba_api.config import (
     NBA_CONFIG, TEAM_IDS,
     DB_SCHEMA, TABLES_CONFIG, DB_COLUMNS, SEASON_TYPE_CONFIG,
     ENDPOINTS_CONFIG,
@@ -76,7 +76,7 @@ from etl.nba.config import (
 
 # Reusable utilities and helpers
 from src.db import ensure_schema
-from etl.nba.lib import (
+from etl.nba_api.lib import (
     infer_execution_tier_from_endpoint,
     get_columns_by_endpoint,
     safe_int, safe_float, safe_str, parse_height, parse_birthdate, format_season,

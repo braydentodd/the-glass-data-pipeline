@@ -77,8 +77,8 @@ def main():
     ctx.wrap_opp_pct = lambda vals: sorted(vals)
 
     if league == 'nba':
-        import etl.nba.lib as etl_lib
-        from etl.nba.config import NBA_CONFIG as league_config
+        import etl.nba_api.lib as etl_lib
+        from etl.nba_api.config import NBA_CONFIG as league_config
     else:
         import etl.ncaa.lib as etl_lib
         from etl.ncaa.config import NCAA_CONFIG as league_config
