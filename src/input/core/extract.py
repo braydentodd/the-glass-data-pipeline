@@ -12,7 +12,7 @@ JSON response that the provider client returns.
 import logging
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from src.etl.core.transform import apply_transform
+from src.input.core.transform import apply_transform
 
 logger = logging.getLogger(__name__)
 
@@ -170,5 +170,5 @@ def get_multi_call_columns(
 
 
 def get_entity_id_field(entity: str) -> str:
-    """Return the standard NBA API header name for an entity's ID."""
+    """Return the API header name for an entity's ID."""
     return 'PLAYER_ID' if entity == 'player' else 'TEAM_ID'

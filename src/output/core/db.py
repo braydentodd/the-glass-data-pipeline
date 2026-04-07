@@ -6,10 +6,29 @@ Functions are dynamically configured via the LeagueSyncContext to avoid hardcodi
 league-specific tables, schemas, or entity fields.
 """
 import logging
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from psycopg2.extras import RealDictCursor
 
+from src.db import get_db_connection
+
 logger = logging.getLogger(__name__)
+
+
+def get_teams_from_db(db_schema: str) -> Dict[int, Tuple[str, str]]:
+    """Fetch all teams from the database.
+
+    Returns {team_id: (abbr, team_name)} for the given schema.
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT team_id, abbr, team_name FROM {db_schema}.teams "
+                f"ORDER BY abbr"
+            )
+            return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+    finally:
+        conn.close()
 
 
 def _quote_col(col: str) -> str:

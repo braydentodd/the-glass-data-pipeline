@@ -4,16 +4,16 @@ The Glass - NBA Provider Configuration
 Operational settings for the NBA API: endpoint definitions, rate limits,
 season boundaries, team ID resolution, and query helpers.
 
-Column definitions and source mappings live in the unified config
-(src/etl/config.py).  This module contains everything needed to *execute*
-NBA API calls but nothing about what columns they populate.
+Column schema lives in the unified config (src/input/config.py).
+NBA source mappings (endpoint/field/transform per column) live in sources.py.
 """
 
 import os
 from typing import Any, Dict, List, Optional
 
 from src.db import get_current_season, get_current_season_year
-from src.etl.config import DB_COLUMNS, TYPE_TRANSFORMS
+from src.input.config import DB_COLUMNS, TYPE_TRANSFORMS
+from src.input.sources.nba_api.sources import NBA_SOURCES
 
 
 # ============================================================================
@@ -298,10 +298,9 @@ def get_columns_for_endpoint(
 ) -> Dict[str, Dict[str, Any]]:
     """Find all columns whose NBA source maps to the given endpoint.
 
-    Walks DB_COLUMNS, looks under the ``'nba'`` provider key, and returns
-    ``{col_name: enriched_source_dict}`` with default transforms injected.
-    Columns with ``multi_call`` or ``pipeline`` sources are included so the
-    runner can classify them.
+    Walks NBA_SOURCES and returns ``{col_name: enriched_source_dict}`` with
+    default transforms injected.  Columns with ``multi_call`` or ``pipeline``
+    sources are included so the runner can classify them.
 
     Args:
         endpoint_name: NBA API endpoint (e.g. ``'leaguedashplayerstats'``).
@@ -311,8 +310,8 @@ def get_columns_for_endpoint(
     """
     matched: Dict[str, Dict[str, Any]] = {}
 
-    for col_name, col_meta in DB_COLUMNS.items():
-        source = col_meta.get('nba', {}).get(entity)
+    for col_name, sources in NBA_SOURCES.items():
+        source = sources.get(entity)
         if not source:
             continue
 
@@ -333,7 +332,8 @@ def get_columns_for_endpoint(
         # Enrich with default transform based on column type
         enriched = {**source}
         if 'transform' not in enriched and 'pipeline' not in enriched and 'multi_call' not in enriched:
-            base_type = col_meta['type'].split('(')[0]
+            col_meta = DB_COLUMNS.get(col_name, {})
+            base_type = col_meta.get('type', '').split('(')[0]
             enriched['transform'] = TYPE_TRANSFORMS.get(base_type, 'safe_int')
 
         matched[col_name] = enriched
@@ -345,15 +345,15 @@ def get_all_sources_for_entity(
     entity: str,
     season: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Return every column with an NBA source for the entity.
+    """Return every column with an NBA source for the given entity.
 
     If *season* is provided, excludes endpoints that aren't available
     for that season.
     """
     matched: Dict[str, Dict[str, Any]] = {}
 
-    for col_name, col_meta in DB_COLUMNS.items():
-        source = col_meta.get('nba', {}).get(entity)
+    for col_name, sources in NBA_SOURCES.items():
+        source = sources.get(entity)
         if not source:
             continue
 
@@ -364,7 +364,8 @@ def get_all_sources_for_entity(
 
         enriched = {**source}
         if 'transform' not in enriched and 'pipeline' not in enriched and 'multi_call' not in enriched:
-            base_type = col_meta['type'].split('(')[0]
+            col_meta = DB_COLUMNS.get(col_name, {})
+            base_type = col_meta.get('type', '').split('(')[0]
             enriched['transform'] = TYPE_TRANSFORMS.get(base_type, 'safe_int')
 
         matched[col_name] = enriched

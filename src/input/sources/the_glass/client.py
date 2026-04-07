@@ -6,7 +6,7 @@ values (wingspan, hand, notes).  This CLI reads those sheets and writes
 the values back to the PostgreSQL database.
 
 Usage:
-    python -m src.sheets.sync_edits --league nba [--dry-run]
+    python -m input.sources.the_glass.client --league nba [--dry-run]
 """
 
 import argparse
@@ -16,11 +16,11 @@ from typing import Dict, List, Tuple
 from dotenv import load_dotenv
 
 from src.db import db_connection, quote_col
-from src.sheets.config import (
+from src.output.config import (
     GOOGLE_SHEETS_CONFIG, SHEETS_COLUMNS, SHEET_FORMATTING
 )
-from src.sheets.core.layout import build_sheet_columns, get_column_index
-from src.sheets.google.client import get_sheets_client
+from src.output.core.layout import build_sheet_columns, get_column_index
+from src.output.destinations.sheets.client import get_sheets_client
 
 load_dotenv()
 
@@ -110,13 +110,8 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
     if pid_idx is None:
         raise RuntimeError("Could not find player_id column in Players sheet layout")
 
-    # Resolve DB schema and tables
-    if league == 'nba':
-        db_schema = 'nba'
-    elif league == 'ncaa':
-        db_schema = 'ncaa'
-    else:
-        raise ValueError(f"Unknown league: {league}")
+    # League name maps directly to DB schema
+    db_schema = league
 
     # Open spreadsheet
     client = get_sheets_client(google_config)
@@ -174,12 +169,9 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
         _, data_rows = _read_sheet_data(ws, header_rows)
         logger.info('Read %d data rows from TEAMS sheet', len(data_rows))
 
-        if league == 'nba':
-            import etl.nba_api.lib as etl_lib
-        else:
-            import etl.ncaa.lib as etl_lib
+        from src.output.core.db import get_teams_from_db
 
-        teams_db = etl_lib.get_teams_from_db()
+        teams_db = get_teams_from_db(db_schema)
         name_to_id = {name: tid for tid, (abbr, name) in teams_db.items()}
         abbr_to_id = {abbr: tid for tid, (abbr, name) in teams_db.items()}
 

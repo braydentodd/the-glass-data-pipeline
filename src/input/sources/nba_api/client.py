@@ -14,7 +14,7 @@ import time
 import warnings
 from typing import Any, Callable, Dict, Optional
 
-from src.etl.nba_api.config import API_CONFIG, ENDPOINTS, RETRY_CONFIG
+from src.input.sources.nba_api.config import API_CONFIG, ENDPOINTS, RETRY_CONFIG
 
 warnings.filterwarnings(
     "ignore",

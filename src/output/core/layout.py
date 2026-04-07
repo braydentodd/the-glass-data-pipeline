@@ -1,6 +1,6 @@
 from typing import List, Optional, Any, Tuple
-from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING,
+from src.output.config import SHEETS_COLUMNS
+from src.output.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING,
                                 STAT_RATES, DEFAULT_STAT_RATE)
 from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
 from .formatting import format_section_header, format_stat_value, format_height
@@ -141,7 +141,6 @@ def get_columns_for_section_and_entity(section: str, entity: str,
 
 
 def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
-                        league_key: str = 'nba',
                         sheet_type: str = 'team',
                         default_mode: str = DEFAULT_STAT_RATE) -> List[Tuple]:
     """
@@ -162,7 +161,6 @@ def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
     _TAB_TYPE_KEY = {
         'team': 'team',
         'players': 'players',
-        league_key: 'players',
         'teams': 'teams',
     }
     tab_key = _TAB_TYPE_KEY.get(sheet_type, 'team')

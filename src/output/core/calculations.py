@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, List, Optional
-from src.sheets.config import SHEETS_COLUMNS, SECTION_CONFIG, STAT_CONSTANTS
+from src.output.config import SHEETS_COLUMNS, SECTION_CONFIG, STAT_CONSTANTS
 
 logger = logging.getLogger(__name__)
 

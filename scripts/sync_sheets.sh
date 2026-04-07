@@ -56,4 +56,4 @@ else
 fi
 
 export PYTHONPATH="$REPO_ROOT/src:$PYTHONPATH"
-python3 -m sheets.runner --league "$LEAGUE" $ARGS 2>&1
+python3 -m output.runner --league "$LEAGUE" $ARGS 2>&1

@@ -2,13 +2,13 @@ import logging
 from collections import defaultdict
 
 from src.db import get_db_connection
-from src.sheets.config import STAT_RATES
-from src.sheets.core.db import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats
-from src.sheets.core.layout import build_headers, build_sheet_columns, build_merged_entity_row, build_summary_rows
-from src.sheets.google.payloads import build_formatting_requests
-from src.sheets.core.calculations import calculate_all_percentiles, evaluate_expression
+from src.output.config import STAT_RATES
+from src.output.core.db import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats
+from src.output.core.layout import build_headers, build_sheet_columns, build_merged_entity_row, build_summary_rows
+from src.output.destinations.sheets.payloads import build_formatting_requests
+from src.output.core.calculations import calculate_all_percentiles, evaluate_expression
 
-from src.sheets.google.client import get_or_create_worksheet, write_and_format, move_sheet_to_position
+from src.output.destinations.sheets.client import get_or_create_worksheet, write_and_format, move_sheet_to_position
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +302,7 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_possession',
                 opp_percentiles[col_key][base_section] = ctx.wrap_opp_pct(values)
 
         # ---- Team names ----
-        teams_db = ctx.etl_lib.get_teams_from_db()
+        teams_db = ctx.get_teams_from_db()
         team_names_map = {abbr: name for _, (abbr, name) in teams_db.items()}
         abbrs = [abbr for _, (abbr, name) in teams_db.items()]
 

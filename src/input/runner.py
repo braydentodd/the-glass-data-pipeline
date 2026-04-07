@@ -9,11 +9,11 @@ modules, and writes to the database.
 No classes -- all state is passed as function arguments.
 
 Usage:
-    python -m src.etl.runner                         # current season, Regular
-    python -m src.etl.runner --season 2023-24        # specific season
-    python -m src.etl.runner --season-type 2          # Playoffs
-    python -m src.etl.runner --entity team            # teams only
-    python -m src.etl.runner --endpoint leaguedashptstats
+    python -m input.runner                         # current season, Regular
+    python -m input.runner --season 2023-24        # specific season
+    python -m input.runner --season-type 2          # Playoffs
+    python -m input.runner --entity team            # teams only
+    python -m input.runner --endpoint leaguedashptstats
 """
 
 import argparse
@@ -29,8 +29,8 @@ warnings.filterwarnings(
 )
 
 from src.db import db_connection, quote_col
-from src.etl.config import DB_COLUMNS, TYPE_TRANSFORMS
-from src.etl.core.extract import (
+from src.input.config import DB_COLUMNS, TYPE_TRANSFORMS
+from src.input.core.extract import (
     extract_columns_from_result,
     extract_derived_field,
     extract_field,
@@ -38,16 +38,16 @@ from src.etl.core.extract import (
     get_pipeline_columns,
     get_simple_columns,
 )
-from src.etl.core.load import bulk_upsert
-from src.etl.core.transform import apply_transform, execute_pipeline, safe_int
-from src.etl.db import ensure_tables, get_table_name
-from src.etl.nba_api.client import (
+from src.input.core.load import bulk_upsert
+from src.input.core.transform import apply_transform, execute_pipeline, safe_int
+from src.input.core.db import ensure_tables, get_table_name
+from src.input.sources.nba_api.client import (
     build_endpoint_params,
     create_api_call,
     load_endpoint_class,
     with_retry,
 )
-from src.etl.nba_api.config import (
+from src.input.sources.nba_api.config import (
     API_CONFIG,
     DB_SCHEMA,
     ENDPOINTS,
@@ -58,6 +58,7 @@ from src.etl.nba_api.config import (
     get_team_ids,
     is_endpoint_available,
 )
+from src.input.sources.nba_api.sources import NBA_SOURCES
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,7 +78,7 @@ def _build_call_groups(
 ) -> List[Dict[str, Any]]:
     """Group all columns for *entity* into API call batches.
 
-    Walks DB_COLUMNS, groups simple/derived columns that share the same
+    Walks NBA_SOURCES, groups simple/derived columns that share the same
     (endpoint, params) so each batch requires exactly one API call.
     Multi-call, pipeline, and team_call columns get their own entries.
 
@@ -88,15 +89,16 @@ def _build_call_groups(
     simple_groups: Dict[tuple, Dict[str, Dict[str, Any]]] = {}
     special: List[Dict[str, Any]] = []
 
-    for col_name, col_meta in DB_COLUMNS.items():
-        source = col_meta.get('nba', {}).get(entity)
+    for col_name, sources in NBA_SOURCES.items():
+        source = sources.get(entity)
         if not source:
             continue
 
         # Enrich with default transform
         enriched = {**source}
         if 'transform' not in enriched and 'pipeline' not in enriched and 'multi_call' not in enriched:
-            base_type = col_meta['type'].split('(')[0]
+            col_meta = DB_COLUMNS.get(col_name, {})
+            base_type = col_meta.get('type', '').split('(')[0]
             enriched['transform'] = TYPE_TRANSFORMS.get(base_type, 'safe_int')
 
         # Determine the endpoint
@@ -509,7 +511,7 @@ def _write_rows(
     table = get_table_name(entity, scope, DB_SCHEMA)
 
     # Determine conflict columns from TABLES config
-    from src.etl.config import TABLES
+    from src.input.config import TABLES
     table_name = table.split('.', 1)[1]
     table_meta = TABLES[table_name]
     conflict_columns = table_meta['unique_key']

@@ -4,7 +4,7 @@ THE GLASS - Universal Google Sheets Sync
 Unified runner for synchronizing league data to Google Sheets.
 
 Entry point:
-    python -m src.sheets.runner --league nba [--tab BOS] [--mode per_possession|per_minute|per_game]
+    python -m output.runner --league nba [--tab BOS] [--rate per_possession|per_minute|per_game]
 """
 
 import argparse
@@ -15,11 +15,12 @@ import time
 from dotenv import load_dotenv
 
 from src.db import get_db_connection
-from src.sheets.core.db import fetch_all_players, fetch_all_teams
-from src.sheets.core.calculations import calculate_all_percentiles
-from src.sheets.google.client import get_sheets_client
-from src.sheets.core.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
-from src.sheets.config import SHEETS_COLUMNS, STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG
+from src.output.core.db import fetch_all_players, fetch_all_teams, get_teams_from_db
+from src.output.core.calculations import calculate_all_percentiles
+from src.output.destinations.sheets.client import get_sheets_client
+from src.output.core.tabs import sync_teams_sheet, sync_team_sheet, sync_players_sheet
+from src.output.config import SHEETS_COLUMNS, STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG
+from src.input.core.db import get_table_name
 
 load_dotenv()
 
@@ -41,7 +42,9 @@ def main():
     parser.add_argument('--partial-update', action='store_true',
                         help='Fast sync: skip structural formatting, only update data + colors')
     parser.add_argument('--export-config', action='store_true',
-                        help='Export Apps Script config JS file before syncing')
+                        help='Export Apps Script config JS file and exit (no sheet sync)')
+    parser.add_argument('--sync', action='store_true', default=True,
+                        help='Sync data to Google Sheets (default behavior)')
     args = parser.parse_args()
 
     # Priority: CLI arg > env var > hardcoded default
@@ -52,10 +55,12 @@ def main():
     partial_update = args.partial_update or os.environ.get('PARTIAL_UPDATE') == 'true'
     sync_section = os.environ.get('SYNC_SECTION')
 
-    # Export Apps Script config if requested
+    # Export Apps Script config if requested (standalone action)
     if args.export_config:
-        from src.sheets.core.export import export_config
-        export_config(league)
+        from src.output.core.export import export_config
+        path = export_config(league)
+        logger.info('Config exported to %s', path)
+        return
 
     # Build historical timeframe config (never includes current season)
     num_seasons = args.hist_seasons or int(os.environ.get('HISTORICAL_TIMEFRAME', '3'))
@@ -67,8 +72,8 @@ def main():
 
     ctx = Context()
     ctx.league = league
-    from src.sheets.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
-    from src.sheets.config import SHEETS_COLUMNS
+    from src.output.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
+    from src.output.config import SHEETS_COLUMNS
     ctx.google_sheets_config = GOOGLE_SHEETS_CONFIG
     ctx.sheet_formatting = SHEET_FORMATTING
     ctx.season_key = 'current_season'
@@ -77,19 +82,22 @@ def main():
     ctx.wrap_opp_pct = lambda vals: sorted(vals)
 
     if league == 'nba':
-        import etl.nba_api.lib as etl_lib
-        from etl.nba_api.config import NBA_CONFIG as league_config
+        from src.input.sources.nba_api.config import DB_SCHEMA, SEASON_CONFIG as league_config
     else:
-        import etl.ncaa.lib as etl_lib
-        from etl.ncaa.config import NCAA_CONFIG as league_config
+        DB_SCHEMA = league
+        from src.db import get_current_season, get_current_season_year
+        league_config = {
+            'current_season': get_current_season(),
+            'current_season_year': get_current_season_year(),
+        }
 
-    ctx.etl_lib = etl_lib
+    ctx.get_teams_from_db = lambda: get_teams_from_db(DB_SCHEMA)
     ctx.league_config = league_config
 
-    ctx.player_entity_table = etl_lib.get_table_name('player', 'entity')
-    ctx.team_entity_table = etl_lib.get_table_name('team', 'entity')
-    ctx.player_stats_table = etl_lib.get_table_name('player', 'stats')
-    ctx.team_stats_table = etl_lib.get_table_name('team', 'stats')
+    ctx.player_entity_table = get_table_name('player', 'entity', DB_SCHEMA)
+    ctx.team_entity_table = get_table_name('team', 'entity', DB_SCHEMA)
+    ctx.player_stats_table = get_table_name('player', 'stats', DB_SCHEMA)
+    ctx.team_stats_table = get_table_name('team', 'stats', DB_SCHEMA)
 
     ctx.player_entity_fields = {
         'player_id', 'name', 'team_id', 'height_inches', 'weight_lbs',
@@ -176,7 +184,7 @@ def main():
         conn.close()
 
     # ---- Build team list ----
-    teams_db = ctx.etl_lib.get_teams_from_db()
+    teams_db = ctx.get_teams_from_db()
     team_names = {abbr: name for _, (abbr, name) in teams_db.items()}
     abbrs = sorted(team_names.keys())
 

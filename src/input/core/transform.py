@@ -51,7 +51,7 @@ def safe_str(value: Any) -> Optional[str]:
 
 
 def parse_height(height_str: Any) -> Optional[int]:
-    """Parse NBA height format (e.g. '6-10') to total inches. Returns None on failure."""
+    """Parse height string (e.g. '6-10') to total inches. Returns None on failure."""
     if not height_str or height_str == '' or height_str == 'None':
         return None
     try:
@@ -192,7 +192,7 @@ def execute_pipeline(
 # ============================================================================
 
 def _entity_id_field(entity: str) -> str:
-    """Return the NBA API header name for the entity's ID column."""
+    """Return the API header name for the entity's ID column."""
     return 'PLAYER_ID' if entity == 'player' else 'TEAM_ID'
 
 

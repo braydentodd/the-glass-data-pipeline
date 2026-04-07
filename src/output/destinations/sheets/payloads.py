@@ -1,8 +1,8 @@
 import logging
 from typing import Dict, List, Optional, Tuple
-from src.sheets.config import SHEETS_COLUMNS
-from src.sheets.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
-from src.sheets.core.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
+from src.output.config import SHEETS_COLUMNS
+from src.output.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
+from src.output.core.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
 
 def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               header_merges: list, n_data_rows: int,

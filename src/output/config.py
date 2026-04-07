@@ -8,7 +8,7 @@ and spreadsheet settings across all leagues.
 import os
 from typing import Any, Dict
 
-from src.sheets.core.formulas import (
+from src.output.core.formulas import (
     add, subtract, multiply, divide, lookup, team_average, seasons_in_query
 )
 

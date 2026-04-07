@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from src.db import get_db_connection, quote_col
-from src.etl.config import DB_COLUMNS, TABLES
+from src.input.config import DB_COLUMNS, TABLES
 
 logger = logging.getLogger(__name__)
 

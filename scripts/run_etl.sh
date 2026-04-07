@@ -28,8 +28,8 @@ shift
 LEAGUE=$(echo "$LEAGUE" | tr '[:upper:]' '[:lower:]')
 
 case "$LEAGUE" in
-    nba)  RUNNER="etl.nba.runner";  LABEL="NBA"  ;;
-    ncaa) RUNNER="etl.ncaa.runner"; LABEL="NCAA" ;;
+    nba)  RUNNER="input.runner";  LABEL="NBA"  ;;
+    ncaa) RUNNER="input.runner"; LABEL="NCAA" ;;
     *)    echo "Unknown league: $LEAGUE (use nba or ncaa)"; exit 1 ;;
 esac
 
