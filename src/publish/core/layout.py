@@ -1,6 +1,6 @@
 from typing import List, Optional, Any, Tuple
-from src.publish.config import SHEETS_COLUMNS
-from src.publish.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING,
+from src.publish.definitions.config import TAB_COLUMNS
+from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING,
                                 STAT_RATES, DEFAULT_STAT_RATE)
 from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
 from .formatting import format_section_header, format_stat_value, format_height
@@ -32,7 +32,7 @@ def generate_percentile_columns() -> dict:
     stat + companion pair so the column name spans both.
     """
     pct_columns = {}
-    for col_key, col_def in SHEETS_COLUMNS.items():
+    for col_key, col_def in TAB_COLUMNS.items():
         if not col_def.get('percentile'):
             continue
         pct_key = f"{col_key}_pct"
@@ -73,8 +73,8 @@ def _make_companion_def(base_def: dict, base_key: str,
 
 
 def get_all_columns_with_percentiles() -> dict:
-    """Get SHEETS_COLUMNS plus auto-generated percentile columns."""
-    all_cols = dict(SHEETS_COLUMNS)
+    """Get TAB_COLUMNS plus auto-generated percentile columns."""
+    all_cols = dict(TAB_COLUMNS)
     all_cols.update(generate_percentile_columns())
     return all_cols
 
@@ -91,7 +91,7 @@ def get_columns_by_filters(section=None, subsection=None, entity=None,
         stats_mode: 'basic', 'advanced', or 'both'
         include_percentiles: Include auto-generated percentile columns
     """
-    columns = get_all_columns_with_percentiles() if include_percentiles else SHEETS_COLUMNS
+    columns = get_all_columns_with_percentiles() if include_percentiles else TAB_COLUMNS
     filtered = {}
 
     for col_key, col_def in columns.items():
@@ -140,11 +140,11 @@ def get_columns_for_section_and_entity(section: str, entity: str,
         return [(k, v) for k, v in columns.items()]
 
 
-def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
-                        sheet_type: str = 'team',
+def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
+                        tab_type: str = 'team',
                         default_mode: str = DEFAULT_STAT_RATE) -> List[Tuple]:
     """
-    Build complete column structure for a sheet with rate tripling.
+    Build complete column structure for a tab with rate tripling.
 
     Returns list of (column_key, column_def, visible, context_section) tuples.
 
@@ -163,8 +163,8 @@ def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
         'players': 'players',
         'teams': 'teams',
     }
-    tab_key = _TAB_TYPE_KEY.get(sheet_type, 'team')
-    col_entity = 'team' if sheet_type == 'teams' else entity
+    tab_key = _TAB_TYPE_KEY.get(tab_type, 'team')
+    col_entity = 'team' if tab_type == 'teams' else entity
     pct_columns = generate_percentile_columns()
 
     def _normalize_tabs(col_def):
@@ -182,7 +182,7 @@ def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
         for col_key, col_def in section_cols:
             if tab_key not in _normalize_tabs(col_def):
                 continue
-            if sheet_type == 'teams' and 'team' not in col_def.get('values', {}):
+            if tab_type == 'teams' and 'team' not in col_def.get('values', {}):
                 continue
 
             col_stats_mode = col_def.get('stats_mode', 'both')
@@ -222,7 +222,7 @@ def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
             for col_key, col_def in section_cols:
                 if tab_key not in _normalize_tabs(col_def):
                     continue
-                if sheet_type == 'teams' and 'team' not in col_def.get('values', {}):
+                if tab_type == 'teams' and 'team' not in col_def.get('values', {}):
                     continue
 
                 col_stats_mode = col_def.get('stats_mode', 'both')
@@ -242,7 +242,7 @@ def build_sheet_columns(entity: str = 'player', stats_mode: str = 'both',
                     all_columns.append((pct_key, pct_def, True, section))
 
     # --- Teams sheet: insert opponent columns ---
-    if sheet_type == 'teams':
+    if tab_type == 'teams':
         all_columns = _insert_opponent_columns(
             all_columns, pct_columns, hide_advanced
         )
@@ -550,7 +550,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
 
         if is_pct:
             base_key = col_def.get('base_stat', col_key.replace('_pct', ''))
-            base_def = SHEETS_COLUMNS.get(base_key, {})
+            base_def = TAB_COLUMNS.get(base_key, {})
             value = calculated.get(base_key)
 
             if value is not None and isinstance(value, (int, float)) and base_key in pcts:
@@ -702,7 +702,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                 continue
 
             # Regular companion
-            base_def = SHEETS_COLUMNS.get(base_key, col_def)
+            base_def = TAB_COLUMNS.get(base_key, col_def)
             calculated = calculate_entity_stats(sec_entity, entity_type, sec_mode)
             value = calculated.get(base_key)
 
@@ -724,7 +724,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                 sec_entity, sec_pcts, _ = section_data[first_key]
             else:
                 continue
-            base_def = SHEETS_COLUMNS.get(base_key, col_def)
+            base_def = TAB_COLUMNS.get(base_key, col_def)
             calculated = calculate_entity_stats(sec_entity, entity_type, DEFAULT_STAT_RATE)
             value = calculated.get(base_key)
 

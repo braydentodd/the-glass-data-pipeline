@@ -1,19 +1,24 @@
 """
-The Glass - Source-Agnostic Config Resolver
+The Glass - NBA Source Registry
 
-Resolves column configuration into operational call groups for any
-data provider.  All functions accept provider-specific config
-(provider_key, endpoints, field_names) as parameters rather than
-importing from a specific source.
+Query functions for the NBA provider's configuration.  Resolves entity ID
+fields, filters columns by endpoint, groups columns into API call
+batches, and provides team ID lookups.
 
-Column schema and provider source mappings live in the unified
-config (src/etl/config.py).
+All query logic that interprets the NBA source mappings lives here --
+nba_api/config.py remains pure data.
 """
 
 import logging
 from typing import Any, Dict, List, Optional
 
-from src.etl.config import DB_COLUMNS, TYPE_TRANSFORMS
+from src.db import db_connection
+from src.etl.definitions import DB_COLUMNS, TYPE_TRANSFORMS
+from src.etl.sources.nba_api.config import (
+    API_FIELD_NAMES,
+    DB_SCHEMA,
+    ENDPOINTS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,29 +36,54 @@ def _enrich_source(source: Dict[str, Any], col_meta: Dict[str, Any]) -> Dict[str
     return enriched
 
 
-def _get_provider_source(
-    col_meta: Dict[str, Any],
-    entity: str,
-    provider_key: str,
-) -> Optional[Dict[str, Any]]:
-    """Extract a provider's source definition for an entity from a column's metadata."""
-    provider_sources = (col_meta.get('sources') or {}).get(provider_key)
-    if not provider_sources:
+def _get_nba_source(col_meta: Dict[str, Any], entity: str) -> Optional[Dict[str, Any]]:
+    """Extract the NBA source for a given entity from a column's metadata."""
+    nba_sources = (col_meta.get('sources') or {}).get('nba')
+    if not nba_sources:
         return None
-    return provider_sources.get(entity)
+    return nba_sources.get(entity)
+
+
+# ============================================================================
+# ENTITY ID RESOLUTION
+# ============================================================================
+
+def get_entity_id_field(entity: str) -> str:
+    """Return the NBA API header name for a given entity's ID column."""
+    return API_FIELD_NAMES['entity_id'][entity]
+
+
+# ============================================================================
+# TEAM ID LOOKUP  (lazy-loaded from database, cached)
+# ============================================================================
+
+_team_ids_cache: Optional[Dict[str, int]] = None
+
+
+def get_team_ids() -> Dict[str, int]:
+    """Load team abbr->nba_api_id mapping from the database.
+
+    Cached after first call so only one query per process lifetime.
+    """
+    global _team_ids_cache
+    if _team_ids_cache is None:
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT nba_api_id, abbr FROM {DB_SCHEMA}.teams "
+                    f"ORDER BY nba_api_id"
+                )
+                _team_ids_cache = {row[1]: int(row[0]) for row in cur.fetchall()}
+    return _team_ids_cache
 
 
 # ============================================================================
 # ENDPOINT AVAILABILITY
 # ============================================================================
 
-def is_endpoint_available(
-    endpoint_name: str,
-    season: str,
-    endpoints: Dict[str, Dict[str, Any]],
-) -> bool:
+def is_endpoint_available(endpoint_name: str, season: str) -> bool:
     """Check whether an endpoint has data for the given season."""
-    ep = endpoints.get(endpoint_name)
+    ep = ENDPOINTS.get(endpoint_name)
     if not ep:
         return False
     min_season = ep.get('min_season')
@@ -69,18 +99,24 @@ def is_endpoint_available(
 def get_columns_for_endpoint(
     endpoint_name: str,
     entity: str,
-    provider_key: str,
     params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Find all columns whose provider source maps to the given endpoint.
+    """Find all columns whose NBA source maps to the given endpoint.
 
-    Returns ``{col_name: enriched_source_dict}`` with default transforms
-    injected.
+    Walks DB_COLUMNS and returns ``{col_name: enriched_source_dict}`` with
+    default transforms injected.  Columns with ``multi_call`` or ``pipeline``
+    sources are included so the runner can classify them.
+
+    Args:
+        endpoint_name: NBA API endpoint (e.g. ``'leaguedashplayerstats'``).
+        entity:        ``'player'`` or ``'team'``.
+        params:        Optional param filter -- only include columns whose
+                       source params are a superset of these.
     """
     matched: Dict[str, Dict[str, Any]] = {}
 
     for col_name, col_meta in DB_COLUMNS.items():
-        source = _get_provider_source(col_meta, entity, provider_key)
+        source = _get_nba_source(col_meta, entity)
         if not source:
             continue
 
@@ -102,11 +138,9 @@ def get_columns_for_endpoint(
 
 def get_all_sources_for_entity(
     entity: str,
-    provider_key: str,
-    endpoints: Dict[str, Dict[str, Any]],
     season: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Return every column with a provider source for the given entity.
+    """Return every column with an NBA source for the given entity.
 
     If *season* is provided, excludes endpoints that aren't available
     for that season.
@@ -114,13 +148,13 @@ def get_all_sources_for_entity(
     matched: Dict[str, Dict[str, Any]] = {}
 
     for col_name, col_meta in DB_COLUMNS.items():
-        source = _get_provider_source(col_meta, entity, provider_key)
+        source = _get_nba_source(col_meta, entity)
         if not source:
             continue
 
         if season:
             ep = source.get('endpoint') or source.get('pipeline', {}).get('endpoint', '')
-            if not is_endpoint_available(ep, season, endpoints):
+            if not is_endpoint_available(ep, season):
                 continue
 
         matched[col_name] = _enrich_source(source, col_meta)
@@ -132,19 +166,12 @@ def get_all_sources_for_entity(
 # EXECUTION TIER RESOLUTION
 # ============================================================================
 
-def tier_for_endpoint(
-    endpoint: str,
-    endpoints: Dict[str, Dict[str, Any]],
-) -> str:
+def tier_for_endpoint(endpoint: str) -> str:
     """Get the default execution tier for an endpoint."""
-    return endpoints.get(endpoint, {}).get('execution_tier', 'league')
+    return ENDPOINTS.get(endpoint, {}).get('execution_tier', 'league')
 
 
-def tier_for_source(
-    source: Dict[str, Any],
-    endpoint: str,
-    endpoints: Dict[str, Dict[str, Any]],
-) -> str:
+def tier_for_source(source: Dict[str, Any], endpoint: str) -> str:
     """Resolve execution tier from a source config or endpoint default."""
     tier = source.get('tier')
     if tier:
@@ -152,7 +179,7 @@ def tier_for_source(
     pipeline = source.get('pipeline', {})
     if pipeline.get('tier'):
         return pipeline['tier']
-    return tier_for_endpoint(endpoint, endpoints)
+    return tier_for_endpoint(endpoint)
 
 
 # ============================================================================
@@ -162,19 +189,12 @@ def tier_for_source(
 def build_call_groups(
     entity: str,
     season: str,
-    provider_key: str,
-    endpoints: Dict[str, Dict[str, Any]],
-    scope: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Group all columns for *entity* into API call batches.
 
     Walks DB_COLUMNS, groups simple/derived columns that share the same
     (endpoint, params) so each batch requires exactly one API call.
     Multi-call, pipeline, and team_call columns get their own entries.
-
-    Args:
-        scope: If set, only include columns whose scope list contains
-               this value (e.g. ``'entity'`` or ``'stats'``).
 
     Returns a list of dicts, each with:
         endpoint, params, tier, columns ({col_name: enriched_source})
@@ -183,10 +203,7 @@ def build_call_groups(
     special: List[Dict[str, Any]] = []
 
     for col_name, col_meta in DB_COLUMNS.items():
-        if scope and scope not in col_meta.get('scope', []):
-            continue
-
-        source = _get_provider_source(col_meta, entity, provider_key)
+        source = _get_nba_source(col_meta, entity)
         if not source:
             continue
 
@@ -197,14 +214,14 @@ def build_call_groups(
             ep = enriched.get('pipeline', {}).get('endpoint')
         if not ep:
             continue
-        if not is_endpoint_available(ep, season, endpoints):
+        if not is_endpoint_available(ep, season):
             continue
 
         if 'multi_call' in enriched or 'pipeline' in enriched:
             special.append({
                 'endpoint': ep,
                 'params': enriched.get('params', {}),
-                'tier': tier_for_source(enriched, ep, endpoints),
+                'tier': tier_for_source(enriched, ep),
                 'columns': {col_name: enriched},
             })
         elif enriched.get('tier') == 'team_call':
@@ -225,7 +242,7 @@ def build_call_groups(
         groups.append({
             'endpoint': ep,
             'params': dict(frozen_params),
-            'tier': tier_for_endpoint(ep, endpoints),
+            'tier': tier_for_endpoint(ep),
             'columns': cols,
         })
 

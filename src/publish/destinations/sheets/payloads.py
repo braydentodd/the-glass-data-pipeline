@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, List, Optional, Tuple
-from src.publish.config import SHEETS_COLUMNS
-from src.publish.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
+from src.publish.definitions.config import TAB_COLUMNS
+from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
 from src.publish.core.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
 
 def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
@@ -9,7 +9,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               team_name: str,
                               percentile_cells: Optional[List[dict]] = None,
                               n_player_rows: int = 0,
-                              sheet_type: str = 'team',
+                              tab_type: str = 'team',
                               show_advanced: bool = False,
                               partial_update: bool = False) -> list:
     """
@@ -21,13 +21,13 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
 
     Args:
         ws_id: Worksheet ID
-        columns_list: The column structure from build_sheet_columns
+        columns_list: The column structure from build_tab_columns
         header_merges: Merge info from build_headers
         n_data_rows: Number of data rows (players + team/opp)
         team_name: Full team name for display
         percentile_cells: List of {row, col, percentile, reverse} for shading
         n_player_rows: Number of player rows (for filter range; team/opp excluded)
-        sheet_type: 'team', 'players', or 'teams'
+        tab_type: 'team', 'players', or 'teams'
         show_advanced: If True, keep advanced columns visible (override config)
 
     Returns:
@@ -77,7 +77,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         if percentile_cells:
             fast.extend(_build_percentile_shading_requests(ws_id, percentile_cells))
         # Null-formula backgrounds for team/opp rows
-        if sheet_type == 'team' and n_data_rows > n_player_rows:
+        if tab_type == 'team' and n_data_rows > n_player_rows:
             fast.extend(_build_null_formula_bg_requests(
                 ws_id, columns_list, data_start, n_player_rows, n_data_rows
             ))
@@ -469,7 +469,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 })
 
     # ---- 19b. Hide columns without entity formula (e.g. jersey on teams) ----
-    col_entity = 'team' if sheet_type == 'teams' else 'player'
+    col_entity = 'team' if tab_type == 'teams' else 'player'
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
         col_ctx = entry[3] if len(entry) > 3 else None
@@ -507,7 +507,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 22. Black background for cells where entity has no formula ----
     # Only for individual team sheets which have team/opponent rows.
     # Players and Teams sheets have summary rows instead — no black bg.
-    if sheet_type == 'team' and n_data_rows > n_player_rows:
+    if tab_type == 'team' and n_data_rows > n_player_rows:
         requests.extend(_build_null_formula_bg_requests(
             ws_id, columns_list, data_start, n_player_rows, n_data_rows
         ))

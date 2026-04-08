@@ -1,70 +1,45 @@
 """
 The Glass - ETL Runner
 
-Orchestrates the ETL pipeline by wiring provider-specific config (NBA API)
-to the source-agnostic core modules:
+Source-agnostic orchestrator that wires provider-specific config to the
+generic core modules:
 
-  - core/resolver.py: call group building, column lookups
+  - core/call_planner.py: call group building, column lookups
   - core/extract.py:  field extraction from API responses
   - core/transform.py: type conversion, pipeline engine, aggregation
   - core/load.py:     database writes via upsert
 
 Usage:
-    python -m etl.runner                          # current season, Regular
-    python -m etl.runner --season 2023-24         # specific season
-    python -m etl.runner --season-type 2          # Playoffs
-    python -m etl.runner --entity team            # teams only
-    python -m etl.runner --endpoint leaguedashptstats
+    python -m etl.runner --source nba_api                       # full run
+    python -m etl.runner --source nba_api --season 2023-24      # specific season
+    python -m etl.runner --source nba_api --season-type 2       # Playoffs
+    python -m etl.runner --source nba_api --entity team         # teams only
+    python -m etl.runner --source nba_api --endpoint leaguedashptstats
 """
 
 import argparse
+import importlib
 import logging
-import time
 import warnings
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from src.db import db_connection
-from src.etl.config import ETL_CONFIG
-from src.etl.core.db import ensure_tables
+from src.db import db_connection, quote_col
+from src.etl.definitions import ETL_CONFIG
+from src.etl.core.db import ensure_tables, prune_stale
 from src.etl.core.config_validation import validate_config
-from src.etl.core.extract import (
-    extract_columns_from_result,
-    extract_raw_rows,
-    extract_single_field,
-    get_multi_call_columns,
-    get_pipeline_columns,
-    get_simple_columns,
-)
-from src.etl.core.load import seed_empty_stats, write_entity_rows
-from src.etl.core.progress import (
+from src.etl.core.executor import ExecutionContext, execute_group
+from src.etl.core.load import seed_empty_stats
+from src.etl.core.progress_tracker import (
     complete_run,
-    create_run,
     fail_run,
-    find_resumable_run,
-    get_pending_progress_ids,
     mark_group_completed,
     mark_group_failed,
     mark_group_started,
-    register_groups,
+    resolve_work,
     update_run_completed_groups,
 )
-from src.etl.core.resolver import build_call_groups
-from src.etl.core.transform import aggregate_team_rows, execute_pipeline
-from src.etl.sources.nba_api.client import (
-    build_endpoint_params,
-    create_api_call,
-    load_endpoint_class,
-    with_retry,
-)
-from src.etl.sources.nba_api.config import (
-    API_CONFIG,
-    API_FIELD_NAMES,
-    DB_SCHEMA,
-    ENDPOINTS,
-    SEASON_CONFIG,
-    SEASON_TYPES,
-)
+from src.etl.core.plan import build_call_groups
+from src.etl.definitions.sources import SOURCES, get_source_id_column
 
 warnings.filterwarnings(
     'ignore',
@@ -79,261 +54,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PROVIDER_KEY = 'nba'
 
-
-# ============================================================================
-# EXECUTION CONTEXT
-# ============================================================================
-
-@dataclass
-class ExecutionContext:
-    """Bundles everything the execution engine needs from the provider."""
-
-    entity: str
-    scope: str
-    season: str
-    season_type: int
-    season_type_name: str
-    entity_id_field: str
-    db_schema: str
-    api_fetcher: Callable
-    team_ids: Dict[str, int] = field(default_factory=dict)
-    rate_limit_delay: float = 1.2
-    max_consecutive_failures: int = 5
+def _load_source(source_key: str):
+    """Dynamically import a source's config and client modules."""
+    if source_key not in SOURCES:
+        raise ValueError(
+            f"Unknown source '{source_key}'. "
+            f"Registered sources: {sorted(SOURCES)}"
+        )
+    config_mod = importlib.import_module(f'src.etl.sources.{source_key}.config')
+    client_mod = importlib.import_module(f'src.etl.sources.{source_key}.client')
+    return config_mod, client_mod
 
 
 # ============================================================================
 # SOURCE-SPECIFIC HELPERS
 # ============================================================================
 
-def _make_nba_fetcher(season: str, season_type_name: str, entity: str):
-    """Create an api_fetcher closure that wraps the NBA API client."""
-    def fetch(endpoint: str, extra_params: Dict[str, Any] = None):
-        EndpointClass = load_endpoint_class(endpoint)
-        if EndpointClass is None:
-            return None
-        full_params = build_endpoint_params(
-            endpoint, season, season_type_name, entity, extra_params or {},
-        )
-        api_call = create_api_call(
-            EndpointClass, full_params, endpoint_name=endpoint,
-        )
-        return with_retry(api_call)
-    return fetch
-
-
-def _get_team_ids() -> Dict[str, int]:
-    """Load team abbr->nba_api_id mapping from the database."""
+def _get_team_ids(db_schema: str, source_id_col: str) -> Dict[str, int]:
+    """Load team abbr -> source_id mapping from the database."""
     with db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT nba_api_id, abbr FROM {DB_SCHEMA}.teams "
-                f"ORDER BY nba_api_id"
+                f"SELECT {quote_col(source_id_col)}, abbr "
+                f"FROM {db_schema}.teams "
+                f"ORDER BY {quote_col(source_id_col)}"
             )
             return {row[1]: int(row[0]) for row in cur.fetchall()}
-
-
-# ============================================================================
-# CALL GROUP EXECUTION
-# ============================================================================
-
-def _execute_group(
-    group: Dict[str, Any],
-    ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
-) -> int:
-    """Execute a single call group and return rows written."""
-    endpoint = group['endpoint']
-    params = group['params']
-    tier = group['tier']
-    columns = group['columns']
-
-    simple = get_simple_columns(columns)
-    multi_call = get_multi_call_columns(columns)
-    pipelines = get_pipeline_columns(columns)
-
-    param_label = ' '.join(f'{k}={v}' for k, v in sorted(params.items()))
-    logger.info(
-        'Processing %s %s %s %s [%s]',
-        ctx.season, ctx.season_type_name, endpoint, ctx.entity, param_label,
-    )
-
-    written = 0
-
-    if tier == 'team_call':
-        written += _execute_team_call(endpoint, columns, ctx, failed)
-    elif tier in ('team', 'player'):
-        for col_name, source in pipelines.items():
-            written += _execute_pipeline_column(col_name, source, ctx, failed)
-        for col_name, source in multi_call.items():
-            written += _execute_multi_call_column(col_name, source, ctx, failed)
-    else:
-        if simple:
-            written += _execute_league_wide(endpoint, params, simple, ctx, failed)
-        for col_name, source in multi_call.items():
-            written += _execute_multi_call_column(col_name, source, ctx, failed)
-        for col_name, source in pipelines.items():
-            written += _execute_pipeline_column(col_name, source, ctx, failed)
-
-    return written
-
-
-def _execute_league_wide(
-    endpoint: str,
-    params: Dict[str, Any],
-    columns: Dict[str, Dict[str, Any]],
-    ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
-) -> int:
-    """One API call returns all entities -- extract, transform, write."""
-    try:
-        result = ctx.api_fetcher(endpoint, params)
-    except Exception as exc:
-        logger.error('League-wide %s failed: %s', endpoint, exc)
-        failed.append({'endpoint': endpoint, 'params': params, 'error': str(exc)})
-        return 0
-
-    if result is None:
-        return 0
-
-    rows = extract_columns_from_result(
-        result, columns, ctx.entity, ctx.entity_id_field,
-    )
-    return write_entity_rows(
-        ctx.entity, ctx.scope, rows, ctx.season, ctx.season_type, ctx.db_schema,
-    )
-
-
-def _execute_multi_call_column(
-    col_name: str,
-    source: Dict[str, Any],
-    ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
-) -> int:
-    """Make multiple API calls and sum the field per entity."""
-    endpoint = source['endpoint']
-    api_field = source['field']
-    multi_call_params = source['multi_call']
-    result_set = source.get('result_set')
-
-    totals: Dict[int, int] = {}
-
-    for extra_params in multi_call_params:
-        try:
-            result = ctx.api_fetcher(endpoint, extra_params)
-        except Exception as exc:
-            logger.warning(
-                'Multi-call %s %s failed for params %s: %s',
-                endpoint, col_name, extra_params, exc,
-            )
-            continue
-
-        if result is None:
-            continue
-
-        field_vals = extract_single_field(
-            result, api_field, ctx.entity_id_field, result_set,
-        )
-        for eid, val in field_vals.items():
-            totals[eid] = totals.get(eid, 0) + val
-
-    if not totals:
-        return 0
-    rows = {eid: {col_name: val} for eid, val in totals.items()}
-    return write_entity_rows(
-        ctx.entity, ctx.scope, rows, ctx.season, ctx.season_type, ctx.db_schema,
-    )
-
-
-def _execute_pipeline_column(
-    col_name: str,
-    source: Dict[str, Any],
-    ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
-) -> int:
-    """Execute a transformation pipeline for a single column."""
-    pipeline_config = source['pipeline']
-
-    def pipeline_fetcher(ep, extra_params, tier):
-        try:
-            return ctx.api_fetcher(ep, extra_params)
-        except Exception:
-            return {'resultSets': []}
-
-    try:
-        result = execute_pipeline(
-            pipeline_config, pipeline_fetcher, ctx.entity,
-            ctx.season, ctx.season_type_name,
-            entity_id_field=ctx.entity_id_field,
-        )
-    except Exception as exc:
-        logger.error('Pipeline %s failed: %s', col_name, exc)
-        failed.append({'column': col_name, 'error': str(exc)})
-        return 0
-
-    if not result:
-        return 0
-    rows = {eid: {col_name: val} for eid, val in result.items()}
-    return write_entity_rows(
-        ctx.entity, ctx.scope, rows, ctx.season, ctx.season_type, ctx.db_schema,
-    )
-
-
-def _execute_team_call(
-    endpoint: str,
-    columns: Dict[str, Dict[str, Any]],
-    ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
-) -> int:
-    """Per-team calls returning player-level data (e.g. on/off court).
-
-    Aggregates across teams for traded players using per-column
-    aggregation setting (sum or minute_weighted).
-    """
-    first_source = next(iter(columns.values()))
-    result_set_name = first_source.get(
-        'result_set', 'PlayersOffCourtTeamPlayerOnOffSummary',
-    )
-    player_id_field = first_source.get('player_id_field', 'VS_PLAYER_ID')
-    minutes_field = 'MIN'
-
-    consecutive_failures = 0
-    player_team_rows: Dict[int, list] = {}
-    team_ids = list(ctx.team_ids.values())
-
-    for idx, team_id in enumerate(team_ids):
-        try:
-            result = ctx.api_fetcher(endpoint, {'team_id': team_id})
-            consecutive_failures = 0
-        except Exception as exc:
-            consecutive_failures += 1
-            logger.warning('Team %d failed for %s: %s', team_id, endpoint, exc)
-            if consecutive_failures >= ctx.max_consecutive_failures:
-                logger.error(
-                    'Aborting %s after %d consecutive failures',
-                    endpoint, consecutive_failures,
-                )
-                break
-            continue
-
-        if result is None:
-            continue
-
-        new_rows = extract_raw_rows(result, player_id_field, result_set_name)
-        for pid, rows_list in new_rows.items():
-            player_team_rows.setdefault(pid, []).extend(rows_list)
-
-        if ctx.rate_limit_delay > 0 and idx < len(team_ids) - 1:
-            time.sleep(ctx.rate_limit_delay)
-
-    if not player_team_rows:
-        return 0
-
-    rows = aggregate_team_rows(player_team_rows, columns, minutes_field)
-    return write_entity_rows(
-        ctx.entity, ctx.scope, rows, ctx.season, ctx.season_type, ctx.db_schema,
-    )
 
 
 # ============================================================================
@@ -355,48 +102,6 @@ def _get_season_range(current_season: str) -> List[str]:
 
 
 # ============================================================================
-# PROGRESS / RESUME
-# ============================================================================
-
-def _resolve_work(
-    conn: Any,
-    entity: str,
-    season: str,
-    season_type: int,
-    groups: List[Dict[str, Any]],
-    run_type: str,
-) -> Tuple[int, List[Tuple[Dict[str, Any], int]]]:
-    """Determine the run_id and work items for an entity.
-
-    If auto_resume is enabled and an interrupted run exists for the same
-    (season, season_type, entity), resumes from the last pending group.
-    Otherwise creates a fresh run and registers all groups.
-
-    Returns (run_id, [(group_dict, progress_id), ...]).
-    """
-    if ETL_CONFIG['auto_resume']:
-        run_id = find_resumable_run(conn, DB_SCHEMA, season, season_type, entity)
-        if run_id:
-            logger.info('Resuming interrupted run %d for %s', run_id, entity)
-            pending = get_pending_progress_ids(conn, DB_SCHEMA, run_id)
-            pending_lookup = {(ep, cols): pid for pid, ep, cols in pending}
-            work_items: List[Tuple[Dict[str, Any], int]] = []
-            for group in groups:
-                col_key = ','.join(sorted(group.get('columns', {}).keys())) or None
-                key = (group['endpoint'], col_key)
-                if key in pending_lookup:
-                    work_items.append((group, pending_lookup[key]))
-            logger.info('Resuming with %d pending groups', len(work_items))
-            return run_id, work_items
-
-    run_id = create_run(
-        conn, DB_SCHEMA, run_type, season, season_type, entity, len(groups),
-    )
-    progress_ids = register_groups(conn, DB_SCHEMA, run_id, groups, entity)
-    return run_id, list(zip(groups, progress_ids))
-
-
-# ============================================================================
 # SHARED EXECUTION ENGINE
 # ============================================================================
 
@@ -410,6 +115,13 @@ def _run_groups(
     team_ids: Dict[str, int],
     endpoint_filter: Optional[str],
     failed: List[Dict[str, Any]],
+    *,
+    provider_key: str,
+    endpoints: dict,
+    api_field_names: dict,
+    db_schema: str,
+    api_config: dict,
+    make_fetcher,
 ) -> int:
     """Execute call groups for a given scope across entities and seasons.
 
@@ -420,7 +132,7 @@ def _run_groups(
     for season in seasons:
         for ent in entities:
             groups = build_call_groups(
-                ent, season, PROVIDER_KEY, ENDPOINTS, scope=scope,
+                ent, season, provider_key, endpoints, scope=scope,
             )
             if endpoint_filter:
                 groups = [g for g in groups if g['endpoint'] == endpoint_filter]
@@ -437,39 +149,40 @@ def _run_groups(
                 season=season,
                 season_type=season_type,
                 season_type_name=season_type_name,
-                entity_id_field=API_FIELD_NAMES['entity_id'][ent],
-                db_schema=DB_SCHEMA,
-                api_fetcher=_make_nba_fetcher(season, season_type_name, ent),
+                entity_id_field=api_field_names['entity_id'][ent],
+                db_schema=db_schema,
+                api_fetcher=make_fetcher(season, season_type_name, ent),
                 team_ids=team_ids,
-                rate_limit_delay=API_CONFIG.get('rate_limit_delay', 1.2),
-                max_consecutive_failures=API_CONFIG.get('max_consecutive_failures', 5),
+                rate_limit_delay=api_config.get('rate_limit_delay', 1.2),
+                max_consecutive_failures=api_config.get('max_consecutive_failures', 5),
             )
 
             with db_connection() as conn:
-                run_id, work_items = _resolve_work(
-                    conn, ent, season, season_type, groups, run_type,
+                run_id, work_items = resolve_work(
+                    conn, db_schema, ent, season, season_type, groups, run_type,
+                    ETL_CONFIG['auto_resume'],
                 )
 
                 entity_rows = 0
                 try:
                     for group, progress_id in work_items:
-                        mark_group_started(conn, DB_SCHEMA, progress_id)
+                        mark_group_started(conn, db_schema, progress_id)
                         try:
-                            rows = _execute_group(group, ctx, failed)
+                            rows = execute_group(group, ctx, failed)
                             entity_rows += rows
-                            mark_group_completed(conn, DB_SCHEMA, progress_id, rows)
+                            mark_group_completed(conn, db_schema, progress_id, rows)
                         except Exception as exc:
                             logger.error('Group %s failed: %s', group['endpoint'], exc)
-                            mark_group_failed(conn, DB_SCHEMA, progress_id, str(exc))
+                            mark_group_failed(conn, db_schema, progress_id, str(exc))
                             failed.append({
                                 'endpoint': group['endpoint'], 'error': str(exc),
                             })
 
                     total_rows += entity_rows
-                    update_run_completed_groups(conn, DB_SCHEMA, run_id)
-                    complete_run(conn, DB_SCHEMA, run_id, entity_rows)
+                    update_run_completed_groups(conn, db_schema, run_id)
+                    complete_run(conn, db_schema, run_id, entity_rows)
                 except Exception as exc:
-                    fail_run(conn, DB_SCHEMA, run_id, str(exc))
+                    fail_run(conn, db_schema, run_id, str(exc))
                     raise
 
     return total_rows
@@ -486,12 +199,14 @@ def _discover_entities(
     season_type_name: str,
     team_ids: Dict[str, int],
     failed: List[Dict[str, Any]],
+    **source_kw,
 ) -> int:
     """Phase 1: Populate entity tables (players, teams) from current season."""
     logger.info('Phase: discover_entities')
     return _run_groups(
         'discover', 'entity', entities, [season],
         season_type, season_type_name, team_ids, None, failed,
+        **source_kw,
     )
 
 
@@ -503,12 +218,14 @@ def _backfill(
     team_ids: Dict[str, int],
     endpoint_filter: Optional[str],
     failed: List[Dict[str, Any]],
+    **source_kw,
 ) -> int:
     """Phase 2: Fill stats for all seasons in the retention window."""
     logger.info('Phase: backfill (%d seasons)', len(seasons))
     return _run_groups(
         'backfill', 'stats', entities, seasons,
         season_type, season_type_name, team_ids, endpoint_filter, failed,
+        **source_kw,
     )
 
 
@@ -520,67 +237,15 @@ def _update_current(
     team_ids: Dict[str, int],
     endpoint_filter: Optional[str],
     failed: List[Dict[str, Any]],
+    **source_kw,
 ) -> int:
     """Phase 3: Refresh stats for the current season only."""
     logger.info('Phase: update_current')
     return _run_groups(
         'update', 'stats', entities, [season],
         season_type, season_type_name, team_ids, endpoint_filter, failed,
+        **source_kw,
     )
-
-
-def _prune_stale(
-    entities: List[str],
-    oldest_season: str,
-    db_schema: str,
-) -> int:
-    """Phase 4: Delete stats rows older than the retention window,
-    then remove orphaned entity rows with no remaining stats."""
-    logger.info('Phase: prune_stale (before %s)', oldest_season)
-    pruned = 0
-    from src.etl.config import TABLES
-    with db_connection() as conn:
-        with conn.cursor() as cur:
-            # Prune old stats rows
-            for table_name, meta in TABLES.items():
-                if meta['scope'] != 'stats':
-                    continue
-                qualified = f"{db_schema}.{table_name}"
-                cur.execute(
-                    f"DELETE FROM {qualified} WHERE season < %s",
-                    (oldest_season,),
-                )
-                count = cur.rowcount
-                if count:
-                    logger.info('Pruned %d rows from %s', count, qualified)
-                    pruned += count
-
-            # Prune orphaned entity rows (no stats remaining)
-            for table_name, meta in TABLES.items():
-                if meta['scope'] != 'entity':
-                    continue
-                entity_type = meta['entity']
-                if entity_type not in entities:
-                    continue
-                stats_table = None
-                for st_name, st_meta in TABLES.items():
-                    if st_meta['scope'] == 'stats' and st_meta['entity'] == entity_type:
-                        stats_table = f"{db_schema}.{st_name}"
-                        break
-                if not stats_table:
-                    continue
-                entity_qualified = f"{db_schema}.{table_name}"
-                cur.execute(
-                    f"DELETE FROM {entity_qualified} e "
-                    f"WHERE NOT EXISTS ("
-                    f"  SELECT 1 FROM {stats_table} s WHERE s.entity_id = e.id"
-                    f")",
-                )
-                count = cur.rowcount
-                if count:
-                    logger.info('Pruned %d orphaned entities from %s', count, entity_qualified)
-                    pruned += count
-    return pruned
 
 
 # ============================================================================
@@ -591,6 +256,7 @@ VALID_PHASES = {'full', 'discover', 'backfill', 'update', 'prune'}
 
 
 def run_etl(
+    source: str,
     phase: str = 'full',
     entity: str = 'all',
     endpoint_filter: Optional[str] = None,
@@ -600,6 +266,7 @@ def run_etl(
     """Main ETL entry point.
 
     Args:
+        source:          Registered source key (e.g. ``'nba_api'``).
         phase:           Execution phase — 'full', 'discover', 'backfill',
                          'update', or 'prune'.
         entity:          'player', 'team', or 'all'.
@@ -610,20 +277,45 @@ def run_etl(
     if phase not in VALID_PHASES:
         raise ValueError(f"Invalid phase '{phase}'. Must be one of {VALID_PHASES}")
 
-    season = season or SEASON_CONFIG['current_season']
-    st_info = SEASON_TYPES.get(season_type, SEASON_TYPES[1])
+    config_mod, client_mod = _load_source(source)
+    source_meta = SOURCES[source]
+    league = source_meta['leagues'][0]
+    db_schema = league
+    source_id_col = get_source_id_column(league)
+
+    season_config = config_mod.SEASON_CONFIG
+    season_types = config_mod.SEASON_TYPES
+    endpoints = config_mod.ENDPOINTS
+    endpoints_schema = config_mod.ENDPOINTS_SCHEMA
+    api_config = config_mod.API_CONFIG
+    api_field_names = config_mod.API_FIELD_NAMES
+
+    season = season or season_config['current_season']
+    st_info = season_types.get(season_type, season_types[1])
     season_type_name = st_info['name']
 
     logger.info(
-        'ETL starting: phase=%s season=%s type=%s entity=%s',
-        phase, season, season_type_name, entity,
+        'ETL starting: source=%s phase=%s season=%s type=%s entity=%s',
+        source, phase, season, season_type_name, entity,
     )
 
-    validate_config(ENDPOINTS)
-    ensure_tables(DB_SCHEMA)
+    validate_config(endpoints, endpoints_schema)
+    ensure_tables(db_schema)
+
+    # provider_key is the league name, matching the keys in DB_COLUMNS sources
+    provider_key = league
+
+    source_kw = dict(
+        provider_key=provider_key,
+        endpoints=endpoints,
+        api_field_names=api_field_names,
+        db_schema=db_schema,
+        api_config=api_config,
+        make_fetcher=client_mod.make_fetcher,
+    )
 
     entities = ['player', 'team'] if entity == 'all' else [entity]
-    team_ids = _get_team_ids()
+    team_ids = _get_team_ids(db_schema, source_id_col)
     failed: List[Dict[str, Any]] = []
     total_rows = 0
 
@@ -633,26 +325,27 @@ def run_etl(
     if phase in ('full', 'discover'):
         total_rows += _discover_entities(
             entities, season, season_type, season_type_name, team_ids, failed,
+            **source_kw,
         )
-        # Seed empty stats rows so newly rostered entities appear in stats
-        # tables even before their first game data arrives.
         for ent in entities:
-            total_rows += seed_empty_stats(ent, season, season_type, DB_SCHEMA)
+            total_rows += seed_empty_stats(ent, season, season_type, db_schema)
 
     if phase in ('full', 'backfill'):
         total_rows += _backfill(
             entities, season_range, season_type, season_type_name,
             team_ids, endpoint_filter, failed,
+            **source_kw,
         )
 
     if phase in ('full', 'update'):
         total_rows += _update_current(
             entities, season, season_type, season_type_name,
             team_ids, endpoint_filter, failed,
+            **source_kw,
         )
 
     if phase in ('full', 'prune'):
-        total_rows += _prune_stale(entities, oldest_season, DB_SCHEMA)
+        total_rows += prune_stale(entities, oldest_season, db_schema)
 
     logger.info('ETL complete: %d total rows written/pruned', total_rows)
 
@@ -667,7 +360,12 @@ def run_etl(
 # ============================================================================
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='The Glass - NBA ETL Pipeline')
+    parser = argparse.ArgumentParser(description='The Glass - ETL Pipeline')
+    parser.add_argument(
+        '--source', type=str, required=True,
+        choices=sorted(SOURCES),
+        help='Data source to run (e.g. nba_api)',
+    )
     parser.add_argument(
         '--phase', type=str, default='full',
         choices=sorted(VALID_PHASES),
@@ -680,6 +378,7 @@ def main() -> None:
     args = parser.parse_args()
 
     run_etl(
+        source=args.source,
         phase=args.phase,
         entity=args.entity,
         endpoint_filter=args.endpoint,

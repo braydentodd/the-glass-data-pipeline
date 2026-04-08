@@ -16,10 +16,10 @@ from typing import Dict, List, Tuple
 from dotenv import load_dotenv
 
 from src.db import db_connection, quote_col
-from src.publish.config import (
-    GOOGLE_SHEETS_CONFIG, SHEETS_COLUMNS, SHEET_FORMATTING
+from src.publish.definitions.config import (
+    GOOGLE_SHEETS_CONFIG, TAB_COLUMNS, SHEET_FORMATTING
 )
-from src.publish.core.layout import build_sheet_columns, get_column_index
+from src.publish.core.layout import build_tab_columns, get_column_index
 from src.publish.destinations.sheets.client import get_sheets_client
 
 load_dotenv()
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 def _get_editable_defs() -> List[dict]:
     """Return list of editable column definitions with their DB field names."""
     defs = []
-    for col_key, col_def in SHEETS_COLUMNS.items():
+    for col_key, col_def in TAB_COLUMNS.items():
         if not col_def.get('editable', False):
             continue
         player_field = col_def.get('values', {}).get('player')
@@ -82,11 +82,11 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
         return {'players_updated': 0, 'teams_updated': 0}
 
     # Build column lists to find column positions
-    players_columns = build_sheet_columns(
-        entity='player', stats_mode='both', sheet_type='players'
+    players_columns = build_tab_columns(
+        entity='player', stats_mode='both', tab_type='players'
     )
-    teams_columns = build_sheet_columns(
-        entity='team', stats_mode='both', sheet_type='teams'
+    teams_columns = build_tab_columns(
+        entity='team', stats_mode='both', tab_type='teams'
     )
 
     header_rows = SHEET_FORMATTING.get('header_row_count', 4)

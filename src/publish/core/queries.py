@@ -91,7 +91,7 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
         query = f"""
         SELECT {', '.join(all_fields)}
         FROM {players_tbl} p
-        INNER JOIN {teams_tbl} t ON p.team_id::text = t.nba_api_id
+        INNER JOIN {teams_tbl} t ON p.team_id::text = t.{_quote_col(ctx.source_id_column)}
         LEFT JOIN {stats_tbl} s
             ON s.entity_id = p.id
             AND s.{season_col_name} = %s AND s.season_type = %s
@@ -122,7 +122,7 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
         query = f"""
         SELECT {', '.join(all_fields)}
         FROM {players_tbl} p
-        INNER JOIN {teams_tbl} t ON p.team_id::text = t.nba_api_id
+        INNER JOIN {teams_tbl} t ON p.team_id::text = t.{_quote_col(ctx.source_id_column)}
         LEFT JOIN {stats_tbl} s
             ON s.entity_id = p.id
             {season_filter}
@@ -154,7 +154,7 @@ def fetch_all_players(conn, section: str, historical_config: Optional[dict],
             SELECT {', '.join(all_f)}
             FROM {stats_tbl} s
             INNER JOIN {players_tbl} p ON s.entity_id = p.id
-            INNER JOIN {teams_tbl} t ON p.team_id::text = t.nba_api_id
+            INNER JOIN {teams_tbl} t ON p.team_id::text = t.{_quote_col(ctx.source_id_column)}
             WHERE s.{season_col_name} = %s AND s.season_type = %s
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -176,7 +176,7 @@ def fetch_all_players(conn, section: str, historical_config: Optional[dict],
             SELECT {', '.join(all_aggregates)}
             FROM {stats_tbl} s
             INNER JOIN {players_tbl} p ON s.entity_id = p.id
-            INNER JOIN {teams_tbl} t ON p.team_id::text = t.nba_api_id
+            INNER JOIN {teams_tbl} t ON p.team_id::text = t.{_quote_col(ctx.source_id_column)}
             WHERE s.season_type IN ({st}) {season_filter}
             GROUP BY {', '.join(group_f)}
         """

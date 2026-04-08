@@ -196,3 +196,47 @@ def update_run_completed_groups(
             (run_id, run_id),
         )
     conn.commit()
+
+
+# ============================================================================
+# WORK RESOLUTION
+# ============================================================================
+
+def resolve_work(
+    conn: Any,
+    db_schema: str,
+    entity: str,
+    season: str,
+    season_type: int,
+    groups: List[Dict[str, Any]],
+    run_type: str,
+    auto_resume: bool,
+) -> Tuple[int, List[Tuple[Dict[str, Any], int]]]:
+    """Determine the run_id and pending work items for an entity/season.
+
+    If *auto_resume* is enabled and an interrupted run exists for the same
+    (season, season_type, entity), resumes from the last pending group.
+    Otherwise creates a fresh run and registers all groups.
+
+    Returns (run_id, [(group_dict, progress_id), ...]).
+    """
+    if auto_resume:
+        run_id = find_resumable_run(conn, db_schema, season, season_type, entity)
+        if run_id:
+            logger.info('Resuming interrupted run %d for %s', run_id, entity)
+            pending = get_pending_progress_ids(conn, db_schema, run_id)
+            pending_lookup = {(ep, cols): pid for pid, ep, cols in pending}
+            work_items: List[Tuple[Dict[str, Any], int]] = []
+            for group in groups:
+                col_key = ','.join(sorted(group.get('columns', {}).keys())) or None
+                key = (group['endpoint'], col_key)
+                if key in pending_lookup:
+                    work_items.append((group, pending_lookup[key]))
+            logger.info('Resuming with %d pending groups', len(work_items))
+            return run_id, work_items
+
+    run_id = create_run(
+        conn, db_schema, run_type, season, season_type, entity, len(groups),
+    )
+    progress_ids = register_groups(conn, db_schema, run_id, groups, entity)
+    return run_id, list(zip(groups, progress_ids))

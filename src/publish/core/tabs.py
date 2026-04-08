@@ -2,9 +2,9 @@ import logging
 from collections import defaultdict
 
 from src.db import get_db_connection
-from src.publish.config import STAT_RATES
+from src.publish.definitions.config import STAT_RATES
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats, get_teams_from_db
-from src.publish.core.layout import build_headers, build_sheet_columns, build_merged_entity_row, build_summary_rows
+from src.publish.core.layout import build_headers, build_tab_columns, build_merged_entity_row, build_summary_rows
 from src.publish.destinations.sheets.payloads import build_formatting_requests
 from src.publish.core.calculations import calculate_all_percentiles, evaluate_expression
 
@@ -36,16 +36,16 @@ def _compute_pct_by_rate(section_data, entity_type):
     return result
 
 # ============================================================================
-# TEAM SHEET SYNC
+# TEAM TAB SYNC
 # ============================================================================
 
-def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
+def sync_team_tab(ctx, client, spreadsheet, team_abbr,
                     team_name='', mode='per_possession',
                     show_advanced=False,
                     historical_config=None,
                     partial_update=False, precomputed=None,
                     sync_section=None):
-    """Sync a single team's worksheet with merged row layout.
+    """Sync a single team tab with merged row layout.
 
     All 3 stat modes are written simultaneously. The `mode` parameter controls
     which mode's columns are visible by default.
@@ -104,9 +104,9 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
             }, 'opponents')
 
         # ---- Column structure (tripled stats sections) ----
-        columns = build_sheet_columns(
+        columns = build_tab_columns(
             entity='player', stats_mode='both',
-            sheet_type='team', default_mode=mode)
+            tab_type='team', default_mode=mode)
 
         # ---- Headers ----
         headers = build_headers(
@@ -205,11 +205,11 @@ def sync_team_sheet(ctx, client, spreadsheet, team_abbr,
         conn.close()
 
 # ============================================================================
-# TEAMS SHEET SYNC (ALL TEAMS, WITH OPPONENT SUBSECTIONS)
+# TEAMS TAB SYNC (ALL TEAMS, WITH OPPONENT SUBSECTIONS)
 # ============================================================================
 
 def _combine_team_opp(teams_dict):
-    """Merge team and opponent dicts into combined rows for the Teams sheet."""
+    """Merge team and opponent dicts into combined rows for the Teams tab."""
     full = []
     for team_d, opp_d in zip(teams_dict['teams'], teams_dict['opponents']):
         combined = dict(team_d)
@@ -219,13 +219,13 @@ def _combine_team_opp(teams_dict):
         full.append(combined)
     return full
 
-def sync_teams_sheet(ctx, client, spreadsheet, mode='per_possession',
+def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                      show_advanced=False,
                      historical_config=None,
                      partial_update=False,
                      sync_section=None):
-    """Sync the league-wide Teams sheet with all stat modes."""
-    logger.info('  Syncing Teams sheet...')
+    """Sync the league-wide Teams tab with all stat modes."""
+    logger.info('  Syncing Teams tab...')
     fmt = ctx.sheet_formatting
     current_season = ctx.league_config[ctx.season_key]
     worksheet = get_or_create_worksheet(spreadsheet, 'Teams', clear=not partial_update)
@@ -264,9 +264,9 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_possession',
         }, 'team')
 
         # ---- Column structure (tripled stats sections) ----
-        columns = build_sheet_columns(
+        columns = build_tab_columns(
             entity='team', stats_mode='both',
-            sheet_type='teams', default_mode=mode)
+            tab_type='teams', default_mode=mode)
 
         # ---- Opponent percentile populations (base-section-keyed) ----
         _data_by_base = {
@@ -368,23 +368,23 @@ def sync_teams_sheet(ctx, client, spreadsheet, mode='per_possession',
         move_sheet_to_position(worksheet, 1)
 
         logger.info(
-            f'  Teams sheet done: {n_team_rows} teams, '
+            f'  Teams tab done: {n_team_rows} teams, '
             f'{len(all_percentile_cells)} percentile cells'
         )
     finally:
         conn.close()
 
 # ============================================================================
-# PLAYERS SHEET SYNC (ALL PLAYERS, NO TEAM/OPP AGGREGATE ROWS)
+# PLAYERS TAB SYNC (ALL PLAYERS, NO TEAM/OPP AGGREGATE ROWS)
 # ============================================================================
 
-def sync_players_sheet(ctx, client, spreadsheet, mode='per_possession',
+def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
                        show_advanced=False,
                        historical_config=None,
                        partial_update=False,
                        sync_section=None):
-    """Sync the league-wide Players sheet with all stat modes."""
-    logger.info('  Syncing Players sheet...')
+    """Sync the league-wide Players tab with all stat modes."""
+    logger.info('  Syncing Players tab...')
     fmt = ctx.sheet_formatting
     current_season = ctx.league_config[ctx.season_key]
     worksheet = get_or_create_worksheet(spreadsheet, 'Players', clear=not partial_update)
@@ -406,9 +406,9 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_possession',
         }, 'player')
 
         # ---- Column structure (tripled stats sections) ----
-        columns = build_sheet_columns(
+        columns = build_tab_columns(
             entity='player', stats_mode='both',
-            sheet_type='players', default_mode=mode)
+            tab_type='players', default_mode=mode)
 
         # ---- Headers ----
         headers = build_headers(
@@ -483,7 +483,7 @@ def sync_players_sheet(ctx, client, spreadsheet, mode='per_possession',
         move_sheet_to_position(worksheet, 0)
 
         logger.info(
-            f'  Players sheet done: {n_player_rows} players, '
+            f'  Players tab done: {n_player_rows} players, '
             f'{len(all_percentile_cells)} percentile cells'
         )
     finally:

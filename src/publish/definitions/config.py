@@ -256,7 +256,42 @@ WIDTH_CLASSES = {
 # COLUMN DEFINITIONS
 # ============================================================================
 
-SHEETS_COLUMNS: Dict[str, Any] = {
+# Valid attribute value sets (co-located with the schema they constrain)
+_VALID_SECTIONS = {
+    'entities', 'player_info', 'analysis',
+    'current_stats', 'historical_stats', 'postseason_stats', 'identity',
+}
+_VALID_SUBSECTIONS = {
+    'rates', 'scoring', 'ball_management', 'rebounding',
+    'movement', 'defense', 'opponent', 'team_ratings', 'nba',
+}
+_VALID_TABS = {'teams', 'players', 'team'}
+_VALID_STATS_MODES = {'basic', 'advanced', 'both'}
+_VALID_FORMATS = {'text', 'number', 'percentage', 'measurement'}
+_VALID_WIDTH_CLASSES = {
+    'auto', 'measurement', 'four_char', 'four_char_dec',
+    'three_char_dec', 'two_char', 'two_char_dec', '500',
+}
+_VALID_LEAGUES = {'nba', 'ncaa'}
+
+TAB_COLUMNS_SCHEMA = {
+    'description':     {'required': True,  'types': (str,)},
+    'sections':        {'required': True,  'types': (list,),        'list_item_values': _VALID_SECTIONS},
+    'subsection':      {'required': True,  'types': (str, type(None)), 'allowed_values': _VALID_SUBSECTIONS | {None}},
+    'tabs':            {'required': True,  'types': (list,),        'list_item_values': _VALID_TABS},
+    'stats_mode':      {'required': True,  'types': (str,),         'allowed_values': _VALID_STATS_MODES},
+    'percentile':      {'required': True,  'types': (str, type(None)), 'allowed_values': {'standard', 'reverse', None}},
+    'editable':        {'required': True,  'types': (bool,)},
+    'scale_with_rate': {'required': True,  'types': (bool,)},
+    'format':          {'required': True,  'types': (str,),         'allowed_values': _VALID_FORMATS},
+    'decimal_places':  {'required': True,  'types': (int, type(None))},
+    'width_class':     {'required': True,  'types': (str,),         'allowed_values': _VALID_WIDTH_CLASSES},
+    'leagues':         {'required': True,  'types': (list,),        'list_item_values': _VALID_LEAGUES},
+    'default':         {'required': True,  'types': (str, int, float, type(None))},
+    'values':          {'required': True,  'types': (dict,)},
+}
+
+TAB_COLUMNS: Dict[str, Any] = {
     'name': {
         'description': 'Name',
         'sections': ['entities'],
@@ -1712,7 +1747,7 @@ SHEETS_COLUMNS: Dict[str, Any] = {
     'ID': {
         'description': 'The Glass Entity ID',
         'sections': ['identity'],
-        'subsection': 'nba',
+        'subsection': None,
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
@@ -1733,10 +1768,10 @@ SHEETS_COLUMNS: Dict[str, Any] = {
 
 
 # ============================================================================
-# FIELD DERIVATION — extract DB column references from SHEETS_COLUMNS
+# FIELD DERIVATION — extract DB column references from TAB_COLUMNS
 # ============================================================================
 
-# Entity type mapping: SHEETS_COLUMNS values key -> (entity, db_entity_type)
+# Entity type mapping: TAB_COLUMNS values key -> (entity, db_entity_type)
 _VALUES_KEY_ENTITY = {
     'player': 'player',
     'team': 'team',
@@ -1770,7 +1805,7 @@ def _extract_db_refs(expr) -> set:
 
 
 def derive_db_fields() -> Dict[str, set]:
-    """Derive the DB column sets needed by publish queries from SHEETS_COLUMNS.
+    """Derive the DB column sets needed by publish queries from TAB_COLUMNS.
 
     Returns a dict with keys:
         player_entity_fields, team_entity_fields, stat_fields, team_stat_fields
@@ -1780,7 +1815,7 @@ def derive_db_fields() -> Dict[str, set]:
     player_stats = set()
     team_stats = set()
 
-    for col_def in SHEETS_COLUMNS.values():
+    for col_def in TAB_COLUMNS.values():
         sections = set(col_def.get('sections', []))
         is_stats = bool(sections & _STATS_SECTIONS)
         values = col_def.get('values', {})

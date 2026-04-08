@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
-from src.publish.config import SHEETS_COLUMNS
-from src.publish.config import (STAT_RATE_LABELS, COLORS, COLOR_THRESHOLDS)
+from src.publish.definitions.config import TAB_COLUMNS
+from src.publish.definitions.config import (STAT_RATE_LABELS, COLORS, COLOR_THRESHOLDS)
 
 def _format_season_label(season_year: int) -> str:
     """Convert end-year integer to season string: 2026 -> '2025-26'."""
@@ -156,13 +156,13 @@ def get_color_for_raw(color_dict: dict) -> dict:
 
 def get_reverse_stats() -> List[str]:
     """Get list of stat column keys where lower is better."""
-    return [k for k, v in SHEETS_COLUMNS.items() if v.get('percentile') == 'reverse']
+    return [k for k, v in TAB_COLUMNS.items() if v.get('percentile') == 'reverse']
 
 
 def get_editable_fields() -> List[str]:
     """Get list of field names that users can edit (wingspan, notes, hand)."""
     fields = []
-    for col_key, col_def in SHEETS_COLUMNS.items():
+    for col_key, col_def in TAB_COLUMNS.items():
         if col_def.get('editable', False):
             # Get the actual DB field from the player value
             formula = col_def.get('values', {}).get('player')

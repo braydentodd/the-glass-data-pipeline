@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, List, Optional
-from src.publish.config import SHEETS_COLUMNS, SECTION_CONFIG, STAT_CONSTANTS
+from src.publish.definitions.config import TAB_COLUMNS, SECTION_CONFIG, STAT_CONSTANTS
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ def evaluate_formula(col_key: str, entity_data: dict,
     Resolves the expression from col_def['values'][entity_type] and
     walks the tuple tree via evaluate_expression().
     """
-    col_def = SHEETS_COLUMNS.get(col_key)
+    col_def = TAB_COLUMNS.get(col_key)
     if not col_def:
         return None
 
@@ -166,7 +166,7 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
     minutes = (entity_data.get('minutes_x10', 0) or 0) / 10.0
     possessions = entity_data.get('possessions', 0) or 0
 
-    for col_key, col_def in SHEETS_COLUMNS.items():
+    for col_key, col_def in TAB_COLUMNS.items():
         values = col_def.get('values', {})
         if entity_type not in values:
             continue
@@ -213,7 +213,7 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
         all_calculated.append((entity, stats))
 
     percentiles = {}
-    for col_key, col_def in SHEETS_COLUMNS.items():
+    for col_key, col_def in TAB_COLUMNS.items():
         if not col_def.get('percentile'):
             continue
 

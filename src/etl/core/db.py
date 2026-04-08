@@ -10,7 +10,8 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from src.db import get_db_connection, quote_col
-from src.etl.config import DB_COLUMNS, ETL_TABLES, TABLES
+from src.etl.definitions import DB_COLUMNS, ETL_TABLES, TABLES
+from src.etl.definitions.sources import get_source_id_column
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ def ensure_tables(db_schema: str, conn=None) -> Dict[str, List[str]]:
 
     try:
         actions: Dict[str, List[str]] = {}
+        source_id_col = get_source_id_column(db_schema)
 
         with conn.cursor() as cur:
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {db_schema}")
@@ -119,7 +121,10 @@ def ensure_tables(db_schema: str, conn=None) -> Dict[str, List[str]]:
                 if cur.fetchone() is None:
                     col_defs = [_col_ddl(cn, cm) for cn, cm in columns]
 
-                    unique_key = table_meta.get('unique_key', [])
+                    unique_key = table_meta.get('unique_key')
+                    if unique_key is None and table_meta['scope'] == 'entity':
+                        unique_key = [source_id_col]
+                    unique_key = unique_key or []
                     if unique_key:
                         uk_cols = ', '.join(quote_col(c) for c in unique_key)
                         col_defs.append(f'UNIQUE ({uk_cols})')
@@ -227,3 +232,70 @@ def ensure_tables(db_schema: str, conn=None) -> Dict[str, List[str]]:
     finally:
         if own_conn:
             conn.close()
+
+
+# ============================================================================
+# STALE DATA PRUNING
+# ============================================================================
+
+def prune_stale(entities: List[str], oldest_season: str, db_schema: str) -> int:
+    """Delete stats rows older than the retention window, then remove orphaned entities.
+
+    Orphaned entities are entity rows (players/teams) that have no remaining
+    stats rows after the prune -- e.g. a player who only appeared in seasons
+    that are now outside the retention window.
+
+    Returns total rows deleted.
+    """
+    logger.info('Phase: prune_stale (before %s)', oldest_season)
+    conn = get_db_connection()
+    pruned = 0
+    try:
+        with conn.cursor() as cur:
+            for table_name, meta in TABLES.items():
+                if meta['scope'] != 'stats':
+                    continue
+                qualified = f"{db_schema}.{table_name}"
+                cur.execute(
+                    f"DELETE FROM {qualified} WHERE season < %s",
+                    (oldest_season,),
+                )
+                count = cur.rowcount
+                if count:
+                    logger.info('Pruned %d rows from %s', count, qualified)
+                    pruned += count
+
+            for table_name, meta in TABLES.items():
+                if meta['scope'] != 'entity':
+                    continue
+                entity_type = meta['entity']
+                if entity_type not in entities:
+                    continue
+                stats_table = None
+                for st_name, st_meta in TABLES.items():
+                    if st_meta['scope'] == 'stats' and st_meta['entity'] == entity_type:
+                        stats_table = f"{db_schema}.{st_name}"
+                        break
+                if not stats_table:
+                    continue
+                entity_qualified = f"{db_schema}.{table_name}"
+                cur.execute(
+                    f"DELETE FROM {entity_qualified} e "
+                    f"WHERE NOT EXISTS ("
+                    f"  SELECT 1 FROM {stats_table} s WHERE s.entity_id = e.id"
+                    f")",
+                )
+                count = cur.rowcount
+                if count:
+                    logger.info(
+                        'Pruned %d orphaned entities from %s', count, entity_qualified,
+                    )
+                    pruned += count
+
+        conn.commit()
+        return pruned
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

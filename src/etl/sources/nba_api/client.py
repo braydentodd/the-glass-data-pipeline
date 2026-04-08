@@ -215,3 +215,25 @@ def build_endpoint_params(
         params.update(extra_params)
 
     return params
+
+
+# ============================================================================
+# FETCHER FACTORY
+# ============================================================================
+
+def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
+    """Create an api_fetcher closure for the given season, season type, and entity.
+
+    Returns a function that accepts (endpoint, extra_params) and executes
+    a fully parameterized NBA API call with retry logic.
+    """
+    def fetch(endpoint: str, extra_params: Optional[Dict[str, Any]] = None) -> Optional[Dict]:
+        EndpointClass = load_endpoint_class(endpoint)
+        if EndpointClass is None:
+            return None
+        full_params = build_endpoint_params(
+            endpoint, season, season_type_name, entity, extra_params or {},
+        )
+        api_call = create_api_call(EndpointClass, full_params, endpoint_name=endpoint)
+        return with_retry(api_call)
+    return fetch

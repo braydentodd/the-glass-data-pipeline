@@ -141,7 +141,7 @@ def upsert_entity_rows(
         conn:             psycopg2 connection.
         table:            Schema-qualified table name.
         rows:             Extraction result from ``extract_columns_from_result``.
-        conflict_columns: PK / unique columns (e.g. ``['nba_api_id', 'season']``).
+        conflict_columns: PK / unique columns for upsert conflict resolution.
         batch_size:       Rows per batch.
 
     Returns:
@@ -174,7 +174,7 @@ def write_entity_rows(
 ) -> int:
     """Write extracted entity rows to the database via upsert.
 
-    For entity scope: upserts directly with nba_api_id as conflict key.
+    For entity scope: upserts directly with the source-provider ID as conflict key.
     For stats scope: looks up the entity's serial id from the entity
     table, then upserts with (entity_id, season, season_type) conflict key.
 
@@ -192,13 +192,15 @@ def write_entity_rows(
     if not rows:
         return 0
 
-    from src.etl.config import TABLES
+    from src.etl.definitions import TABLES
     from src.db import get_table_name
+    from src.etl.definitions.sources import get_source_id_column
 
     table = get_table_name(entity, scope, db_schema)
     table_name = table.split('.', 1)[1]
     table_meta = TABLES[table_name]
-    conflict_columns = table_meta['unique_key']
+    source_id_col = get_source_id_column(db_schema)
+    conflict_columns = table_meta.get('unique_key') or [source_id_col]
 
     all_cols: set = set()
     for vals in rows.values():
@@ -209,7 +211,7 @@ def write_entity_rows(
     with db_connection() as conn:
         if scope == 'stats':
             entity_table = get_table_name(entity, 'entity', db_schema)
-            id_map = _load_entity_id_map(conn, entity_table)
+            id_map = _load_entity_id_map(conn, entity_table, source_id_col)
 
             columns = list(conflict_columns) + data_cols
             data = []
@@ -240,26 +242,21 @@ def write_entity_rows(
                 return 0
             return bulk_upsert(conn, table, columns, data, conflict_columns)
         else:
+            # Entity scope: source_id maps to the table's unique key column
             columns = list(conflict_columns) + data_cols
             data = []
             for source_id, vals in rows.items():
-                identity_values = []
-                for ck in conflict_columns:
-                    if ck == 'nba_api_id':
-                        identity_values.append(str(source_id))
-                    else:
-                        identity_values.append(None)
-
+                identity_values = [str(source_id)]
                 row_values = [vals.get(c) for c in data_cols]
                 data.append(tuple(identity_values + row_values))
 
             return bulk_upsert(conn, table, columns, data, conflict_columns)
 
 
-def _load_entity_id_map(conn: Any, entity_table: str) -> Dict[str, int]:
-    """Load nba_api_id -> serial id mapping from an entity table."""
+def _load_entity_id_map(conn: Any, entity_table: str, source_id_column: str) -> Dict[str, int]:
+    """Load source_id -> serial id mapping from an entity table."""
     with conn.cursor() as cur:
-        cur.execute(f"SELECT nba_api_id, id FROM {entity_table}")
+        cur.execute(f"SELECT {quote_col(source_id_column)}, id FROM {entity_table}")
         return {str(row[0]): row[1] for row in cur.fetchall()}
 
 

@@ -3,12 +3,12 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional, Any, Dict
-from src.publish.config import (
-    SHEETS_COLUMNS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_RATES,
+from src.publish.definitions.config import (
+    TAB_COLUMNS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_RATES,
     STAT_CONSTANTS, STAT_RATE_LABELS, DEFAULT_STAT_RATE, SHEET_FORMATTING, COLORS,
     COLOR_THRESHOLDS, SUBSECTIONS, WIDTH_CLASSES, MENU_CONFIG
 )
-from src.publish.core.layout import build_sheet_columns, get_column_index
+from src.publish.core.layout import build_tab_columns, get_column_index
 from src.publish.core.formatting import get_reverse_stats, get_editable_fields
 from src.publish.destinations.sheets.payloads import _get_subsection_boundaries, _get_section_boundaries
 
@@ -50,18 +50,18 @@ def get_config_for_export(league: str,
     league_teams = {abbr: team_id for team_id, (abbr, name) in teams_from_db.items()}
 
     # --- Stat columns list -----------------------------------------------
-    stat_columns = [k for k, v in SHEETS_COLUMNS.items()
+    stat_columns = [k for k, v in TAB_COLUMNS.items()
                     if any(SECTION_CONFIG.get(s, {}).get('is_stats_section') for s in v.get('sections', []))]
 
     # --- Build full column lists for all sheet types --------------------
-    team_columns = build_sheet_columns(
-        entity='player', stats_mode='both', sheet_type='team'
+    team_columns = build_tab_columns(
+        entity='player', stats_mode='both', tab_type='team'
     )
-    league_columns = build_sheet_columns(
-        entity='player', stats_mode='both', sheet_type='players'
+    league_columns = build_tab_columns(
+        entity='player', stats_mode='both', tab_type='players'
     )
-    teams_columns = build_sheet_columns(
-        entity='team', stats_mode='both', sheet_type='teams'
+    teams_columns = build_tab_columns(
+        entity='team', stats_mode='both', tab_type='teams'
     )
 
     # --- Helper: find contiguous ranges of matching column indices --------
@@ -255,7 +255,7 @@ def get_config_for_export(league: str,
 
     # --- Editable columns (config-driven for Apps Script) ----------------
     editable_columns = []
-    for col_key, col_def in SHEETS_COLUMNS.items():
+    for col_key, col_def in TAB_COLUMNS.items():
         if not col_def.get('editable', False):
             continue
         db_field = col_def.get('values', {}).get('player')
@@ -275,7 +275,7 @@ def get_config_for_export(league: str,
 
     # --- Editable columns for teams_sheet ----
     teams_editable = []
-    for col_key, col_def in SHEETS_COLUMNS.items():
+    for col_key, col_def in TAB_COLUMNS.items():
         if not col_def.get('editable', False):
             continue
         tf = col_def.get('values', {}).get('team')

@@ -34,7 +34,7 @@ VALID_TRANSFORMS = {
 
 def _validate_pg_types(db_columns: Dict[str, Dict]) -> List[str]:
     """Validate that all DB_COLUMNS types are valid PostgreSQL types."""
-    from src.etl.config import VALID_PG_TYPES
+    from src.etl.definitions import VALID_PG_TYPES
 
     errors = []
     for col_name, meta in db_columns.items():
@@ -47,7 +47,7 @@ def _validate_pg_types(db_columns: Dict[str, Dict]) -> List[str]:
 
 def _validate_source_structure(db_columns: Dict[str, Dict]) -> List[str]:
     """Validate the nested sources structure in DB_COLUMNS."""
-    from src.etl.config import VALID_ENTITY_TYPES
+    from src.etl.definitions import VALID_ENTITY_TYPES
     errors = []
     for col_name, meta in db_columns.items():
         sources = meta.get('sources')
@@ -127,12 +127,15 @@ def _validate_table_unique_keys(
 
 def validate_config(
     endpoints: Optional[Dict[str, Any]] = None,
+    endpoints_schema: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """Validate all ETL configuration at startup.
 
     Args:
-        endpoints: Optional ENDPOINTS dict from the provider config.
-                   If supplied, source endpoint references are cross-checked.
+        endpoints:        Optional ENDPOINTS dict from the provider config.
+                          If supplied, source endpoint references are cross-checked.
+        endpoints_schema: Optional schema dict for validating the endpoints config.
+                          Required when *endpoints* is provided.
 
     Returns:
         Empty list if all valid.
@@ -140,7 +143,7 @@ def validate_config(
     Raises:
         RuntimeError: If any validation errors are found.
     """
-    from src.etl.config import (
+    from src.etl.definitions import (
         DB_COLUMNS, TABLES, ETL_CONFIG,
         DB_COLUMNS_SCHEMA, TABLES_SCHEMA, ETL_CONFIG_SCHEMA,
     )
@@ -152,9 +155,8 @@ def validate_config(
     errors.extend(validate_dict_config(TABLES, TABLES_SCHEMA, 'TABLES'))
     errors.extend(validate_flat_config(ETL_CONFIG, ETL_CONFIG_SCHEMA, 'ETL_CONFIG'))
 
-    if endpoints:
-        from src.etl.sources.nba_api.config import ENDPOINTS_SCHEMA
-        errors.extend(validate_dict_config(endpoints, ENDPOINTS_SCHEMA, 'ENDPOINTS'))
+    if endpoints and endpoints_schema:
+        errors.extend(validate_dict_config(endpoints, endpoints_schema, 'ENDPOINTS'))
 
     # Type and structural validations
     errors.extend(_validate_pg_types(DB_COLUMNS))
