@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, List, Optional, Tuple
-from src.publish.definitions.config import TAB_COLUMNS
+from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
 from src.publish.core.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
 

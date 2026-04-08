@@ -12,7 +12,7 @@ generic core modules:
 Usage:
     python -m etl.runner --source nba_api                       # full run
     python -m etl.runner --source nba_api --season 2023-24      # specific season
-    python -m etl.runner --source nba_api --season-type 2       # Playoffs
+    python -m etl.runner --source nba_api --season-type po       # Playoffs
     python -m etl.runner --source nba_api --entity team         # teams only
     python -m etl.runner --source nba_api --endpoint leaguedashptstats
 """
@@ -23,7 +23,7 @@ import logging
 import warnings
 from typing import Any, Dict, List, Optional
 
-from src.db import db_connection, quote_col
+from src.core.db import db_connection, quote_col
 from src.etl.definitions import ETL_CONFIG
 from src.etl.core.db import ensure_tables, prune_stale
 from src.etl.core.config_validation import validate_config
@@ -39,7 +39,7 @@ from src.etl.core.progress_tracker import (
     update_run_completed_groups,
 )
 from src.etl.core.plan import build_call_groups
-from src.etl.definitions.sources import SOURCES, get_source_id_column
+from src.etl.definitions import SOURCES, get_source_id_column
 
 warnings.filterwarnings(
     'ignore',
@@ -110,7 +110,7 @@ def _run_groups(
     scope: str,
     entities: List[str],
     seasons: List[str],
-    season_type: int,
+    season_type: str,
     season_type_name: str,
     team_ids: Dict[str, int],
     endpoint_filter: Optional[str],
@@ -195,7 +195,7 @@ def _run_groups(
 def _discover_entities(
     entities: List[str],
     season: str,
-    season_type: int,
+    season_type: str,
     season_type_name: str,
     team_ids: Dict[str, int],
     failed: List[Dict[str, Any]],
@@ -213,7 +213,7 @@ def _discover_entities(
 def _backfill(
     entities: List[str],
     seasons: List[str],
-    season_type: int,
+    season_type: str,
     season_type_name: str,
     team_ids: Dict[str, int],
     endpoint_filter: Optional[str],
@@ -232,7 +232,7 @@ def _backfill(
 def _update_current(
     entities: List[str],
     season: str,
-    season_type: int,
+    season_type: str,
     season_type_name: str,
     team_ids: Dict[str, int],
     endpoint_filter: Optional[str],
@@ -261,7 +261,7 @@ def run_etl(
     entity: str = 'all',
     endpoint_filter: Optional[str] = None,
     season: Optional[str] = None,
-    season_type: int = 1,
+    season_type: str = 'rs',
 ) -> None:
     """Main ETL entry point.
 
@@ -272,7 +272,7 @@ def run_etl(
         entity:          'player', 'team', or 'all'.
         endpoint_filter: If set, only process this one endpoint.
         season:          e.g. '2024-25'.  Defaults to current season.
-        season_type:     1=Regular, 2=Playoffs, 3=PlayIn.
+        season_type:     'rs'=Regular Season, 'po'=Playoffs, 'pi'=PlayIn.
     """
     if phase not in VALID_PHASES:
         raise ValueError(f"Invalid phase '{phase}'. Must be one of {VALID_PHASES}")
@@ -291,7 +291,7 @@ def run_etl(
     api_field_names = config_mod.API_FIELD_NAMES
 
     season = season or season_config['current_season']
-    st_info = season_types.get(season_type, season_types[1])
+    st_info = season_types.get(season_type, season_types['rs'])
     season_type_name = st_info['name']
 
     logger.info(
@@ -314,7 +314,7 @@ def run_etl(
         make_fetcher=client_mod.make_fetcher,
     )
 
-    entities = ['player', 'team'] if entity == 'all' else [entity]
+    entities = ['team', 'player'] if entity == 'all' else [entity]
     team_ids = _get_team_ids(db_schema, source_id_col)
     failed: List[Dict[str, Any]] = []
     total_rows = 0
@@ -372,7 +372,7 @@ def main() -> None:
         help='ETL phase to run (default: full)',
     )
     parser.add_argument('--season', type=str, default=None)
-    parser.add_argument('--season-type', type=int, default=1, choices=[1, 2, 3])
+    parser.add_argument('--season-type', type=str, default='rs', choices=['rs', 'po', 'pi'])
     parser.add_argument('--entity', type=str, default='all', choices=['player', 'team', 'all'])
     parser.add_argument('--endpoint', type=str, default=None)
     args = parser.parse_args()

@@ -17,7 +17,7 @@ it in ``validate_config()``.
 import logging
 from typing import Any, Dict, List, Optional
 
-from src.config_validation import validate_dict_config, validate_flat_config
+from src.core.config_validation import validate_dict_config, validate_flat_config
 
 logger = logging.getLogger(__name__)
 

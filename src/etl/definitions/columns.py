@@ -142,7 +142,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'entity_types': ['player'],
         'update_frequency': 'daily',
         'rate_group': None,
-        'comment': None,
+        'comment': 'FK to teams table serial id (resolved from source during ETL)',
         'sources': {
             'nba': {
                 'player': {'endpoint': 'commonplayerinfo', 'field': 'TEAM_ID'},

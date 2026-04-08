@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from psycopg2.extras import execute_values
 
-from src.db import db_connection, quote_col
+from src.core.db import db_connection, quote_col
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ def write_entity_rows(
     scope: str,
     rows: Dict[Any, Dict[str, Any]],
     season: str,
-    season_type: int,
+    season_type: str,
     db_schema: str,
 ) -> int:
     """Write extracted entity rows to the database via upsert.
@@ -183,7 +183,7 @@ def write_entity_rows(
         scope:       ``'stats'`` or ``'entity'``.
         rows:        ``{source_entity_id: {col_name: value, ...}, ...}``
         season:      Season string (e.g. ``'2024-25'``).
-        season_type: Season type integer (1=Regular, 2=Playoffs, 3=PlayIn).
+        season_type: Season type code (e.g. ``'rs'``, ``'po'``, ``'pi'``).
         db_schema:   Database schema name (e.g. ``'nba'``).
 
     Returns:
@@ -193,8 +193,8 @@ def write_entity_rows(
         return 0
 
     from src.etl.definitions import TABLES
-    from src.db import get_table_name
-    from src.etl.definitions.sources import get_source_id_column
+    from src.core.db import get_table_name
+    from src.etl.definitions import get_source_id_column
 
     table = get_table_name(entity, scope, db_schema)
     table_name = table.split('.', 1)[1]
@@ -231,7 +231,7 @@ def write_entity_rows(
                     elif ck == 'season':
                         identity_values.append(season)
                     elif ck == 'season_type':
-                        identity_values.append(str(season_type))
+                        identity_values.append(season_type)
                     else:
                         identity_values.append(None)
 
@@ -242,12 +242,30 @@ def write_entity_rows(
                 return 0
             return bulk_upsert(conn, table, columns, data, conflict_columns)
         else:
-            # Entity scope: source_id maps to the table's unique key column
+            # Entity scope: source_id maps to the table's unique key column.
+            # For players, resolve team_id from source API team ID to Glass serial ID.
+            team_id_map = None
+            if entity == 'player' and 'team_id' in data_cols:
+                teams_table = get_table_name('team', 'entity', db_schema)
+                team_id_map = _load_entity_id_map(conn, teams_table, source_id_col)
+
             columns = list(conflict_columns) + data_cols
             data = []
             for source_id, vals in rows.items():
                 identity_values = [str(source_id)]
                 row_values = [vals.get(c) for c in data_cols]
+
+                if team_id_map and 'team_id' in data_cols:
+                    ti = data_cols.index('team_id')
+                    raw_team_id = str(row_values[ti]) if row_values[ti] is not None else None
+                    if raw_team_id and raw_team_id in team_id_map:
+                        row_values[ti] = team_id_map[raw_team_id]
+                    elif raw_team_id:
+                        logger.warning(
+                            'No team serial ID for source team_id=%s (player %s)',
+                            raw_team_id, source_id,
+                        )
+
                 data.append(tuple(identity_values + row_values))
 
             return bulk_upsert(conn, table, columns, data, conflict_columns)
@@ -263,7 +281,7 @@ def _load_entity_id_map(conn: Any, entity_table: str, source_id_column: str) -> 
 def seed_empty_stats(
     entity: str,
     season: str,
-    season_type: int,
+    season_type: str,
     db_schema: str,
 ) -> int:
     """Insert skeleton stats rows for entities missing data this season.
@@ -276,7 +294,7 @@ def seed_empty_stats(
     tables, and at the start of each season to seed empty rows for all
     existing entities.
     """
-    from src.db import get_table_name
+    from src.core.db import get_table_name
 
     entity_table = get_table_name(entity, 'entity', db_schema)
     stats_table = get_table_name(entity, 'stats', db_schema)
@@ -292,12 +310,12 @@ def seed_empty_stats(
                 f"  WHERE s.entity_id = e.id "
                 f"  AND s.season = %s AND s.season_type = %s"
                 f")",
-                (season, str(season_type), season, str(season_type)),
+                (season, season_type, season, season_type),
             )
             count = cur.rowcount
     if count:
         logger.info(
-            'Seeded %d empty %s stats rows for %s (type %d)',
+            'Seeded %d empty %s stats rows for %s (type %s)',
             count, entity, season, season_type,
         )
     return count

@@ -42,7 +42,7 @@ class ExecutionContext:
     entity: str
     scope: str
     season: str
-    season_type: int
+    season_type: str
     season_type_name: str
     entity_id_field: str
     db_schema: str

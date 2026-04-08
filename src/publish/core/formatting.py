@@ -1,5 +1,5 @@
 from typing import List, Optional, Any
-from src.publish.definitions.config import TAB_COLUMNS
+from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (STAT_RATE_LABELS, COLORS, COLOR_THRESHOLDS)
 
 def _format_season_label(season_year: int) -> str:

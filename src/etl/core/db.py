@@ -9,9 +9,9 @@ existing tables -- all from the single source of truth in config.py.
 import logging
 from typing import Any, Dict, List, Tuple
 
-from src.db import get_db_connection, quote_col
+from src.core.db import get_db_connection, quote_col
 from src.etl.definitions import DB_COLUMNS, ETL_TABLES, TABLES
-from src.etl.definitions.sources import get_source_id_column
+from src.etl.definitions import get_source_id_column
 
 logger = logging.getLogger(__name__)
 

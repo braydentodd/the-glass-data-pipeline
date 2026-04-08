@@ -3,8 +3,9 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional, Any, Dict
+from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (
-    TAB_COLUMNS, SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_RATES,
+    SECTION_CONFIG, GOOGLE_SHEETS_CONFIG, STAT_RATES,
     STAT_CONSTANTS, STAT_RATE_LABELS, DEFAULT_STAT_RATE, SHEET_FORMATTING, COLORS,
     COLOR_THRESHOLDS, SUBSECTIONS, WIDTH_CLASSES, MENU_CONFIG
 )

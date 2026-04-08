@@ -13,7 +13,7 @@ Add a new config?  Define a schema dict next to the data in
 import logging
 from typing import List
 
-from src.config_validation import validate_dict_config
+from src.core.config_validation import validate_dict_config
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def validate_config() -> List[str]:
     Raises:
         RuntimeError: If any validation errors are found.
     """
-    from src.publish.definitions.config import TAB_COLUMNS, TAB_COLUMNS_SCHEMA
+    from src.publish.definitions.columns import TAB_COLUMNS, TAB_COLUMNS_SCHEMA
     errors: List[str] = []
 
     errors.extend(validate_dict_config(TAB_COLUMNS, TAB_COLUMNS_SCHEMA, 'TAB_COLUMNS'))

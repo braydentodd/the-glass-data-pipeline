@@ -24,7 +24,7 @@ def create_run(
     db_schema: str,
     run_type: str,
     season: str,
-    season_type: int,
+    season_type: str,
     entity_type: str,
     total_groups: int,
 ) -> int:
@@ -34,7 +34,7 @@ def create_run(
             f"INSERT INTO {db_schema}.etl_runs "
             f"(run_type, status, season, season_type, entity_type, total_groups) "
             f"VALUES (%s, 'running', %s, %s, %s, %s) RETURNING id",
-            (run_type, season, str(season_type), entity_type, total_groups),
+            (run_type, season, season_type, entity_type, total_groups),
         )
         run_id = cur.fetchone()[0]
     conn.commit()
@@ -146,7 +146,7 @@ def find_resumable_run(
     conn: Any,
     db_schema: str,
     season: str,
-    season_type: int,
+    season_type: str,
     entity_type: str,
 ) -> Optional[int]:
     """Find an interrupted run matching the given parameters.
@@ -158,7 +158,7 @@ def find_resumable_run(
             f"SELECT id FROM {db_schema}.etl_runs "
             f"WHERE status = 'running' AND season = %s AND season_type = %s "
             f"AND entity_type = %s ORDER BY started_at DESC LIMIT 1",
-            (season, str(season_type), entity_type),
+            (season, season_type, entity_type),
         )
         row = cur.fetchone()
     return row[0] if row else None
@@ -207,7 +207,7 @@ def resolve_work(
     db_schema: str,
     entity: str,
     season: str,
-    season_type: int,
+    season_type: str,
     groups: List[Dict[str, Any]],
     run_type: str,
     auto_resume: bool,

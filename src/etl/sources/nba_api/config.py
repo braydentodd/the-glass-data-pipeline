@@ -12,7 +12,7 @@ live in the unified config (src/input/config.py).
 import os
 from typing import Any, Dict
 
-from src.db import get_current_season, get_current_season_year
+from src.core.db import get_current_season, get_current_season_year
 
 
 # ============================================================================
@@ -29,7 +29,7 @@ DB_SCHEMA = 'nba'
 SEASON_CONFIG = {
     'current_season': get_current_season(),
     'current_season_year': get_current_season_year(),
-    'season_type': int(os.getenv('SEASON_TYPE', '1')),
+    'season_type': os.getenv('SEASON_TYPE', 'rs'),
     'backfill_start': '2003-04',
     'tracking_start': '2013-14',
     'hustle_start': '2015-16',
@@ -38,9 +38,9 @@ SEASON_CONFIG = {
 }
 
 SEASON_TYPES = {
-    1: {'name': 'Regular Season', 'param': 'Regular Season', 'min_season': None},
-    2: {'name': 'Playoffs',       'param': 'Playoffs',       'min_season': None},
-    3: {'name': 'PlayIn',         'param': 'PlayIn',         'min_season': '2020-21'},
+    'rs': {'name': 'Regular Season', 'param': 'Regular Season', 'min_season': None},
+    'po': {'name': 'Playoffs',       'param': 'Playoffs',       'min_season': None},
+    'pi': {'name': 'PlayIn',         'param': 'PlayIn',         'min_season': '2020-21'},
 }
 
 

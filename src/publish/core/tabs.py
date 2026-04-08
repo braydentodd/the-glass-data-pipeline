@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 
-from src.db import get_db_connection
+from src.core.db import get_db_connection
 from src.publish.definitions.config import STAT_RATES
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats, get_teams_from_db
 from src.publish.core.layout import build_headers, build_tab_columns, build_merged_entity_row, build_summary_rows

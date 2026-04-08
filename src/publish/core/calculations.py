@@ -1,6 +1,7 @@
 import logging
 from typing import Dict, Any, List, Optional
-from src.publish.definitions.config import TAB_COLUMNS, SECTION_CONFIG, STAT_CONSTANTS
+from src.publish.definitions.columns import TAB_COLUMNS
+from src.publish.definitions.config import SECTION_CONFIG, STAT_CONSTANTS
 
 logger = logging.getLogger(__name__)
 

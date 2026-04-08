@@ -1,7 +1,7 @@
 """
-The Glass - ETL Configuration Package
+The Glass - ETL Definitions Package
 
-Re-exports all config symbols so ``from src.etl.config import X`` keeps working.
+Re-exports all definition symbols and provides source-registry helpers.
 """
 
 from src.etl.definitions.config import (                           # noqa: F401
@@ -9,6 +9,7 @@ from src.etl.definitions.config import (                           # noqa: F401
     ETL_CONFIG,
     ETL_CONFIG_SCHEMA,
     ETL_TABLES,
+    SOURCES,
     TABLES,
     TABLES_SCHEMA,
     TYPE_TRANSFORMS,
@@ -18,3 +19,19 @@ from src.etl.definitions.config import (                           # noqa: F401
     VALID_UPDATE_FREQUENCIES,
 )
 from src.etl.definitions.columns import DB_COLUMNS                   # noqa: F401
+
+
+def get_source_for_league(league: str) -> str:
+    """Return the source key that provides data for a league."""
+    for source_key, meta in SOURCES.items():
+        if league in meta['leagues']:
+            return source_key
+    raise ValueError(f"No source registered for league: {league!r}")
+
+
+def get_source_id_column(league: str) -> str:
+    """Return the source_id column name for a league's entity tables.
+
+    Convention: ``{source_key}_id`` (e.g. ``nba_api_id``).
+    """
+    return f'{get_source_for_league(league)}_id'

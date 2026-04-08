@@ -16,7 +16,7 @@ from typing import Callable, Optional, Set
 
 from dotenv import load_dotenv
 
-from src.db import get_db_connection, get_table_name
+from src.core.db import get_db_connection, get_table_name
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, get_teams_from_db
 from src.publish.core.calculations import calculate_all_percentiles
 from src.publish.destinations.sheets.client import get_sheets_client
@@ -65,7 +65,6 @@ class SyncContext:
     season_format_fn: Callable = str
     season_key: str = 'current_season'
     include_hist_post_players: bool = True
-    source_id_column: str = 'nba_api_id'
 
 
 # ============================================================================
@@ -153,12 +152,11 @@ def sync_league(
     """
     # ---- Build context ----
     from src.publish.definitions.config import GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
-    from src.etl.definitions.sources import get_source_for_league, get_source_id_column
+    from src.etl.definitions import get_source_for_league
     import importlib
 
     db_schema = league
     source_key = get_source_for_league(league)
-    source_id_col = get_source_id_column(league)
     source_config = importlib.import_module(f'src.etl.sources.{source_key}.config')
     league_config = source_config.SEASON_CONFIG
 
@@ -179,7 +177,6 @@ def sync_league(
         stat_fields=db_fields['stat_fields'],
         team_stat_fields=db_fields['team_stat_fields'],
         primary_minutes_col='minutes_x10' if 'minutes_x10' in db_fields['stat_fields'] else 'minutes',
-        source_id_column=source_id_col,
     )
 
     logger.info('Starting %s sync...', 'partial update' if partial_update else 'full')

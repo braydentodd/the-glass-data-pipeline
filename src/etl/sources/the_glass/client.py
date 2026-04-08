@@ -15,9 +15,10 @@ from typing import Dict, List, Tuple
 
 from dotenv import load_dotenv
 
-from src.db import db_connection, quote_col
+from src.core.db import db_connection, quote_col
+from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (
-    GOOGLE_SHEETS_CONFIG, TAB_COLUMNS, SHEET_FORMATTING
+    GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
 )
 from src.publish.core.layout import build_tab_columns, get_column_index
 from src.publish.destinations.sheets.client import get_sheets_client

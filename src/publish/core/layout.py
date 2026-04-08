@@ -1,5 +1,5 @@
 from typing import List, Optional, Any, Tuple
-from src.publish.definitions.config import TAB_COLUMNS
+from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING,
                                 STAT_RATES, DEFAULT_STAT_RATE)
 from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
