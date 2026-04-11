@@ -10,8 +10,16 @@ from typing import Dict, List, Optional, Tuple
 from psycopg2.extras import RealDictCursor
 
 from src.core.db import get_db_connection
+from src.publish.definitions.config import SEASON_TYPE_GROUPS, COMPUTED_ENTITY_FIELDS
 
 logger = logging.getLogger(__name__)
+
+
+def _season_types_for_section(section: str) -> tuple:
+    """Return the season_type codes to filter by, based on the stats section."""
+    if section == 'historical_stats':
+        return SEASON_TYPE_GROUPS['regular_season']
+    return SEASON_TYPE_GROUPS['postseason']
 
 
 def get_teams_from_db(db_schema: str) -> Dict[int, Tuple[str, str]]:
@@ -36,6 +44,30 @@ def _quote_col(col: str) -> str:
     if col.lower() in ('limit', 'offset', 'all', 'user', 'year', 'season', 'age', 'rank'):
         return f'"{col}"'
     return col
+
+
+def _build_entity_fields(entity_fields, table_alias='p'):
+    """Build SELECT fragments for entity fields, including computed fields.
+
+    Returns (select_fields, group_fields) where select_fields may contain
+    computed expressions (like age from birthdate) and group_fields contains
+    only raw column refs needed for GROUP BY.
+    """
+    select_f = []
+    group_f = []
+    group_raw = []  # raw columns needed for computed fields' GROUP BY
+
+    for f in sorted(entity_fields):
+        select_f.append(f'{table_alias}.{_quote_col(f)}')
+        group_f.append(f'{table_alias}.{_quote_col(f)}')
+
+    for field_name, sql_expr in COMPUTED_ENTITY_FIELDS.items():
+        select_f.append(f'{sql_expr} AS {_quote_col(field_name)}')
+        # birthdate is the raw column needed for age computation
+        if 'birthdate' in sql_expr:
+            group_raw.append(f'{table_alias}.birthdate')
+
+    return select_f, group_f + group_raw
 
 
 def _build_season_filter(historical_config: Optional[dict], current_season_year: int,
@@ -73,21 +105,15 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
     teams_tbl = ctx.team_entity_table
     stats_tbl = ctx.player_stats_table
 
-    p_fields_base = [f'p.{_quote_col(f)}' for f in sorted(ctx.player_entity_fields)
-                     if f not in ('updated_at', 'birthdate', 'age')]
-    
-    p_fields = list(p_fields_base)
-    if 'age' in ctx.player_entity_fields:
-        p_fields.append('EXTRACT(YEAR FROM AGE(CURRENT_DATE, p.birthdate))::int AS "age"')
-        
-    # Standardize output to "team_abbr" regardless of what the db calls it
-    t_fields = [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
+    p_select, p_group = _build_entity_fields(ctx.player_entity_fields, 'p')
+    team_abbr_col = _quote_col(ctx.team_abbr_col)
+    t_select = [f"t.{team_abbr_col} AS team_abbr"]
+    t_group = [f"t.{team_abbr_col}"]
 
     if section == 'current_stats':
         s_fields = [f's.{_quote_col(f)}' for f in sorted(ctx.stat_fields)]
-        all_fields = p_fields + t_fields + s_fields
+        all_fields = p_select + t_select + s_fields
 
-        # We inject the schema and tables dynamically
         query = f"""
         SELECT {', '.join(all_fields)}
         FROM {players_tbl} p
@@ -103,8 +129,7 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
             return [dict(r) for r in cur.fetchall()]
 
     else:
-        # Historical / Postseason aggregation
-        st_types = ('rs',) if section == 'historical_stats' else ('po', 'pi')
+        season_types = _season_types_for_section(section)
         season_filter, params = _build_season_filter(
             historical_config, current_season_year, season_col_name, ctx.season_format_fn
         )
@@ -112,12 +137,8 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
         s_fields = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(ctx.stat_fields)]
         s_fields.append(f'COUNT(DISTINCT s.{season_col_name}) AS {season_col_name}')
         
-        all_fields = p_fields + t_fields + s_fields
-        group_fields = list(p_fields_base) + t_fields
-        
-        # Accommodate age groupings for NBA
-        if 'age' in ctx.player_entity_fields:
-            group_fields.append('p.birthdate')
+        all_fields = p_select + t_select + s_fields
+        group_fields = p_group + t_group
 
         query = f"""
         SELECT {', '.join(all_fields)}
@@ -132,7 +153,7 @@ def fetch_players_for_team(conn, team_abbr: str, section: str,
         ORDER BY SUM(COALESCE(s.{ctx.primary_minutes_col}, 0)) DESC, p.name
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (*params, st_types, team_abbr))
+            cur.execute(query, (*params, season_types, team_abbr))
             return [dict(r) for r in cur.fetchall()]
 
 
@@ -145,10 +166,9 @@ def fetch_all_players(conn, section: str, historical_config: Optional[dict],
     stats_tbl = ctx.player_stats_table
 
     stat_f = [f"s.{_quote_col(f)}" for f in sorted(ctx.stat_fields)]
-    ent_f = [f"p.{_quote_col(f)}" for f in sorted(ctx.player_entity_fields)]
-    all_f = stat_f + ent_f + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
+    ent_select, ent_group = _build_entity_fields(ctx.player_entity_fields, 'p')
+    all_f = stat_f + ent_select + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
 
-    # In percentile contexts we generally want INNER JOIN for stats so we only compute ranks for active players
     if section == 'current_stats':
         query = f"""
             SELECT {', '.join(all_f)}
@@ -161,16 +181,16 @@ def fetch_all_players(conn, section: str, historical_config: Optional[dict],
             cur.execute(query, (current_season, season_type_val))
             return [dict(r) for r in cur.fetchall()]
     else:
-        st_types = ('rs',) if section == 'historical_stats' else ('po', 'pi')
+        season_types = _season_types_for_section(section)
         season_filter, params = _build_season_filter(
             historical_config, current_season_year, season_col_name, ctx.season_format_fn
         )
 
         s_sums = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(ctx.stat_fields)]
         s_sums.append(f'COUNT(DISTINCT s.{season_col_name}) AS {season_col_name}')
-        all_aggregates = s_sums + ent_f + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
+        all_aggregates = s_sums + ent_select + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
         
-        group_f = ent_f + [f"t.{_quote_col(ctx.team_abbr_col)}"]
+        group_f = ent_group + [f"t.{_quote_col(ctx.team_abbr_col)}"]
 
         query = f"""
             SELECT {', '.join(all_aggregates)}
@@ -181,7 +201,7 @@ def fetch_all_players(conn, section: str, historical_config: Optional[dict],
             GROUP BY {', '.join(group_f)}
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (st_types, *params))
+            cur.execute(query, (season_types, *params))
             return [dict(r) for r in cur.fetchall()]
 
 
@@ -209,7 +229,7 @@ def fetch_team_stats(conn, team_abbr: str, section: str, historical_config: Opti
             cur.execute(query, (current_season, season_type_val, team_abbr))
             rows = [dict(r) for r in cur.fetchall()]
     else:
-        st_types = ('rs',) if section == 'historical_stats' else ('po', 'pi')
+        season_types = _season_types_for_section(section)
         season_filter, params = _build_season_filter(
             historical_config, current_season_year, season_col_name, ctx.season_format_fn
         )
@@ -229,7 +249,7 @@ def fetch_team_stats(conn, team_abbr: str, section: str, historical_config: Opti
         GROUP BY {', '.join(t_fields)}
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (*params, st_types, team_abbr))
+            cur.execute(query, (*params, season_types, team_abbr))
             rows = [dict(r) for r in cur.fetchall()]
 
     # Separate team vs opp rows
@@ -269,7 +289,7 @@ def fetch_all_teams(conn, section: str, historical_config: Optional[dict],
             cur.execute(query, (current_season, season_type_val))
             rows = [dict(r) for r in cur.fetchall()]
     else:
-        st_types = ('rs',) if section == 'historical_stats' else ('po', 'pi')
+        season_types = _season_types_for_section(section)
         season_filter, params = _build_season_filter(
             historical_config, current_season_year, season_col_name, ctx.season_format_fn
         )
@@ -286,7 +306,7 @@ def fetch_all_teams(conn, section: str, historical_config: Optional[dict],
         GROUP BY {', '.join(t_fields)}
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (st_types, *params))
+            cur.execute(query, (season_types, *params))
             rows = [dict(r) for r in cur.fetchall()]
 
     teams, opps = [], []

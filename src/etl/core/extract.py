@@ -16,6 +16,11 @@ from src.etl.core.transform import apply_transform, safe_int
 
 logger = logging.getLogger(__name__)
 
+# Some endpoints use PERSON_ID instead of PLAYER_ID for the same entity.
+_ID_ALIASES = {
+    'PLAYER_ID': ['PERSON_ID'],
+}
+
 
 # ============================================================================
 # FIELD EXTRACTION
@@ -109,28 +114,38 @@ def extract_columns_from_result(
             continue
 
         headers = rs['headers']
-        if entity_id_field not in headers:
-            continue
 
-        id_idx = headers.index(entity_id_field)
+        # Resolve entity ID field, falling back to known aliases
+        id_field = entity_id_field
+        if id_field not in headers:
+            id_field = next(
+                (a for a in _ID_ALIASES.get(entity_id_field, []) if a in headers),
+                None,
+            )
+            if id_field is None:
+                continue
+
+        id_idx = headers.index(id_field)
 
         for row in rs['rowSet']:
             entity_id = row[id_idx]
             if entity_id is None:
                 continue
 
-            values = {}
+            existing = all_entities.setdefault(entity_id, {})
             for col_name, source in columns.items():
                 # Skip columns with pipeline or multi_call sources
                 if 'pipeline' in source or 'multi_call' in source:
                     continue
 
                 if source.get('derived'):
-                    values[col_name] = extract_derived_field(row, headers, source)
+                    val = extract_derived_field(row, headers, source)
                 else:
-                    values[col_name] = extract_field(row, headers, source)
+                    val = extract_field(row, headers, source)
 
-            all_entities[entity_id] = values
+                # Prefer non-None values across multiple result sets
+                if val is not None or col_name not in existing:
+                    existing[col_name] = val
 
     return all_entities
 

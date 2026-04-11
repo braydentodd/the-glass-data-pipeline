@@ -135,7 +135,7 @@ ETL_TABLES = {
             'entity_type': {'type': 'VARCHAR(10)', 'nullable': False},
             'endpoint': {'type': 'VARCHAR(100)', 'nullable': False},
             'tier': {'type': 'VARCHAR(20)', 'nullable': False},
-            'column_name': {'type': 'VARCHAR(100)', 'nullable': True},
+            'column_name': {'type': 'TEXT', 'nullable': True},
             'status': {'type': 'VARCHAR(20)', 'nullable': False, 'default': "'pending'"},
             'started_at': {'type': 'TIMESTAMP', 'nullable': True},
             'completed_at': {'type': 'TIMESTAMP', 'nullable': True},

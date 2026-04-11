@@ -50,9 +50,9 @@ jobs:
       run: |
         source venv/bin/activate
         chmod +x scripts/run_etl.sh
-        scripts/run_etl.sh nba 999  # Effectively unlimited; endpoint_tracker handles resume
+        scripts/run_etl.sh nba --max-restarts 999
     
-    - name: Sync Google Sheets
+    - name: Publish to Google Sheets
       env:
         DB_HOST: ${{ secrets.DB_HOST }}
         DB_PORT: ${{ secrets.DB_PORT }}
@@ -65,8 +65,8 @@ jobs:
         PYTHONUNBUFFERED: "1"
       run: |
         source venv/bin/activate
-        chmod +x scripts/sync_sheets.sh
-        scripts/sync_sheets.sh nba
+        chmod +x scripts/run_publish.sh
+        scripts/run_publish.sh nba
 
     - name: Upload logs
       if: always()

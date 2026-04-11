@@ -88,6 +88,11 @@ def format_season(from_year: Any) -> Optional[str]:
         return None
 
 
+def format_season_end_year(year: int) -> str:
+    """Convert end-year int to season string (e.g., 2025 -> '2024-25')."""
+    return f"{year - 1}-{str(year)[-2:]}"
+
+
 # ============================================================================
 # TRANSFORM DISPATCH
 # ============================================================================

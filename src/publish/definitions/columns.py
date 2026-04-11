@@ -29,9 +29,13 @@ _VALID_STATS_MODES = {'basic', 'advanced', 'both'}
 _VALID_FORMATS = {'text', 'number', 'percentage', 'measurement'}
 _VALID_WIDTH_CLASSES = {
     'auto', 'measurement', 'four_char', 'four_char_dec',
-    'three_char_dec', 'two_char', 'two_char_dec', '500',
+    'three_char_dec', 'two_char', 'two_char_dec'
 }
+_VALID_WIDTH_CLASS_TYPES = (str, int)
 _VALID_LEAGUES = {'nba', 'ncaa'}
+
+_VALID_ALIGNS = {'left', 'center'}
+_VALID_EMPHASIS = {'bold', None}
 
 TAB_COLUMNS_SCHEMA = {
     'description':     {'required': True,  'types': (str,)},
@@ -44,9 +48,11 @@ TAB_COLUMNS_SCHEMA = {
     'scale_with_rate': {'required': True,  'types': (bool,)},
     'format':          {'required': True,  'types': (str,),         'allowed_values': _VALID_FORMATS},
     'decimal_places':  {'required': True,  'types': (int, type(None))},
-    'width_class':     {'required': True,  'types': (str,),         'allowed_values': _VALID_WIDTH_CLASSES},
+    'width_class':     {'required': True,  'types': _VALID_WIDTH_CLASS_TYPES},
     'leagues':         {'required': True,  'types': (list,),        'list_item_values': _VALID_LEAGUES},
     'default':         {'required': True,  'types': (str, int, float, type(None))},
+    'align':           {'required': False, 'types': (str,),         'allowed_values': _VALID_ALIGNS, 'default': 'center'},
+    'emphasis':        {'required': False, 'types': (str, type(None)), 'allowed_values': _VALID_EMPHASIS, 'default': None},
     'values':          {'required': True,  'types': (dict,)},
 }
 
@@ -65,6 +71,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'auto',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'left',
+        'emphasis': 'bold',
         'values': {
             'player': '{name}',
             'team': 'TEAM',
@@ -101,7 +109,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'scale_with_rate': False,
         'format': 'text',
         'decimal_places': None,
-        'width_class': 'auto',
+        'width_class': 'four_char',
         'leagues': ['nba', 'ncaa'],
         'default': None,
         'values': {
@@ -256,10 +264,11 @@ TAB_COLUMNS: Dict[str, Any] = {
         'scale_with_rate': False,
         'format': 'number',
         'decimal_places': 0,
-        'width_class': '500',
+        'width_class': 500,
         'leagues': ['nba', 'ncaa'],
         'team_row_display': 'editable',
         'default': None,
+        'align': 'left',
         'values': {
             'player': '{notes}',
             'team': '{notes}',
@@ -1467,7 +1476,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Net Offensive On/Off Team Rating',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -1478,16 +1487,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba'],
         'default': None,
         'values': {
-            'player': subtract(divide('o_rtg_x10', 10), divide('off_o_rtg_x10', 10)),
-            'team': subtract(divide('o_rtg_x10', 10), divide('off_o_rtg_x10', 10)),
-            'teams': subtract(divide('o_rtg_x10', 10), divide('off_o_rtg_x10', 10))
+            'player': subtract(divide('o_rtg_x10', 10), divide('off_o_rtg_x10', 10))
         }
     },
     'ndoo': {
         'description': 'Net Defensive on/off Team Rating',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['players', 'team'],
         'stats_mode': 'both',
         'percentile': 'reverse',
         'editable': False,
@@ -1498,9 +1505,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba'],
         'default': None,
         'values': {
-            'player': subtract(divide('d_rtg_x10', 10), divide('off_d_rtg_x10', 10)),
-            'team': subtract(divide('d_rtg_x10', 10), divide('off_d_rtg_x10', 10)),
-            'teams': subtract(divide('d_rtg_x10', 10), divide('off_d_rtg_x10', 10))
+            'player': subtract(divide('d_rtg_x10', 10), divide('off_d_rtg_x10', 10))
         }
     },
     'ID': {

@@ -1,7 +1,7 @@
 from typing import List, Optional, Any, Tuple
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING,
-                                STAT_RATES, DEFAULT_STAT_RATE)
+                                STAT_RATES, DEFAULT_STAT_RATE, SUMMARY_THRESHOLDS)
 from .calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
 from .formatting import format_section_header, format_stat_value, format_height
 
@@ -15,14 +15,6 @@ def _base_section(ctx: str) -> str:
     if ctx and '__' in ctx:
         return ctx.split('__')[0]
     return ctx
-
-SUMMARY_THRESHOLDS = [
-    ('Best', 100),
-    ('75th', 75),
-    ('Average', 50),
-    ('25th', 25),
-    ('Worst', 0)
-]
 
 def generate_percentile_columns() -> dict:
     """Auto-generate percentile companion column defs for all columns with percentile set.
@@ -142,7 +134,8 @@ def get_columns_for_section_and_entity(section: str, entity: str,
 
 def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                         tab_type: str = 'team',
-                        default_mode: str = DEFAULT_STAT_RATE) -> List[Tuple]:
+                        default_mode: str = DEFAULT_STAT_RATE,
+                        league: str = None) -> List[Tuple]:
     """
     Build complete column structure for a tab with rate tripling.
 
@@ -153,7 +146,7 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
     is visible; others are hidden for instant rate switching via column show/hide.
 
     Percentile columns are interleaved immediately after their base stat column.
-    Columns are filtered by their 'tabs' array.
+    Columns are filtered by their 'tabs' array and 'leagues' list.
     """
     fmt = SHEET_FORMATTING
     hide_advanced = fmt.get('hide_advanced_columns', True)
@@ -164,7 +157,7 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
         'teams': 'teams',
     }
     tab_key = _TAB_TYPE_KEY.get(tab_type, 'team')
-    col_entity = 'team' if tab_type == 'teams' else entity
+    col_entity = 'teams' if tab_type == 'teams' else entity
     pct_columns = generate_percentile_columns()
 
     def _normalize_tabs(col_def):
@@ -173,6 +166,18 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
             return [col_tabs]
         return col_tabs
 
+    def _skip_column(col_def):
+        """Return True if this column should be skipped for the current context."""
+        if tab_key not in _normalize_tabs(col_def):
+            return True
+        if league and league not in col_def.get('leagues', []):
+            return True
+        if tab_type == 'teams':
+            vals = col_def.get('values', {})
+            if 'teams' not in vals and 'team' not in vals:
+                return True
+        return False
+
     def _append_section_columns(section, context_key, mode_visible):
         """Append columns for a section with given context key and base visibility."""
         section_cols = get_columns_for_section_and_entity(
@@ -180,9 +185,7 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
             stats_mode='both', include_percentiles=False
         )
         for col_key, col_def in section_cols:
-            if tab_key not in _normalize_tabs(col_def):
-                continue
-            if tab_type == 'teams' and 'team' not in col_def.get('values', {}):
+            if _skip_column(col_def):
                 continue
 
             col_stats_mode = col_def.get('stats_mode', 'both')
@@ -191,16 +194,13 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                 visible = False
             elif not hide_advanced and col_stats_mode == 'basic':
                 visible = False
-            if col_entity not in col_def.get('values', {}):
-                visible = False
 
             all_columns.append((col_key, col_def, visible, context_key))
 
             pct_key = f"{col_key}_pct"
             if col_def.get('percentile') and pct_key in pct_columns:
                 pct_def = pct_columns[pct_key]
-                pct_visible = mode_visible  # percentile companion follows mode visibility
-                all_columns.append((pct_key, pct_def, pct_visible, context_key))
+                all_columns.append((pct_key, pct_def, visible, context_key))
 
     all_columns = []
 
@@ -220,9 +220,7 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                 stats_mode='both', include_percentiles=False
             )
             for col_key, col_def in section_cols:
-                if tab_key not in _normalize_tabs(col_def):
-                    continue
-                if tab_type == 'teams' and 'team' not in col_def.get('values', {}):
+                if _skip_column(col_def):
                     continue
 
                 col_stats_mode = col_def.get('stats_mode', 'both')
@@ -231,15 +229,13 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                     visible = False
                 elif not hide_advanced and col_stats_mode == 'basic':
                     visible = False
-                if col_entity not in col_def.get('values', {}):
-                    visible = False
 
                 all_columns.append((col_key, col_def, visible, section))
 
                 pct_key = f"{col_key}_pct"
                 if col_def.get('percentile') and pct_key in pct_columns:
                     pct_def = pct_columns[pct_key]
-                    all_columns.append((pct_key, pct_def, True, section))
+                    all_columns.append((pct_key, pct_def, visible, section))
 
     # --- Teams sheet: insert opponent columns ---
     if tab_type == 'teams':
@@ -277,15 +273,18 @@ def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
         opp_def['subsection'] = 'opponent'
         opp_key = f'opp_{col_key}'
 
-        opp_vis = True
-        if hide_advanced and col_mode == 'advanced':
-            opp_vis = False
-        elif not hide_advanced and col_mode == 'basic':
-            opp_vis = False
+        # Opponent inherits full visibility from the base stat column.
+        # `vis` already encodes rate toggle + advanced/basic mode.
+        opp_vis = vis
 
         if ctx not in opp_by_section:
             opp_by_section[ctx] = []
         opp_by_section[ctx].append((opp_key, opp_def, opp_vis, ctx))
+
+        # Generate percentile companion for opponent column
+        opp_pct_key = f"{opp_key}_pct"
+        opp_pct_def = _make_companion_def(opp_def, opp_key, opp_pct_key)
+        opp_by_section[ctx].append((opp_pct_key, opp_pct_def, opp_vis, ctx))
 
     # Second pass: rebuild columns, inserting opponent block between defense and onoff
     result: List[Tuple] = []
@@ -366,6 +365,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
     """
     row1, row2, row3 = [], [], []
     merges = []
+    fmt = SHEET_FORMATTING
 
     cur_section = None
     sec_start = 0
@@ -430,10 +430,21 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
             row2.append('')
 
         # Row 2: Column display names — use mode from composite context key
+        # Format: "{description}{spacer}{col_key}{spacer}{description}"
+        # The spacer creates a wide string. CLIP truncation shows just the key;
+        # clicking the cell reveals the full description in the formula bar.
         col_mode = section.split('__')[1] if '__' in section else mode
         override = col_def.get('mode_overrides', {}).get(col_mode)
-        display_name = (override or {}).get('display_name', col_def.get('display_name', col_key))
-        row3.append(display_name)
+        active_def = override if override else col_def
+        description = active_def.get('description', col_def.get('description', ''))
+        header_key = active_def.get('display_name', col_key)
+        if col_def.get('is_generated_percentile', False):
+            row3.append('')
+        elif description:
+            spacer = ' ' * fmt.get('header_description_spacer_count', 750)
+            row3.append(f"{description}{spacer}{header_key}{spacer}{description}")
+        else:
+            row3.append(header_key)
 
     # Close final merges
     n = len(columns_list)
@@ -481,7 +492,8 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
                      percentiles: dict, entity_type: str = 'player',
                      mode: str = 'per_possession', seasons_str: str = '',
                      row_section: Optional[str] = None,
-                     section_data: Optional[dict] = None) -> list:
+                     section_data: Optional[dict] = None,
+                     context: Optional[dict] = None) -> list:
     """
     Build a single data row for any entity type.
 
@@ -506,7 +518,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             else:
                 sec_mode = mode
             calculated_by_section[sec_name] = calculate_entity_stats(
-                sec_entity, entity_type, sec_mode
+                sec_entity, entity_type, sec_mode, context
             )
         # For non-stats columns, use the first section's entity data
         first_section = next(iter(section_data))
@@ -515,7 +527,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
     else:
         # Legacy single-section mode
         primary_entity = entity_data
-        primary_calculated = calculate_entity_stats(entity_data, entity_type, mode)
+        primary_calculated = calculate_entity_stats(entity_data, entity_type, mode, context)
 
     row = []
 
@@ -562,28 +574,11 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             continue
 
         # Non-percentile column
-        # Seasons column: show count of distinct seasons (already COUNT(DISTINCT s.season) from SQL)
-        if col_key == 'seasons':
-            # In merged mode, get the season count from the section's entity data
-            if section_data and is_stats_section and col_ctx in section_data:
-                season_count = section_data[col_ctx][0].get('season')
-            elif not section_data:
-                season_count = entity_data.get('season')
-            else:
-                season_count = None
-            # season count is already an integer from COUNT(DISTINCT s.season)
-            # Non-nullable: show 0 when missing (with percentile color)
-            if season_count is None or season_count == '':
-                row.append(0 if not col_def.get('nullable', True) else '')
-            else:
-                row.append(season_count)
-            continue
-
         # Info column (non-stat section) — simple field lookup
         if not col_ctx_cfg.get('is_stats_section', False) and col_def.get('percentile') is None:
             use_entity = sec_entity if section_data and is_stats_section else primary_entity
             _col_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else mode
-            value = evaluate_formula(col_key, use_entity, entity_type, _col_mode)
+            value = evaluate_formula(col_key, use_entity, entity_type, _col_mode, context)
             if value is None:
                 row.append('')
             elif col_def.get('format') == 'measurement':
@@ -623,7 +618,8 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                             pct_by_rate: dict,
                             entity_type: str = 'player',
                             hist_seasons: str = '', post_seasons: str = '',
-                            opp_percentiles: Optional[dict] = None) -> Tuple[list, List[dict]]:
+                            opp_percentiles: Optional[dict] = None,
+                            context: Optional[dict] = None) -> Tuple[list, List[dict]]:
     """
     Build a single merged data row with current + historical + postseason stats.
 
@@ -656,6 +652,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
         primary_entity, columns_list, {},
         entity_type=entity_type,
         section_data=section_data,
+        context=context,
     )
 
     # Collect percentile info for companion column shading.
@@ -699,11 +696,18 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                                 'percentile': rank,
                                 'reverse': False,
                             })
+                            # Also color the base opponent stat cell
+                            if col_idx > 0:
+                                percentile_cells.append({
+                                    'col': col_idx - 1,
+                                    'percentile': rank,
+                                    'reverse': False,
+                                })
                 continue
 
             # Regular companion
             base_def = TAB_COLUMNS.get(base_key, col_def)
-            calculated = calculate_entity_stats(sec_entity, entity_type, sec_mode)
+            calculated = calculate_entity_stats(sec_entity, entity_type, sec_mode, context)
             value = calculated.get(base_key)
 
             if value is not None and base_key in sec_pcts:
@@ -714,6 +718,13 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                     'percentile': rank,
                     'reverse': reverse,
                 })
+                # Also color the base stat value cell
+                if col_idx > 0:
+                    percentile_cells.append({
+                        'col': col_idx - 1,
+                        'percentile': rank,
+                        'reverse': reverse,
+                    })
         else:
             # Non-stats section — use default mode's current_stats percentiles
             default_current_key = f'current_stats__{DEFAULT_STAT_RATE}'
@@ -725,7 +736,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             else:
                 continue
             base_def = TAB_COLUMNS.get(base_key, col_def)
-            calculated = calculate_entity_stats(sec_entity, entity_type, DEFAULT_STAT_RATE)
+            calculated = calculate_entity_stats(sec_entity, entity_type, DEFAULT_STAT_RATE, context)
             value = calculated.get(base_key)
 
             if value is not None and base_key in sec_pcts:
@@ -736,6 +747,13 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                     'percentile': rank,
                     'reverse': reverse,
                 })
+                # Also color the base stat value cell
+                if col_idx > 0:
+                    percentile_cells.append({
+                        'col': col_idx - 1,
+                        'percentile': rank,
+                        'reverse': reverse,
+                    })
 
     return row, percentile_cells
 
@@ -787,8 +805,8 @@ def build_summary_rows(columns_list: List[Tuple],
             col_key, col_def = entry[0], entry[1]
             col_ctx = entry[3] if len(entry) > 3 else None
 
-            # Names column gets the label
-            if col_key == 'names':
+            # Name column gets the label
+            if col_key == 'name':
                 row.append(label)
                 continue
 

@@ -13,13 +13,16 @@ from src.publish.destinations.sheets.client import get_or_create_worksheet, writ
 logger = logging.getLogger(__name__)
 
 
-def _compute_pct_by_rate(section_data, entity_type):
+def _compute_pct_by_rate(section_data, entity_type, context_fn=None):
     """Compute percentile populations for all stat rates.
 
     Args:
         section_data: {base_section: data_list} e.g.
             {'current_stats': [...], 'historical_stats': [...], 'postseason_stats': [...]}
         entity_type: 'player', 'team', or 'opponents'
+        context_fn: Optional callable(entity_dict) -> context_dict.
+                    Needed for team entities whose player_info columns use
+                    team_average (requires per-entity team_players context).
 
     Returns:
         {rate: {base_section: {col_key: sorted_values}}}
@@ -29,10 +32,10 @@ def _compute_pct_by_rate(section_data, entity_type):
         result[rate] = {}
         for section, data_list in section_data.items():
             if data_list:
-                result[mode][section] = calculate_all_percentiles(
-                    data_list, entity_type, mode)
+                result[rate][section] = calculate_all_percentiles(
+                    data_list, entity_type, rate, context_fn=context_fn)
             else:
-                result[mode][section] = {}
+                result[rate][section] = {}
     return result
 
 # ============================================================================
@@ -53,22 +56,29 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
     logger.info(f'  Syncing {team_abbr}...')
     fmt = ctx.sheet_formatting
     current_season = ctx.league_config[ctx.season_key]
+    current_season_year = ctx.league_config['current_season_year']
+    season_type_val = ctx.league_config.get('season_type', 'rs')
     display_name = team_name or team_abbr
     worksheet = get_or_create_worksheet(spreadsheet, team_abbr, clear=not partial_update)
+
+    # Common kwargs for all query calls
+    query_kw = dict(
+        historical_config=historical_config,
+        ctx=ctx,
+        current_season=current_season,
+        current_season_year=current_season_year,
+        season_type_val=season_type_val,
+    )
 
     conn = get_db_connection()
     try:
         # ---- Fetch raw data ----
-        current_players = fetch_players_for_team(conn, team_abbr, 'current_stats')
-        hist_players = fetch_players_for_team(
-            conn, team_abbr, 'historical_stats', historical_config)
-        post_players = fetch_players_for_team(
-            conn, team_abbr, 'postseason_stats', historical_config)
-        team_data_curr = fetch_team_stats(conn, team_abbr, 'current_stats')
-        team_data_hist = fetch_team_stats(
-            conn, team_abbr, 'historical_stats', historical_config)
-        team_data_post = fetch_team_stats(
-            conn, team_abbr, 'postseason_stats', historical_config)
+        current_players = fetch_players_for_team(conn, team_abbr, 'current_stats', **query_kw)
+        hist_players = fetch_players_for_team(conn, team_abbr, 'historical_stats', **query_kw)
+        post_players = fetch_players_for_team(conn, team_abbr, 'postseason_stats', **query_kw)
+        team_data_curr = fetch_team_stats(conn, team_abbr, 'current_stats', **query_kw)
+        team_data_hist = fetch_team_stats(conn, team_abbr, 'historical_stats', **query_kw)
+        team_data_post = fetch_team_stats(conn, team_abbr, 'postseason_stats', **query_kw)
 
         # ---- Percentile populations (all rates, league-wide) ----
         if precomputed:
@@ -76,27 +86,35 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
             team_pct_by_rate = precomputed['team']
             opp_pct_by_rate = precomputed['opponents']
         else:
-            all_players_curr = fetch_all_players(conn, 'current_stats')
-            all_players_hist = fetch_all_players(
-                conn, 'historical_stats', historical_config)
-            all_players_post = fetch_all_players(
-                conn, 'postseason_stats', historical_config)
-            all_teams_curr = fetch_all_teams(conn, 'current_stats')
-            all_teams_hist = fetch_all_teams(
-                conn, 'historical_stats', historical_config)
-            all_teams_post = fetch_all_teams(
-                conn, 'postseason_stats', historical_config)
+            all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw)
+            all_players_hist = fetch_all_players(conn, 'historical_stats', **query_kw)
+            all_players_post = fetch_all_players(conn, 'postseason_stats', **query_kw)
+            all_teams_curr = fetch_all_teams(conn, 'current_stats', **query_kw)
+            all_teams_hist = fetch_all_teams(conn, 'historical_stats', **query_kw)
+            all_teams_post = fetch_all_teams(conn, 'postseason_stats', **query_kw)
 
             player_pct_by_rate = _compute_pct_by_rate({
                 'current_stats': all_players_curr,
                 'historical_stats': all_players_hist,
                 'postseason_stats': all_players_post,
             }, 'player')
+
+            # Build player groups for team_average context
+            _player_groups = defaultdict(list)
+            for p in all_players_curr:
+                ta = p.get(ctx.team_abbr_field)
+                if ta:
+                    _player_groups[ta].append(p)
+
+            def _team_ctx_fn(entity):
+                abbr = entity.get(ctx.team_abbr_field)
+                return {'team_players': _player_groups.get(abbr, [])}
+
             team_pct_by_rate = _compute_pct_by_rate({
                 'current_stats': all_teams_curr['teams'],
                 'historical_stats': all_teams_hist['teams'],
                 'postseason_stats': all_teams_post['teams'],
-            }, 'team')
+            }, 'team', context_fn=_team_ctx_fn)
             opp_pct_by_rate = _compute_pct_by_rate({
                 'current_stats': all_teams_curr['opponents'],
                 'historical_stats': all_teams_hist['opponents'],
@@ -106,30 +124,31 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
             entity='player', stats_mode='both',
-            tab_type='team', default_mode=mode)
+            tab_type='team', default_mode=mode,
+            league=ctx.league)
 
         # ---- Headers ----
         headers = build_headers(
             columns, mode=mode, team_name=display_name,
-            current_season=current_season,
+            current_season=current_season_year,
             historical_config=historical_config)
 
-        # ---- Index players by player_id for merging ----
-        curr_by_id = {p.get('player_id'): p for p in current_players}
-        hist_by_id = {p.get('player_id'): p for p in hist_players}
-        post_by_id = {p.get('player_id'): p for p in post_players}
+        # ---- Index players by id for merging ----
+        curr_by_id = {p.get('id'): p for p in current_players}
+        hist_by_id = {p.get('id'): p for p in hist_players}
+        post_by_id = {p.get('id'): p for p in post_players}
 
         # ---- Collect player IDs ----
         all_player_ids = []
         seen = set()
         for p in current_players:
-            pid = p.get('player_id')
+            pid = p.get('id')
             if pid and pid not in seen:
                 all_player_ids.append(pid)
                 seen.add(pid)
         if ctx.include_hist_post_players:
             for p in hist_players + post_players:
-                pid = p.get('player_id')
+                pid = p.get('id')
                 if pid and pid not in seen:
                     all_player_ids.append(pid)
                     seen.add(pid)
@@ -156,6 +175,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
         n_player_rows = len(data_rows)
 
         # ---- Team + Opponents rows ----
+        team_ctx = {'team_players': current_players}
         team_row, team_pct_cells = build_merged_entity_row(
             player_id=None,
             columns_list=columns,
@@ -164,6 +184,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
             postseason_data=team_data_post.get('team') or None,
             pct_by_rate=team_pct_by_rate,
             entity_type='team',
+            context=team_ctx,
         )
         opp_row, opp_pct_cells = build_merged_entity_row(
             player_id=None,
@@ -209,9 +230,17 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
 # ============================================================================
 
 def _combine_team_opp(teams_dict):
-    """Merge team and opponent dicts into combined rows for the Teams tab."""
+    """Merge team and opponent dicts into combined rows for the Teams tab.
+
+    If no separate opponent rows exist (opp_ fields already on the team rows),
+    return the team dicts as-is.
+    """
+    teams = teams_dict['teams']
+    opps = teams_dict['opponents']
+    if not opps:
+        return [dict(d) for d in teams]
     full = []
-    for team_d, opp_d in zip(teams_dict['teams'], teams_dict['opponents']):
+    for team_d, opp_d in zip(teams, opps):
         combined = dict(team_d)
         for k, v in opp_d.items():
             if k.startswith('opp_'):
@@ -228,19 +257,27 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
     logger.info('  Syncing Teams tab...')
     fmt = ctx.sheet_formatting
     current_season = ctx.league_config[ctx.season_key]
+    current_season_year = ctx.league_config['current_season_year']
+    season_type_val = ctx.league_config.get('season_type', 'rs')
     worksheet = get_or_create_worksheet(spreadsheet, 'Teams', clear=not partial_update)
+
+    query_kw = dict(
+        historical_config=historical_config,
+        ctx=ctx,
+        current_season=current_season,
+        current_season_year=current_season_year,
+        season_type_val=season_type_val,
+    )
 
     conn = get_db_connection()
     try:
         # ---- Fetch all teams for 3 sections ----
-        all_teams_curr = fetch_all_teams(conn, 'current_stats')
-        all_teams_hist = fetch_all_teams(
-            conn, 'historical_stats', historical_config)
-        all_teams_post = fetch_all_teams(
-            conn, 'postseason_stats', historical_config)
+        all_teams_curr = fetch_all_teams(conn, 'current_stats', **query_kw)
+        all_teams_hist = fetch_all_teams(conn, 'historical_stats', **query_kw)
+        all_teams_post = fetch_all_teams(conn, 'postseason_stats', **query_kw)
 
         # ---- Enrich team data with minute-weighted player info averages ----
-        all_players_curr = fetch_all_players(conn, 'current_stats')
+        all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw)
         player_groups = defaultdict(list)
         for p in all_players_curr:
             ta = p.get(ctx.team_abbr_field)
@@ -257,16 +294,21 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         post_by_abbr = {d.get(ctx.team_abbr_field): d for d in full_post}
 
         # ---- Team percentile populations (all rates) ----
+        def _team_context_fn(entity):
+            abbr = entity.get(ctx.team_abbr_field)
+            return {'team_players': player_groups.get(abbr, [])}
+
         team_pct_by_rate = _compute_pct_by_rate({
             'current_stats': all_teams_curr['teams'],
             'historical_stats': all_teams_hist['teams'],
             'postseason_stats': all_teams_post['teams'],
-        }, 'team')
+        }, 'team', context_fn=_team_context_fn)
 
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
             entity='team', stats_mode='both',
-            tab_type='teams', default_mode=mode)
+            tab_type='teams', default_mode=mode,
+            league=ctx.league)
 
         # ---- Opponent percentile populations (base-section-keyed) ----
         _data_by_base = {
@@ -309,7 +351,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         # ---- Headers ----
         headers = build_headers(
             columns, mode=mode, team_name='Teams',
-            current_season=current_season,
+            current_season=current_season_year,
             historical_config=historical_config)
 
         # ---- Build team rows (all modes at once) ----
@@ -323,7 +365,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
 
             for d in [curr_data, hist_data, post_data]:
                 if d:
-                    d['TEAM'] = team_names_map.get(abbr, abbr)
+                    d['name'] = team_names_map.get(abbr, abbr)
 
             row, pct_cells = build_merged_entity_row(
                 player_id=None,
@@ -332,8 +374,9 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                 historical_data=hist_data,
                 postseason_data=post_data,
                 pct_by_rate=team_pct_by_rate,
-                entity_type='team',
+                entity_type='teams',
                 opp_percentiles=opp_percentiles,
+                context={'team_players': player_groups.get(abbr, [])},
             )
             for cell in pct_cells:
                 cell['row'] = fmt['data_start_row'] + len(data_rows)
@@ -387,16 +430,24 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
     logger.info('  Syncing Players tab...')
     fmt = ctx.sheet_formatting
     current_season = ctx.league_config[ctx.season_key]
+    current_season_year = ctx.league_config['current_season_year']
+    season_type_val = ctx.league_config.get('season_type', 'rs')
     worksheet = get_or_create_worksheet(spreadsheet, 'Players', clear=not partial_update)
+
+    query_kw = dict(
+        historical_config=historical_config,
+        ctx=ctx,
+        current_season=current_season,
+        current_season_year=current_season_year,
+        season_type_val=season_type_val,
+    )
 
     conn = get_db_connection()
     try:
         # ---- Fetch all players league-wide ----
-        all_players_curr = fetch_all_players(conn, 'current_stats')
-        all_players_hist = fetch_all_players(
-            conn, 'historical_stats', historical_config)
-        all_players_post = fetch_all_players(
-            conn, 'postseason_stats', historical_config)
+        all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw)
+        all_players_hist = fetch_all_players(conn, 'historical_stats', **query_kw)
+        all_players_post = fetch_all_players(conn, 'postseason_stats', **query_kw)
 
         # ---- Percentile populations (all rates) ----
         player_pct_by_rate = _compute_pct_by_rate({
@@ -408,18 +459,19 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
             entity='player', stats_mode='both',
-            tab_type='players', default_mode=mode)
+            tab_type='players', default_mode=mode,
+            league=ctx.league)
 
         # ---- Headers ----
         headers = build_headers(
             columns, mode=mode, team_name='Players',
-            current_season=current_season,
+            current_season=current_season_year,
             historical_config=historical_config)
 
-        # ---- Index players by player_id ----
-        curr_by_id = {p.get('player_id'): p for p in all_players_curr}
-        hist_by_id = {p.get('player_id'): p for p in all_players_hist}
-        post_by_id = {p.get('player_id'): p for p in all_players_post}
+        # ---- Index players by id ----
+        curr_by_id = {p.get('id'): p for p in all_players_curr}
+        hist_by_id = {p.get('id'): p for p in all_players_hist}
+        post_by_id = {p.get('id'): p for p in all_players_post}
 
         # ---- Unique player IDs sorted by current-season minutes ----
         all_player_ids = []
@@ -427,12 +479,12 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         for p in sorted(all_players_curr,
                         key=lambda x: x.get('minutes_x10', 0) or 0,
                         reverse=True):
-            pid = p.get('player_id')
+            pid = p.get('id')
             if pid and pid not in seen:
                 all_player_ids.append(pid)
                 seen.add(pid)
         for p in all_players_hist + all_players_post:
-            pid = p.get('player_id')
+            pid = p.get('id')
             if pid and pid not in seen:
                 all_player_ids.append(pid)
                 seen.add(pid)

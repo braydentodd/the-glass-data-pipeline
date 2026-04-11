@@ -145,7 +145,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'comment': 'FK to teams table serial id (resolved from source during ETL)',
         'sources': {
             'nba': {
-                'player': {'endpoint': 'commonplayerinfo', 'field': 'TEAM_ID'},
+                'player': {'endpoint': 'leaguedashplayerstats', 'field': 'TEAM_ID'},
             },
         },
     },
@@ -316,7 +316,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'comment': None,
         'sources': {
             'nba': {
-                'team': {'endpoint': 'leaguedashteamstats', 'field': 'TEAM_ABBREVIATION'},
+                'team': {'endpoint': 'team_metadata', 'field': 'TEAM_ABBREVIATION', 'transform': 'safe_str'},
             },
         },
     },
@@ -331,7 +331,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'comment': None,
         'sources': {
             'nba': {
-                'team': {'endpoint': 'leaguedashteamstats', 'field': 'CONFERENCE'},
+                'team': {'endpoint': 'team_metadata', 'field': 'TEAM_CONFERENCE', 'transform': 'safe_str'},
             },
         },
     },
@@ -341,8 +341,8 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     'games': {
         'type': 'SMALLINT',
         'scope': ['stats'],
-        'nullable': False,
-        'default': '0',
+        'nullable': True,
+        'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': None,
@@ -357,8 +357,8 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     'minutes_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
-        'nullable': False,
-        'default': '0',
+        'nullable': True,
+        'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': None,
@@ -389,8 +389,8 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     'tr_games': {
         'type': 'SMALLINT',
         'scope': ['stats'],
-        'nullable': False,
-        'default': '0',
+        'nullable': True,
+        'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': 'tracking',
@@ -413,8 +413,8 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     'tr_minutes_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
-        'nullable': False,
-        'default': '0',
+        'nullable': True,
+        'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': 'tracking',
@@ -439,24 +439,24 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     'h_games': {
         'type': 'SMALLINT',
         'scope': ['stats'],
-        'nullable': False,
-        'default': '0',
+        'nullable': True,
+        'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': 'hustle',
         'comment': None,
         'sources': {
             'nba': {
-                'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'GP'},
-                'team': {'endpoint': 'leaguehustlestatsteam', 'field': 'GP'},
+                'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'G'},
+                'team': {'endpoint': 'leaguehustlestatsteam', 'field': 'G'},
             },
         },
     },
     'h_minutes_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
-        'nullable': False,
-        'default': '0',
+        'nullable': True,
+        'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': 'hustle',
@@ -471,8 +471,8 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     'off_games': {
         'type': 'SMALLINT',
         'scope': ['stats'],
-        'nullable': False,
-        'default': '0',
+        'nullable': True,
+        'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
         'rate_group': 'onoff',
@@ -493,8 +493,8 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     'off_minutes_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
-        'nullable': False,
-        'default': '0',
+        'nullable': True,
+        'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': 'onoff',

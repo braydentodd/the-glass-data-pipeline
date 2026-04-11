@@ -28,13 +28,27 @@ shift
 LEAGUE=$(echo "$LEAGUE" | tr '[:upper:]' '[:lower:]')
 
 case "$LEAGUE" in
-    nba)  RUNNER="src.etl.runner";  LABEL="NBA"  ;;
-    ncaa) RUNNER="src.etl.runner"; LABEL="NCAA" ;;
+    nba)  SOURCE="nba_api";  LABEL="NBA"  ;;
+    ncaa) SOURCE="ncaa_api"; LABEL="NCAA" ;;
     *)    echo "Unknown league: $LEAGUE (use nba or ncaa)"; exit 1 ;;
 esac
 
 # Configuration
-MAX_RESTARTS=${1:-999999}  # Default: essentially unlimited
+MAX_RESTARTS=999999  # Default: essentially unlimited
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --max-restarts)
+            MAX_RESTARTS="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
 RESTART_COUNT=0
 EXIT_CODE=42
 
@@ -73,7 +87,7 @@ while [ $RESTART_COUNT -lt $MAX_RESTARTS ]; do
     echo -e "${YELLOW}[$(date +%H:%M:%S)]${NC} Starting ${LABEL} ETL (Attempt $(($RESTART_COUNT + 1)))..."
     echo ""
 
-    python3 -m "$RUNNER"
+    python3 -m src.etl.runner --source "$SOURCE"
     EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 0 ]; then

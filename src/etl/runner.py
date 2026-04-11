@@ -23,6 +23,9 @@ import logging
 import warnings
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from src.core.db import db_connection, quote_col
 from src.etl.definitions import ETL_CONFIG
 from src.etl.core.db import ensure_tables, prune_stale

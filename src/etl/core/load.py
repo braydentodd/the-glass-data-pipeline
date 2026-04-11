@@ -213,7 +213,8 @@ def write_entity_rows(
             entity_table = get_table_name(entity, 'entity', db_schema)
             id_map = _load_entity_id_map(conn, entity_table, source_id_col)
 
-            columns = list(conflict_columns) + data_cols
+            non_conflict_cols = [c for c in data_cols if c not in set(conflict_columns)]
+            columns = list(conflict_columns) + non_conflict_cols
             data = []
             for source_id, vals in rows.items():
                 serial_id = id_map.get(str(source_id))
@@ -235,7 +236,7 @@ def write_entity_rows(
                     else:
                         identity_values.append(None)
 
-                row_values = [vals.get(c) for c in data_cols]
+                row_values = [vals.get(c) for c in non_conflict_cols]
                 data.append(tuple(identity_values + row_values))
 
             if not data:
@@ -249,14 +250,16 @@ def write_entity_rows(
                 teams_table = get_table_name('team', 'entity', db_schema)
                 team_id_map = _load_entity_id_map(conn, teams_table, source_id_col)
 
-            columns = list(conflict_columns) + data_cols
+            # Exclude conflict columns from data_cols to avoid duplicates
+            non_conflict_cols = [c for c in data_cols if c not in set(conflict_columns)]
+            columns = list(conflict_columns) + non_conflict_cols
             data = []
             for source_id, vals in rows.items():
                 identity_values = [str(source_id)]
-                row_values = [vals.get(c) for c in data_cols]
+                row_values = [vals.get(c) for c in non_conflict_cols]
 
-                if team_id_map and 'team_id' in data_cols:
-                    ti = data_cols.index('team_id')
+                if team_id_map and 'team_id' in non_conflict_cols:
+                    ti = non_conflict_cols.index('team_id')
                     raw_team_id = str(row_values[ti]) if row_values[ti] is not None else None
                     if raw_team_id and raw_team_id in team_id_map:
                         row_values[ti] = team_id_map[raw_team_id]

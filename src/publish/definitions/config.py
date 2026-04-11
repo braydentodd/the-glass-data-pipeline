@@ -6,9 +6,6 @@ and spreadsheet settings across all leagues.
 """
 
 import os
-from typing import Dict
-
-from src.publish.definitions.columns import TAB_COLUMNS
 
 # ============================================================================
 # GOOGLE SHEETS CONFIGURATION
@@ -54,6 +51,34 @@ STAT_CONSTANTS = {
 
 STAT_RATES = ['per_possession', 'per_game', 'per_minute']
 DEFAULT_STAT_RATE = 'per_possession'
+
+# ============================================================================
+# COMPUTED ENTITY FIELDS
+# Virtual fields derived from raw DB columns. Queries use the SQL expression
+# and return the result aliased to the field name.
+# ============================================================================
+
+COMPUTED_ENTITY_FIELDS = {
+    'age': "EXTRACT(YEAR FROM AGE(p.birthdate)) + EXTRACT(MONTH FROM AGE(p.birthdate)) / 12.0",
+}
+
+# ============================================================================
+# SEASON TYPE CLASSIFICATION
+# Season type codes are grouped into "regular_season" vs "postseason".
+# Queries use these groups to decide which season_type values to aggregate.
+# ============================================================================
+
+SEASON_TYPE_GROUPS = {
+    'regular_season': ('rs',),
+    'postseason': ('po', 'pi', 'ct'),
+}
+
+SEASON_TYPE_LABELS = {
+    'rs': 'Regular Season',
+    'po': 'Playoffs',
+    'pi': 'Play-In',
+    'ct': 'Conference Tournament',
+}
 
 STAT_RATE_LABELS = {
     'per_possession': f"per {int(STAT_CONSTANTS['default_per_possessions'])} Poss",
@@ -103,7 +128,6 @@ SHEET_FORMATTING = {
     # Header styling
     'header_bg': 'black',
     'header_fg': 'white',
-    'header_description_mode': 'whiteout',
     'header_description_spacer_count': 750,
 
     # Data row alternating colors (uses addBanding so colors survive sorting)
@@ -119,8 +143,6 @@ SHEET_FORMATTING = {
     # Alignment
     'default_h_align': 'CENTER',
     'default_v_align': 'MIDDLE',
-    'left_align_columns': ['names', 'notes'],
-    'bold_columns': ['names'],
 
     # Overflow handling
     'wrap_strategy': 'CLIP',
@@ -131,7 +153,7 @@ SHEET_FORMATTING = {
     'hide_identity_section': True,
 
     # percentile companion column formatting
-    'percentile_companion_width': 10,      # pixels
+    'percentile_companion_width': 16,      # pixels
     'percentile_companion_font_size': 5,   # pt
 
     # Layout — 4 header rows
@@ -245,88 +267,31 @@ SUBSECTIONS = {
 WIDTH_CLASSES = {
     'auto': None,
     'measurement': 38,
+    'four_char': 28,
     'four_char_dec': 32,
     'three_char_dec': 26,
+    'two_char_dec': 20,
     'two_char': 18,
 }
 
-
-# ============================================================================
-# FIELD DERIVATION — extract DB column references from TAB_COLUMNS
-# ============================================================================
-
-# Entity type mapping: TAB_COLUMNS values key -> (entity, db_entity_type)
-_VALUES_KEY_ENTITY = {
+# Maps column values-dict keys to the entity type they represent
+VALUES_KEY_ENTITY = {
     'player': 'player',
     'team': 'team',
     'teams': 'team',
     'opponents': 'team',
 }
 
-_STATS_SECTIONS = frozenset(
-    name for name, cfg in SECTION_CONFIG.items() if cfg['is_stats_section']
-)
 
+# ============================================================================
+# SUMMARY THRESHOLDS
+# Displayed at the bottom of Players/Teams sheets.
+# ============================================================================
 
-def _extract_db_refs(expr) -> set:
-    """Walk an expression tree and return all referenced DB column names."""
-    if expr is None:
-        return set()
-    if isinstance(expr, (int, float)):
-        return set()
-    if isinstance(expr, str):
-        if expr.startswith('{') and expr.endswith('}'):
-            return {expr[1:-1]}
-        if expr and expr[0].isupper():
-            return set()
-        return {expr}
-    if isinstance(expr, tuple):
-        refs = set()
-        for item in expr[1:]:
-            refs |= _extract_db_refs(item)
-        return refs
-    return set()
-
-
-def derive_db_fields() -> Dict[str, set]:
-    """Derive the DB column sets needed by publish queries from TAB_COLUMNS.
-
-    Returns a dict with keys:
-        player_entity_fields, team_entity_fields, stat_fields, team_stat_fields
-    """
-    player_entity = set()
-    team_entity = set()
-    player_stats = set()
-    team_stats = set()
-
-    for col_def in TAB_COLUMNS.values():
-        sections = set(col_def.get('sections', []))
-        is_stats = bool(sections & _STATS_SECTIONS)
-        values = col_def.get('values', {})
-
-        for values_key, expr in values.items():
-            entity_type = _VALUES_KEY_ENTITY.get(values_key)
-            if entity_type is None:
-                continue
-
-            refs = _extract_db_refs(expr)
-            if not refs:
-                continue
-
-            if is_stats:
-                if entity_type == 'player':
-                    player_stats |= refs
-                else:
-                    team_stats |= refs
-            else:
-                if entity_type == 'player':
-                    player_entity |= refs
-                else:
-                    team_entity |= refs
-
-    return {
-        'player_entity_fields': player_entity,
-        'team_entity_fields': team_entity,
-        'stat_fields': player_stats,
-        'team_stat_fields': team_stats,
-    }
+SUMMARY_THRESHOLDS = [
+    ('Best', 100),
+    ('75th', 75),
+    ('Average', 50),
+    ('25th', 25),
+    ('Worst', 0),
+]

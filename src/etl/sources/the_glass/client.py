@@ -84,10 +84,12 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
 
     # Build column lists to find column positions
     players_columns = build_tab_columns(
-        entity='player', stats_mode='both', tab_type='players'
+        entity='player', stats_mode='both', tab_type='players',
+        league=league
     )
     teams_columns = build_tab_columns(
-        entity='team', stats_mode='both', tab_type='teams'
+        entity='team', stats_mode='both', tab_type='teams',
+        league=league
     )
 
     header_rows = SHEET_FORMATTING.get('header_row_count', 4)

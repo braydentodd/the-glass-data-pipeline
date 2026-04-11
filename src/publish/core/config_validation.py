@@ -53,6 +53,21 @@ def _validate_section_subsection(sheets_columns: dict) -> List[str]:
     return errors
 
 
+def _validate_width_classes(sheets_columns: dict) -> List[str]:
+    """Validate that string width_class values are recognized names."""
+    from src.publish.definitions.columns import _VALID_WIDTH_CLASSES
+
+    errors: List[str] = []
+    for col_name, col_def in sheets_columns.items():
+        wc = col_def.get('width_class')
+        if isinstance(wc, str) and wc not in _VALID_WIDTH_CLASSES:
+            errors.append(
+                f"TAB_COLUMNS['{col_name}']: 'width_class' value {wc!r} "
+                f"not in {_VALID_WIDTH_CLASSES}"
+            )
+    return errors
+
+
 # ============================================================================
 # PUBLIC API
 # ============================================================================
@@ -71,6 +86,7 @@ def validate_config() -> List[str]:
 
     errors.extend(validate_dict_config(TAB_COLUMNS, TAB_COLUMNS_SCHEMA, 'TAB_COLUMNS'))
     errors.extend(_validate_section_subsection(TAB_COLUMNS))
+    errors.extend(_validate_width_classes(TAB_COLUMNS))
 
     if errors:
         for err in errors:

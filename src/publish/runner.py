@@ -15,18 +15,16 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Set
 
 from dotenv import load_dotenv
+load_dotenv()
 
 from src.core.db import get_db_connection, get_table_name
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, get_teams_from_db
-from src.publish.core.calculations import calculate_all_percentiles
 from src.publish.destinations.sheets.client import get_sheets_client
-from src.publish.core.tabs import sync_teams_tab, sync_team_tab, sync_players_tab
+from src.publish.core.tabs import sync_teams_tab, sync_team_tab, sync_players_tab, _compute_pct_by_rate
 from src.publish.definitions.config import (
-    STAT_RATES, DEFAULT_STAT_RATE,
-    derive_db_fields,
+    STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG, COMPUTED_ENTITY_FIELDS,
 )
-
-load_dotenv()
+from src.publish.core.calculations import derive_db_fields
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,7 +58,7 @@ class SyncContext:
 
     # League-specific settings
     team_abbr_col: str = 'abbr'
-    team_abbr_field: str = 'abbr'
+    team_abbr_field: str = 'team_abbr'
     primary_minutes_col: str = 'minutes_x10'
     season_format_fn: Callable = str
     season_key: str = 'current_season'
@@ -72,6 +70,7 @@ class SyncContext:
 # ============================================================================
 
 def _precompute_percentiles(
+    ctx,
     sync_section: Optional[str],
     historical_config: dict,
 ) -> dict:
@@ -80,48 +79,59 @@ def _precompute_percentiles(
     Called once per run so every team and the aggregate tabs share the
     same population baselines.
     """
-    def _build_pct_by_rate(section_data: dict, entity_type: str) -> dict:
-        result = {}
-        for r in STAT_RATES:
-            result[r] = {}
-            for section, data_list in section_data.items():
-                if data_list:
-                    result[r][section] = calculate_all_percentiles(
-                        data_list, entity_type, r)
-                else:
-                    result[r][section] = {}
-        return result
+    current_season = ctx.league_config[ctx.season_key]
+    current_season_year = ctx.league_config['current_season_year']
+    season_type_val = ctx.league_config.get('season_type', 'rs')
 
+    query_kw = dict(
+        historical_config=historical_config,
+        ctx=ctx,
+        current_season=current_season,
+        current_season_year=current_season_year,
+        season_type_val=season_type_val,
+    )
     conn = get_db_connection()
     try:
         needs_current = sync_section is None or sync_section == 'current_stats'
         needs_historical = sync_section is None or sync_section == 'historical_stats'
         needs_postseason = sync_section is None or sync_section == 'postseason_stats'
 
-        all_players_curr = fetch_all_players(conn, 'current_stats') if needs_current else []
+        all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw) if needs_current else []
         all_players_hist = fetch_all_players(
-            conn, 'historical_stats', historical_config) if needs_historical else []
+            conn, 'historical_stats', **query_kw) if needs_historical else []
         all_players_post = fetch_all_players(
-            conn, 'postseason_stats', historical_config) if needs_postseason else []
+            conn, 'postseason_stats', **query_kw) if needs_postseason else []
         _empty_teams = {'teams': [], 'opponents': []}
-        all_teams_curr = fetch_all_teams(conn, 'current_stats') if needs_current else _empty_teams
+        all_teams_curr = fetch_all_teams(conn, 'current_stats', **query_kw) if needs_current else _empty_teams
         all_teams_hist = fetch_all_teams(
-            conn, 'historical_stats', historical_config) if needs_historical else _empty_teams
+            conn, 'historical_stats', **query_kw) if needs_historical else _empty_teams
         all_teams_post = fetch_all_teams(
-            conn, 'postseason_stats', historical_config) if needs_postseason else _empty_teams
+            conn, 'postseason_stats', **query_kw) if needs_postseason else _empty_teams
+
+        # Build player groups for team_average context in team percentiles
+        from collections import defaultdict
+        player_groups = defaultdict(list)
+        for p in all_players_curr:
+            ta = p.get(ctx.team_abbr_field)
+            if ta:
+                player_groups[ta].append(p)
+
+        def _team_context_fn(entity):
+            abbr = entity.get(ctx.team_abbr_field)
+            return {'team_players': player_groups.get(abbr, [])}
 
         precomputed = {
-            'player': _build_pct_by_rate({
+            'player': _compute_pct_by_rate({
                 'current_stats': all_players_curr,
                 'historical_stats': all_players_hist,
                 'postseason_stats': all_players_post,
             }, 'player'),
-            'team': _build_pct_by_rate({
+            'team': _compute_pct_by_rate({
                 'current_stats': all_teams_curr['teams'],
                 'historical_stats': all_teams_hist['teams'],
                 'postseason_stats': all_teams_post['teams'],
-            }, 'team'),
-            'opponents': _build_pct_by_rate({
+            }, 'team', context_fn=_team_context_fn),
+            'opponents': _compute_pct_by_rate({
                 'current_stats': all_teams_curr['opponents'],
                 'historical_stats': all_teams_hist['opponents'],
                 'postseason_stats': all_teams_post['opponents'],
@@ -160,11 +170,15 @@ def sync_league(
     source_config = importlib.import_module(f'src.etl.sources.{source_key}.config')
     league_config = source_config.SEASON_CONFIG
 
-    db_fields = derive_db_fields()
+    stats_sections = frozenset(
+        name for name, cfg in SECTION_CONFIG.items() if cfg['is_stats_section']
+    )
+    computed_fields = set(COMPUTED_ENTITY_FIELDS.keys())
+    db_fields = derive_db_fields(league, stats_sections, computed_fields)
 
     ctx = SyncContext(
         league=league,
-        google_sheets_config=GOOGLE_SHEETS_CONFIG,
+        google_sheets_config=GOOGLE_SHEETS_CONFIG[league],
         sheet_formatting=SHEET_FORMATTING,
         league_config=league_config,
         db_schema=db_schema,
@@ -177,6 +191,7 @@ def sync_league(
         stat_fields=db_fields['stat_fields'],
         team_stat_fields=db_fields['team_stat_fields'],
         primary_minutes_col='minutes_x10' if 'minutes_x10' in db_fields['stat_fields'] else 'minutes',
+        season_format_fn=getattr(source_config, 'format_season', str),
     )
 
     logger.info('Starting %s sync...', 'partial update' if partial_update else 'full')
@@ -193,7 +208,7 @@ def sync_league(
 
     # ---- Pre-compute league-wide percentile populations ONCE (all rates) ----
     logger.info('  Pre-computing league-wide percentile populations...')
-    precomputed = _precompute_percentiles(sync_section, historical_config)
+    precomputed = _precompute_percentiles(ctx, sync_section, historical_config)
 
     # ---- Build team list ----
     teams_db = get_teams_from_db(ctx.db_schema)
@@ -280,7 +295,7 @@ def main():
 
     # Export Apps Script config if requested (standalone action)
     if args.export_config:
-        from src.publish.core.export_config import export_config
+        from src.publish.destinations.sheets.export_config import export_config
         path = export_config(league)
         logger.info('Config exported to %s', path)
         return

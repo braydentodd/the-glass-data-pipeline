@@ -9,6 +9,7 @@ No classes -- all functions operate on plain data.
 """
 
 import importlib
+import inspect
 import logging
 import time
 import warnings
@@ -100,10 +101,15 @@ def load_endpoint_class(endpoint_name: str) -> Optional[Any]:
         logger.warning("Could not import endpoint module: %s", module_path)
         return None
 
-    class_name = endpoint_name[0].upper() + endpoint_name[1:]
-    cls = getattr(module, class_name, None)
-    if cls is None:
-        cls = getattr(module, endpoint_name.upper(), None)
+    # Find the endpoint class: look for a class whose lowercase name matches
+    cls = None
+    for attr_name in dir(module):
+        if attr_name.lower() == endpoint_name.lower():
+            candidate = getattr(module, attr_name)
+            if isinstance(candidate, type):
+                cls = candidate
+                break
+
     if cls is None:
         logger.warning("No class found in %s", module_path)
         return None
@@ -125,11 +131,23 @@ def create_api_call(
     """Build a zero-arg callable that executes an NBA API request.
 
     Internal params (keys starting with ``_``) are stripped before the call.
+    Parameters not accepted by the endpoint constructor are silently dropped.
     Returns raw JSON dict with ``resultSets``.
     """
     _patch_nba_api_headers()
 
     clean_params = {k: v for k, v in params.items() if not k.startswith('_')}
+
+    # Filter to only params the endpoint actually accepts
+    sig = inspect.signature(endpoint_class.__init__)
+    accepted = set(sig.parameters.keys()) - {'self'}
+    has_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in sig.parameters.values()
+    )
+    if not has_kwargs:
+        clean_params = {k: v for k, v in clean_params.items() if k in accepted}
+
     call_timeout = timeout or API_CONFIG['timeout_default']
 
     def _call() -> Dict[str, Any]:
@@ -185,12 +203,19 @@ def build_endpoint_params(
     with endpoint-specific defaults and caller-supplied overrides.
     """
     ep_cfg = ENDPOINTS.get(endpoint_name, {})
-    params: Dict[str, Any] = {'season': season}
+
+    # Season parameter — most endpoints use 'season' (str like "2025-26"),
+    # but some (e.g., draft combine) use 'season_year' (int like 2025).
+    season_param = ep_cfg.get('season_param', 'season')
+    if season_param == 'season_year':
+        params: Dict[str, Any] = {season_param: int(season.split('-')[0])}
+    else:
+        params: Dict[str, Any] = {season_param: season}
 
     # Season type
     st_param = ep_cfg.get('season_type_param')
     if st_param:
-        params['season_type_all_star'] = season_type_name
+        params[st_param] = season_type_name
 
     # Per-mode
     pm_param = ep_cfg.get('per_mode_param')
@@ -207,8 +232,10 @@ def build_endpoint_params(
         else:
             params['player_or_team'] = 'Team'
 
-    # League ID
+    # League ID — add both variants; signature filtering in create_api_call
+    # will keep only the one the endpoint accepts.
     params['league_id'] = API_CONFIG['league_id']
+    params['league_id_nullable'] = API_CONFIG['league_id']
 
     # Caller overrides win
     if extra_params:
@@ -226,8 +253,13 @@ def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
 
     Returns a function that accepts (endpoint, extra_params) and executes
     a fully parameterized NBA API call with retry logic.
+    Virtual endpoints (e.g. team_metadata) are routed to dedicated handlers.
     """
     def fetch(endpoint: str, extra_params: Optional[Dict[str, Any]] = None) -> Optional[Dict]:
+        ep_cfg = ENDPOINTS.get(endpoint, {})
+        if ep_cfg.get('virtual'):
+            return _fetch_virtual(endpoint, season)
+
         EndpointClass = load_endpoint_class(endpoint)
         if EndpointClass is None:
             return None
@@ -237,3 +269,65 @@ def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
         api_call = create_api_call(EndpointClass, full_params, endpoint_name=endpoint)
         return with_retry(api_call)
     return fetch
+
+
+# ============================================================================
+# VIRTUAL ENDPOINT HANDLERS
+# ============================================================================
+
+def _fetch_virtual(endpoint: str, season: str) -> Optional[Dict]:
+    """Dispatch virtual endpoints to their handlers."""
+    if endpoint == 'team_metadata':
+        return _fetch_team_metadata(season)
+    logger.warning('Unknown virtual endpoint: %s', endpoint)
+    return None
+
+
+def _fetch_team_metadata(season: str) -> Dict:
+    """Combine static team data and LeagueStandings into a standard resultSets format.
+
+    Returns abbreviation from nba_api static data and conference from the
+    LeagueStandings API, keyed by TEAM_ID so the extract pipeline can
+    process it like any other endpoint.
+    """
+    from nba_api.stats.static import teams as static_teams
+    from nba_api.stats.endpoints import leaguestandings
+
+    # Static abbreviations keyed by team ID
+    abbr_map = {t['id']: t['abbreviation'] for t in static_teams.get_teams()}
+
+    # Conference from standings
+    _patch_nba_api_headers()
+    standings_call = create_api_call(
+        leaguestandings.LeagueStandings,
+        {'season': season, 'league_id': '00'},
+        endpoint_name='leaguestandings',
+    )
+    standings = with_retry(standings_call)
+
+    conf_map: Dict[int, str] = {}
+    for rs in standings.get('resultSets', []):
+        if 'TeamID' not in rs.get('headers', []):
+            continue
+        headers = rs['headers']
+        tid_idx = headers.index('TeamID')
+        conf_idx = headers.index('Conference') if 'Conference' in headers else None
+        if conf_idx is None:
+            continue
+        for row in rs['rowSet']:
+            conf_map[row[tid_idx]] = row[conf_idx]
+
+    # Build combined result in standard API format
+    all_ids = sorted(set(abbr_map) | set(conf_map))
+    row_set = [
+        [tid, abbr_map.get(tid), conf_map.get(tid)]
+        for tid in all_ids
+    ]
+
+    return {
+        'resultSets': [{
+            'name': 'TeamMetadata',
+            'headers': ['TEAM_ID', 'TEAM_ABBREVIATION', 'TEAM_CONFERENCE'],
+            'rowSet': row_set,
+        }]
+    }

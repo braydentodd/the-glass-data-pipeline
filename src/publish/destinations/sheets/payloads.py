@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Tuple
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
 from src.publish.core.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
+from src.publish.core.layout import get_column_index
 
 def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               header_merges: list, n_data_rows: int,
@@ -43,9 +44,8 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     data_border_color = get_color_for_raw(COLORS[fmt['data_border_color']])
     wrap_strategy = fmt.get('wrap_strategy', 'CLIP')
 
-    # Respect current toggle state: override config defaults
-    hide_advanced = not show_advanced if show_advanced else fmt.get('hide_advanced_columns', True)
-    hide_subsection_row = hide_advanced  # subsection row visibility matches advanced state
+    # Subsection row visibility matches advanced stats state
+    hide_subsection_row = not show_advanced
 
     # --- Fast path for partial update (mode / timeframe changes) ---------
     # Skip all structural formatting, resize, and widths; only reapply data-dependent pieces.
@@ -266,44 +266,64 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             }
         })
 
-    # ---- 8. Left-aligned columns (data rows only) — config-driven ----
-    for col_key in fmt.get('left_align_columns', []):
-        col_idx = get_column_index(col_key, columns_list)
-        if col_idx is not None and n_data_rows > 0:
-            requests.append({
-                'repeatCell': {
-                    'range': _range(ws_id, data_start, total_rows, col_idx, col_idx + 1),
-                    'cell': {
-                        'userEnteredFormat': {'horizontalAlignment': 'LEFT'},
-                    },
-                    'fields': 'userEnteredFormat.horizontalAlignment',
-                }
-            })
+    # ---- 8. Per-column alignment and emphasis (data rows only) — column-definition-driven ----
+    if n_data_rows > 0:
+        for idx, entry in enumerate(columns_list):
+            col_def = entry[1]
+            col_align = col_def.get('align', 'center').upper()
+            col_emphasis = col_def.get('emphasis')
 
-    # ---- 8b. Bold columns (data rows only) — config-driven ----
-    for col_key in fmt.get('bold_columns', []):
-        col_idx = get_column_index(col_key, columns_list)
-        if col_idx is not None and n_data_rows > 0:
-            requests.append({
-                'repeatCell': {
-                    'range': _range(ws_id, data_start, total_rows, col_idx, col_idx + 1),
-                    'cell': {
-                        'userEnteredFormat': {
-                            'textFormat': {'bold': True},
+            if col_align != fmt['default_h_align']:
+                requests.append({
+                    'repeatCell': {
+                        'range': _range(ws_id, data_start, total_rows, idx, idx + 1),
+                        'cell': {
+                            'userEnteredFormat': {'horizontalAlignment': col_align},
                         },
-                    },
-                    'fields': 'userEnteredFormat.textFormat.bold',
-                }
-            })
+                        'fields': 'userEnteredFormat.horizontalAlignment',
+                    }
+                })
+
+            if col_emphasis == 'bold':
+                requests.append({
+                    'repeatCell': {
+                        'range': _range(ws_id, data_start, total_rows, idx, idx + 1),
+                        'cell': {
+                            'userEnteredFormat': {
+                                'textFormat': {'bold': True},
+                            },
+                        },
+                        'fields': 'userEnteredFormat.textFormat.bold',
+                    }
+                })
 
     # ---- 9. Header merge cells ----
+    frozen_cols = fmt.get('frozen_cols', 0)
     for merge in header_merges:
         row = merge['row']  # Already 0-based (section=0, subsection=1)
-        if merge['end_col'] - merge['start_col'] > 1:
+        s, e = merge['start_col'], merge['end_col']
+        if e - s <= 1:
+            continue
+        # Split merges that cross the frozen/non-frozen column boundary
+        if s < frozen_cols < e:
+            if frozen_cols - s > 1:
+                requests.append({
+                    'mergeCells': {
+                        'range': _range(ws_id, row, row + 1, s, frozen_cols),
+                        'mergeType': 'MERGE_ALL',
+                    }
+                })
+            if e - frozen_cols > 1:
+                requests.append({
+                    'mergeCells': {
+                        'range': _range(ws_id, row, row + 1, frozen_cols, e),
+                        'mergeType': 'MERGE_ALL',
+                    }
+                })
+        else:
             requests.append({
                 'mergeCells': {
-                    'range': _range(ws_id, row, row + 1,
-                                    merge['start_col'], merge['end_col']),
+                    'range': _range(ws_id, row, row + 1, s, e),
                     'mergeType': 'MERGE_ALL',
                 }
             })
@@ -380,13 +400,52 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             }
         })
 
-    # ---- 15. Column widths: only set width_class columns (no blanket auto-resize) ----
+    # ---- 15. Column widths and percentile companion formatting ----
+    pct_font_size = fmt.get('percentile_companion_font_size', 5)
+    pct_width = fmt.get('percentile_companion_width', 10)
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
+        is_pct_companion = col_def.get('is_generated_percentile', False)
         wc = col_def.get('width_class')
-        min_width = WIDTH_CLASSES.get(wc) if wc else None
-        if wc == 'auto' or min_width is None:
-            # Auto-resize just this column
+
+        # Percentile companions: fixed width, small font, top-aligned
+        if is_pct_companion:
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'pixelSize': pct_width},
+                    'fields': 'pixelSize',
+                }
+            })
+            if n_data_rows > 0:
+                requests.append({
+                    'repeatCell': {
+                        'range': _range(ws_id, data_start, total_rows, idx, idx + 1),
+                        'cell': {
+                            'userEnteredFormat': {
+                                'textFormat': {'fontSize': pct_font_size},
+                                'verticalAlignment': 'MIDDLE',
+                            },
+                        },
+                        'fields': 'userEnteredFormat(textFormat.fontSize,verticalAlignment)',
+                    }
+                })
+            continue
+
+        # Regular columns: resolve pixel width from WIDTH_CLASSES or direct int
+        if isinstance(wc, (int, float)):
+            pixel_width = int(wc)
+        elif isinstance(wc, str):
+            pixel_width = WIDTH_CLASSES.get(wc)
+        else:
+            pixel_width = None
+
+        if pixel_width is None:
             requests.append({
                 'autoResizeDimensions': {
                     'dimensions': {
@@ -397,7 +456,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     },
                 }
             })
-        elif isinstance(min_width, (int, float)):
+        else:
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -406,22 +465,18 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                         'startIndex': idx,
                         'endIndex': idx + 1,
                     },
-                    'properties': {'pixelSize': int(min_width)},
+                    'properties': {'pixelSize': pixel_width},
                     'fields': 'pixelSize',
                 }
             })
 
-    # ---- 16. Hide advanced stat columns (respects current toggle state) ----
-    if hide_advanced:
-        requests.extend(_build_hide_advanced_requests(ws_id, columns_list))
-    else:
-        # Advanced visible → hide basic stat columns (swap behavior)
-        requests.extend(_build_hide_basic_requests(ws_id, columns_list))
-
-    # ---- 17. Hide base value columns (percentile companion columns are always visible) ----
+    # ---- 16. Hide columns based on visibility flag from build_tab_columns ----
+    # The visible flag (entry[2]) encodes: non-default rate → hidden,
+    # advanced/basic mode toggle → hidden. This single loop replaces all
+    # per-column hiding logic.
     for idx, entry in enumerate(columns_list):
-        col_def = entry[1]
-        if col_def.get('percentile') is not None and not col_def.get('is_generated_percentile', False):
+        col_vis = entry[2]
+        if not col_vis:
             requests.append({
                 'updateDimensionProperties': {
                     'range': {
@@ -435,7 +490,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 18. Hide subsection row (tied to advanced stats state) ----
+    # ---- 17. Hide subsection row (tied to advanced stats state) ----
     if hide_subsection_row:
         requests.append({
             'updateDimensionProperties': {
@@ -468,27 +523,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     }
                 })
 
-    # ---- 19b. Hide columns without entity formula (e.g. jersey on teams) ----
-    col_entity = 'team' if tab_type == 'teams' else 'player'
-    for idx, entry in enumerate(columns_list):
-        col_def = entry[1]
-        col_ctx = entry[3] if len(entry) > 3 else None
-        is_stat = SECTION_CONFIG.get(col_ctx, {}).get('is_stats_section', False)
-        if not is_stat and col_def.get('values', {}).get(col_entity) is None:
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': ws_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': idx,
-                        'endIndex': idx + 1,
-                    },
-                    'properties': {'hiddenByUser': True},
-                    'fields': 'hiddenByUser',
-                }
-            })
-
-    # ---- 20. Auto-filter on filter row — excludes team/opp rows from sort ----
+    # ---- 19. Auto-filter on filter row — excludes team/opp rows from sort ----
     filter_end = data_start + n_player_rows if n_player_rows > 0 else total_rows
     requests.append({
         'setBasicFilter': {
@@ -588,52 +623,6 @@ def _get_subsection_boundaries(columns_list: List[Tuple]) -> List[int]:
         prev_subsection = subsection
         prev_section = col_ctx
     return boundaries
-
-
-def _build_hide_advanced_requests(ws_id: int, columns_list: List[Tuple]) -> list:
-    """Build requests to hide advanced stat columns."""
-    requests = []
-    for idx, entry in enumerate(columns_list):
-        col_def = entry[1]
-        col_ctx = entry[3] if len(entry) > 3 else None
-        col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
-        if col_ctx_cfg.get('is_stats_section') and col_def.get('stats_mode') == 'advanced':
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': ws_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': idx,
-                        'endIndex': idx + 1,
-                    },
-                    'properties': {'hiddenByUser': True},
-                    'fields': 'hiddenByUser',
-                }
-            })
-    return requests
-
-
-def _build_hide_basic_requests(ws_id: int, columns_list: List[Tuple]) -> list:
-    """Build requests to hide basic stat columns (when advanced mode is shown)."""
-    requests = []
-    for idx, entry in enumerate(columns_list):
-        col_def = entry[1]
-        col_ctx = entry[3] if len(entry) > 3 else None
-        col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
-        if col_ctx_cfg.get('is_stats_section') and col_def.get('stats_mode') == 'basic':
-            requests.append({
-                'updateDimensionProperties': {
-                    'range': {
-                        'sheetId': ws_id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': idx,
-                        'endIndex': idx + 1,
-                    },
-                    'properties': {'hiddenByUser': True},
-                    'fields': 'hiddenByUser',
-                }
-            })
-    return requests
 
 
 def _build_null_formula_bg_requests(ws_id: int, columns_list: List[Tuple],

@@ -13,6 +13,7 @@ import os
 from typing import Any, Dict
 
 from src.core.db import get_current_season, get_current_season_year
+from src.etl.core.transform import format_season_end_year
 
 
 # ============================================================================
@@ -36,6 +37,10 @@ SEASON_CONFIG = {
     'onoff_start': '2007-08',
     'combine_start_year': 2003,
 }
+
+
+format_season = format_season_end_year
+
 
 SEASON_TYPES = {
     'rs': {'name': 'Regular Season', 'param': 'Regular Season', 'min_season': None},
@@ -227,6 +232,7 @@ ENDPOINTS: Dict[str, Dict[str, Any]] = {
         'min_season': '2000-01',
         'execution_tier': 'league',
         'default_result_set': 'DraftCombinePlayerAnthro',
+        'season_param': 'season_year',
         'season_type_param': None,
         'per_mode_param': None,
         'entity_types': ['player'],
@@ -241,6 +247,20 @@ ENDPOINTS: Dict[str, Dict[str, Any]] = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
+    },
+
+    # --- Virtual: team metadata (abbreviation + conference) ---
+    # Combines nba_api static teams data with LeagueStandings.
+    # No real NBA API class — handled by fetch_team_metadata() in client.py.
+
+    'team_metadata': {
+        'min_season': None,
+        'execution_tier': 'league',
+        'default_result_set': 'TeamMetadata',
+        'season_type_param': None,
+        'per_mode_param': None,
+        'entity_types': ['team'],
+        'virtual': True,
     },
 }
 
@@ -270,6 +290,7 @@ ENDPOINTS_SCHEMA = {
     'per_mode_param': {'required': True, 'types': (str, type(None))},
     'entity_types': {'required': True, 'types': (list,), 'list_item_values': {'player', 'team'}},
     'requires_params': {'required': False, 'types': (list,)},
+    'virtual': {'required': False, 'types': (bool,)},
 }
 
 SEASON_TYPES_SCHEMA = {

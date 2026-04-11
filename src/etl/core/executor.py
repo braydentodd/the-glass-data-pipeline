@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
+from src.core.db import db_connection, get_table_name, quote_col
 from src.etl.core.extract import (
     extract_columns_from_result,
     extract_raw_rows,
@@ -25,6 +26,7 @@ from src.etl.core.extract import (
     get_pipeline_columns,
     get_simple_columns,
 )
+from src.etl.definitions import get_source_id_column
 from src.etl.core.load import write_entity_rows
 from src.etl.core.transform import aggregate_team_rows, execute_pipeline
 
@@ -218,6 +220,86 @@ def _execute_team_call(
     )
 
 
+def _execute_per_entity(
+    endpoint: str,
+    columns: Dict[str, Dict[str, Any]],
+    ctx: ExecutionContext,
+    failed: List[Dict[str, Any]],
+) -> int:
+    """Per-entity API calls for simple columns (e.g. commonplayerinfo).
+
+    Iterates over all known entities in the DB, calls the endpoint once
+    per entity (passing the entity's source_id), and extracts simple columns.
+    """
+    source_id_col = get_source_id_column(ctx.db_schema)
+    entity_table = get_table_name(ctx.entity, 'entity', ctx.db_schema)
+
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            # Only fetch entities still missing data for any of the target columns
+            null_checks = ' OR '.join(
+                f'{quote_col(col)} IS NULL' for col in columns
+            )
+            cur.execute(
+                f"SELECT {quote_col(source_id_col)} FROM {entity_table}"
+                f" WHERE {null_checks}"
+            )
+            source_ids = [row[0] for row in cur.fetchall()]
+
+    if not source_ids:
+        return 0
+
+    all_rows: Dict[int, Dict[str, Any]] = {}
+    consecutive_failures = 0
+    id_param = ctx.entity_id_field.lower()
+
+    for idx, sid in enumerate(source_ids):
+        try:
+            result = ctx.api_fetcher(endpoint, {id_param: sid})
+            consecutive_failures = 0
+        except KeyError as exc:
+            # Malformed response for this specific entity (e.g. missing
+            # resultSet key) — skip without counting toward API-level abort.
+            logger.debug(
+                'Per-entity %s: no data for %s=%s (KeyError: %s)',
+                endpoint, id_param, sid, exc,
+            )
+            continue
+        except Exception as exc:
+            consecutive_failures += 1
+            logger.warning(
+                'Per-entity %s for %s=%s failed: %s', endpoint, id_param, sid, exc,
+            )
+            if consecutive_failures >= ctx.max_consecutive_failures:
+                logger.error(
+                    'Aborting %s after %d consecutive failures',
+                    endpoint, consecutive_failures,
+                )
+                failed.append({'endpoint': endpoint, 'error': str(exc)})
+                break
+            continue
+
+        if result is None:
+            continue
+
+        extracted = extract_columns_from_result(
+            result, columns, ctx.entity, ctx.entity_id_field,
+        )
+        all_rows.update(extracted)
+
+        per_entity_delay = 2.5
+        if idx < len(source_ids) - 1:
+            time.sleep(per_entity_delay)
+
+    if not all_rows:
+        return 0
+
+    return write_entity_rows(
+        ctx.entity, ctx.scope, all_rows,
+        ctx.season, ctx.season_type, ctx.db_schema,
+    )
+
+
 # ============================================================================
 # DISPATCHER
 # ============================================================================
@@ -248,6 +330,8 @@ def execute_group(
     if tier == 'team_call':
         written += _execute_team_call(endpoint, columns, ctx, failed)
     elif tier in ('team', 'player'):
+        if simple:
+            written += _execute_per_entity(endpoint, simple, ctx, failed)
         for col_name, source in pipelines.items():
             written += _execute_pipeline_column(col_name, source, ctx, failed)
         for col_name, source in multi_call.items():

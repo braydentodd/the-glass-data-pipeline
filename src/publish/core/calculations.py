@@ -98,7 +98,7 @@ def evaluate_expression(expr, entity_data: dict,
             val = p.get(field)
             minutes = (p.get('minutes_x10', 0) or 0) / 10.0
             if val is not None and minutes > 0:
-                weighted_sum += val * minutes
+                weighted_sum += float(val) * minutes
                 total_weight += minutes
         if total_weight == 0:
             return None
@@ -162,6 +162,17 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
 
     Returns dict of {col_key: calculated_value} for all applicable columns.
     """
+    # Auto-populate seasons_in_query from entity_data when available.
+    # Historical/postseason queries store COUNT(DISTINCT s.season) as 'season'.
+    if context is None:
+        context = {}
+    if 'seasons_in_query' not in context:
+        season_val = entity_data.get('season')
+        if isinstance(season_val, int) and season_val > 0:
+            context['seasons_in_query'] = season_val
+        else:
+            context['seasons_in_query'] = 1
+
     results = {}
     games = entity_data.get('games', 0) or 0
     minutes = (entity_data.get('minutes_x10', 0) or 0) / 10.0
@@ -198,19 +209,26 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
 
 def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
                               mode: str = 'per_possession',
-                              context: Optional[dict] = None) -> dict:
+                              context: Optional[dict] = None,
+                              context_fn=None) -> dict:
     """
     Calculate minute-weighted percentile populations for all stat columns.
 
     Columns in stats sections are weighted by minutes played.
     Non-stats columns (player_info, etc.) use weight = 1.
 
+    Args:
+        context_fn: Optional callable(entity_dict) -> context_dict.
+                    Used for team entities that need per-entity context
+                    (e.g. team_average requires team_players).
+
     Returns:
         Dict of {col_key: sorted list of (value, weight) tuples}
     """
     all_calculated = []
     for entity in all_entities:
-        stats = calculate_entity_stats(entity, entity_type, mode, context)
+        entity_ctx = context_fn(entity) if context_fn else context
+        stats = calculate_entity_stats(entity, entity_type, mode, entity_ctx)
         all_calculated.append((entity, stats))
 
     percentiles = {}
@@ -286,3 +304,88 @@ def get_percentile_rank(value: Any, sorted_weighted: List, reverse: bool = False
         percentile = 100 - percentile
 
     return max(0, min(100, percentile))
+
+
+# ============================================================================
+# FIELD DERIVATION (consolidated from field_derivation.py)
+# ============================================================================
+
+from src.publish.definitions.config import VALUES_KEY_ENTITY
+
+
+def _extract_db_refs(expr) -> set:
+    """Walk an expression tree and return all referenced DB column names."""
+    if expr is None:
+        return set()
+    if isinstance(expr, (int, float)):
+        return set()
+    if isinstance(expr, str):
+        if expr.startswith('{') and expr.endswith('}'):
+            return {expr[1:-1]}
+        if expr and expr[0].isupper():
+            return set()
+        return {expr}
+    if isinstance(expr, tuple):
+        op = expr[0]
+        if op == 'lookup':
+            return _extract_db_refs(expr[1])
+        if op == 'team_average':
+            return set()
+        if op == 'seasons_in_query':
+            return set()
+        refs = set()
+        for item in expr[1:]:
+            refs |= _extract_db_refs(item)
+        return refs
+    return set()
+
+
+def derive_db_fields(league: str = None, stats_sections: frozenset = None,
+                     computed_fields: set = None) -> Dict[str, set]:
+    """Derive the DB column sets needed by publish queries from TAB_COLUMNS.
+
+    Returns a dict with keys:
+        player_entity_fields, team_entity_fields, stat_fields, team_stat_fields
+    """
+    stats_sections = stats_sections or frozenset()
+    computed_fields = computed_fields or set()
+
+    player_entity = set()
+    team_entity = set()
+    player_stats = set()
+    team_stats = set()
+
+    for col_def in TAB_COLUMNS.values():
+        if league and league not in col_def.get('leagues', []):
+            continue
+
+        sections = set(col_def.get('sections', []))
+        is_stats = bool(sections & stats_sections)
+        values = col_def.get('values', {})
+
+        for values_key, expr in values.items():
+            entity_type = VALUES_KEY_ENTITY.get(values_key)
+            if entity_type is None:
+                continue
+
+            refs = _extract_db_refs(expr)
+            if not refs:
+                continue
+
+            if is_stats:
+                if entity_type == 'player':
+                    player_stats |= refs
+                else:
+                    team_stats |= refs
+            else:
+                if entity_type == 'player':
+                    player_entity |= refs
+                else:
+                    team_entity |= refs
+
+    return {
+        'player_entity_fields': player_entity - computed_fields,
+        'team_entity_fields': team_entity - computed_fields,
+        'stat_fields': player_stats,
+        'team_stat_fields': team_stats,
+    }
