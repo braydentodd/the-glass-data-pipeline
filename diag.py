@@ -1,1 +1,0 @@
-# DEPRECATED — safe to delete
