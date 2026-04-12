@@ -217,6 +217,15 @@ ENDPOINTS: Dict[str, Dict[str, Any]] = {
 
     # --- Player info (all time) ---
 
+    'commonallplayers': {
+        'min_season': None,
+        'execution_tier': 'league',
+        'default_result_set': 'CommonAllPlayers',
+        'season_type_param': None,
+        'per_mode_param': None,
+        'entity_types': ['player'],
+    },
+
     'commonplayerinfo': {
         'min_season': None,
         'execution_tier': 'player',

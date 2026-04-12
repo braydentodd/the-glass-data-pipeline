@@ -45,3 +45,8 @@ def lookup(key_field, table, target_field):
 def team_average(field):
     """Minute-weighted average of a player field across the roster."""
     return ('team_average', field)
+
+
+def calculate_age(field):
+    """Calculate age (years, 1 decimal) from a birthdate field."""
+    return ('calculate_age', field)

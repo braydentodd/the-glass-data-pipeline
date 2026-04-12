@@ -145,7 +145,11 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'comment': 'FK to teams table serial id (resolved from source during ETL)',
         'sources': {
             'nba': {
-                'player': {'endpoint': 'leaguedashplayerstats', 'field': 'TEAM_ID'},
+                'player': {
+                    'endpoint': 'commonallplayers',
+                    'field': 'TEAM_ID',
+                    'transform': 'null_if_zero',
+                },
             },
         },
     },

@@ -1,4 +1,5 @@
 import logging
+from datetime import date, datetime
 from typing import Dict, Any, List, Optional
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import SECTION_CONFIG, STAT_CONSTANTS
@@ -95,7 +96,10 @@ def evaluate_expression(expr, entity_data: dict,
         total_weight = 0.0
         weighted_sum = 0.0
         for p in team_players:
-            val = p.get(field)
+            if isinstance(field, tuple):
+                val = evaluate_expression(field, p, context)
+            else:
+                val = p.get(field)
             minutes = (p.get('minutes_x10', 0) or 0) / 10.0
             if val is not None and minutes > 0:
                 weighted_sum += float(val) * minutes
@@ -103,6 +107,23 @@ def evaluate_expression(expr, entity_data: dict,
         if total_weight == 0:
             return None
         return weighted_sum / total_weight
+
+    if op == 'calculate_age':
+        birthdate = evaluate_expression(expr[1], entity_data, context)
+        if birthdate is None:
+            return None
+        if isinstance(birthdate, datetime):
+            bdate = birthdate.date()
+        elif isinstance(birthdate, date):
+            bdate = birthdate
+        else:
+            try:
+                bdate = datetime.fromisoformat(str(birthdate)).date()
+            except ValueError:
+                return None
+        today = date.today()
+        age_years = (today - bdate).days / 365.25
+        return round(age_years, 1)
 
     logger.warning(f"Unknown expression operator: {op}")
     return None
@@ -330,7 +351,9 @@ def _extract_db_refs(expr) -> set:
         if op == 'lookup':
             return _extract_db_refs(expr[1])
         if op == 'team_average':
-            return set()
+            return _extract_db_refs(expr[1])
+        if op == 'calculate_age':
+            return _extract_db_refs(expr[1])
         if op == 'seasons_in_query':
             return set()
         refs = set()

@@ -58,9 +58,7 @@ DEFAULT_STAT_RATE = 'per_possession'
 # and return the result aliased to the field name.
 # ============================================================================
 
-COMPUTED_ENTITY_FIELDS = {
-    'age': "EXTRACT(YEAR FROM AGE(p.birthdate)) + EXTRACT(MONTH FROM AGE(p.birthdate)) / 12.0",
-}
+COMPUTED_ENTITY_FIELDS = {}
 
 # ============================================================================
 # SEASON TYPE CLASSIFICATION
@@ -111,7 +109,7 @@ COLOR_THRESHOLDS = {
 # SHEET FORMATTING CONFIG
 # ============================================================================
 
-HEADER_ROW_COUNT = 4
+HEADER_ROW_COUNT = 6
 
 SHEET_FORMATTING = {
     # Fonts
@@ -139,11 +137,22 @@ SHEET_FORMATTING = {
     'subsection_border_weight': 1,
     'header_border_color': 'white',
     'data_border_color': 'black',
-    'inner_vertical_border_weight': 1,
+    'column_border_weight': 1,
+    'column_border_color_header': 'white',
+    'column_border_color_data': 'black',
 
-    # Separator columns between sections
-    'separator_width': 3,
+    # Separator columns between sections/subsections
+    'section_separator_width': 4,
+    'subsection_separator_width': 2,
     'separator_bg': 'dark_gray',
+
+    # Header divider rows
+    'header_divider_height': 2,
+    'header_divider_bg': 'dark_gray',
+
+    # Footer divider row
+    'footer_divider_height': 2,
+    'footer_divider_bg': 'black',
 
     # Alignment
     'default_h_align': 'CENTER',
@@ -163,9 +172,11 @@ SHEET_FORMATTING = {
 
     # Layout — 4 header rows
     'section_header_row': 0,
-    'subsection_header_row': 1,
-    'column_header_row': 2,
-    'filter_row': 3,
+    'section_divider_row': 1,
+    'subsection_header_row': 2,
+    'subsection_divider_row': 3,
+    'column_header_row': 4,
+    'filter_row': 5,
     'data_start_row': HEADER_ROW_COUNT,
     'header_row_count': HEADER_ROW_COUNT,
 
@@ -288,6 +299,7 @@ VALUES_KEY_ENTITY = {
     'player': 'player',
     'team': 'team',
     'teams': 'team',
+    'all_teams': 'team',
     'opponents': 'team',
 }
 

@@ -28,7 +28,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         team_name: Full team name for display
         percentile_cells: List of {row, col, percentile, reverse} for shading
         n_player_rows: Number of player rows (for filter range; team/opp excluded)
-        tab_type: 'team', 'players', or 'teams'
+        tab_type: 'individual_team', 'all_players', or 'all_teams'
         show_advanced: If True, keep advanced columns visible (override config)
 
     Returns:
@@ -39,9 +39,9 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     data_start = fmt['data_start_row']
     total_rows = data_start + n_data_rows
     header_end = fmt['data_start_row']  # Row after last header row
-    border_weight = fmt['border_weight']
-    header_border_color = get_color_for_raw(COLORS[fmt['header_border_color']])
-    data_border_color = get_color_for_raw(COLORS[fmt['data_border_color']])
+    column_border_weight = fmt.get('column_border_weight', 1)
+    column_header_color = get_color_for_raw(COLORS[fmt.get('column_border_color_header', 'white')])
+    column_data_color = get_color_for_raw(COLORS[fmt.get('column_border_color_data', 'black')])
     wrap_strategy = fmt.get('wrap_strategy', 'CLIP')
 
     # Subsection row is always visible
@@ -77,7 +77,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         if percentile_cells:
             fast.extend(_build_percentile_shading_requests(ws_id, percentile_cells))
         # Null-formula backgrounds for team/opp rows
-        if tab_type == 'team' and n_data_rows > n_player_rows:
+        if tab_type == 'individual_team' and n_data_rows > n_player_rows:
             fast.extend(_build_null_formula_bg_requests(
                 ws_id, columns_list, data_start, n_player_rows, n_data_rows
             ))
@@ -194,7 +194,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         }
     })
 
-    # ---- 5. Filter row (row 3) — same header styling ----
+    # ---- 5. Filter row — same header styling ----
     requests.append({
         'repeatCell': {
             'range': _range(ws_id, fmt['filter_row'], fmt['filter_row'] + 1, 0, n_cols),
@@ -248,6 +248,37 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 'right': {'style': 'NONE'},
                 'innerHorizontal': {'style': 'NONE'},
                 'innerVertical': {'style': 'NONE'},
+            }
+        })
+
+    # ---- 6c. Header divider rows (section/subsection) ----
+    divider_bg = get_color_for_raw(COLORS[fmt.get('header_divider_bg', 'dark_gray')])
+    divider_height = fmt.get('header_divider_height', 2)
+    for row_key in ('section_divider_row', 'subsection_divider_row'):
+        row_idx = fmt.get(row_key)
+        if row_idx is None:
+            continue
+        requests.append({
+            'repeatCell': {
+                'range': _range(ws_id, row_idx, row_idx + 1, 0, n_cols),
+                'cell': {
+                    'userEnteredFormat': {
+                        'backgroundColor': divider_bg,
+                    },
+                },
+                'fields': 'userEnteredFormat.backgroundColor',
+            }
+        })
+        requests.append({
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': ws_id,
+                    'dimension': 'ROWS',
+                    'startIndex': row_idx,
+                    'endIndex': row_idx + 1,
+                },
+                'properties': {'pixelSize': divider_height},
+                'fields': 'pixelSize',
             }
         })
 
@@ -328,13 +359,17 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 10. Separator columns between sections (dark background, narrow width) ----
+    # ---- 10. Separator columns between sections/subsections (dark background) ----
     separator_bg = get_color_for_raw(COLORS[fmt.get('separator_bg', 'dark_gray')])
-    separator_width = fmt.get('separator_width', 3)
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
         if not col_def.get('is_separator'):
             continue
+        separator_type = col_def.get('separator_type', 'section')
+        if separator_type == 'subsection':
+            separator_width = fmt.get('subsection_separator_width', 2)
+        else:
+            separator_width = fmt.get('section_separator_width', 4)
         # Set narrow fixed width
         requests.append({
             'updateDimensionProperties': {
@@ -361,51 +396,53 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             }
         })
 
-    # ---- 11. 1pt inner vertical borders on data grid ----
-    if n_data_rows > 0:
-        inner_border_weight = fmt.get('inner_vertical_border_weight', 1)
+    # ---- 11. Column borders (skip frozen divider + stat/companion) ----
+    frozen_cols = fmt.get('frozen_cols', 0)
+    header_border_end = fmt['column_header_row'] + 1
+    for col_idx in range(1, n_cols):
+        left_def = columns_list[col_idx - 1][1]
+        right_def = columns_list[col_idx][1]
+        if col_idx == frozen_cols:
+            continue
+        if right_def.get('is_generated_percentile'):
+            continue
+        if left_def.get('is_separator') or right_def.get('is_separator'):
+            continue
+
         requests.append({
             'updateBorders': {
-                'range': _range(ws_id, data_start, total_rows, 0, n_cols),
-                'innerVertical': _border_style(inner_border_weight, data_border_color),
+                'range': _range(ws_id, 0, header_border_end, col_idx, col_idx + 1),
+                'left': _border_style(column_border_weight, column_header_color),
             }
         })
+        if n_data_rows > 0:
+            requests.append({
+                'updateBorders': {
+                    'range': _range(ws_id, data_start, total_rows, col_idx, col_idx + 1),
+                    'left': _border_style(column_border_weight, column_data_color),
+                }
+            })
 
-    # ---- 12. Horizontal borders between header rows — white, weight 2 ----
-    # Between section header (row 0) and subsection header (row 1)
-    requests.append({
-        'updateBorders': {
-            'range': _range(ws_id, fmt['subsection_header_row'], fmt['subsection_header_row'] + 1, 0, n_cols),
-            'top': _border_style(border_weight, header_border_color),
-        }
-    })
-    # Between subsection header (row 1) and column header (row 2)
-    requests.append({
-        'updateBorders': {
-            'range': _range(ws_id, fmt['column_header_row'], fmt['column_header_row'] + 1, 0, n_cols),
-            'top': _border_style(border_weight, header_border_color),
-        }
-    })
-
-    # ---- 13. (Removed — no horizontal border between headers and data) ----
-
-    # ---- 14. Separator row above team/opp rows (dark background divider) ----
-    # The caller inserts an empty separator row between player data and team/opp rows.
-    # We style that row with the separator background color.
+    # ---- 14. Divider rows above team/opp or summary footers ----
     if n_player_rows > 0 and n_data_rows > n_player_rows:
         sep_row = data_start + n_player_rows
+        if tab_type == 'individual_team':
+            divider_bg = separator_bg
+            divider_height = fmt.get('header_divider_height', 2)
+        else:
+            divider_bg = get_color_for_raw(COLORS[fmt.get('footer_divider_bg', 'black')])
+            divider_height = fmt.get('footer_divider_height', 2)
         requests.append({
             'repeatCell': {
                 'range': _range(ws_id, sep_row, sep_row + 1, 0, n_cols),
                 'cell': {
                     'userEnteredFormat': {
-                        'backgroundColor': separator_bg,
+                        'backgroundColor': divider_bg,
                     },
                 },
                 'fields': 'userEnteredFormat.backgroundColor',
             }
         })
-        # Make the separator row narrow (8px)
         requests.append({
             'updateDimensionProperties': {
                 'range': {
@@ -414,7 +451,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     'startIndex': sep_row,
                     'endIndex': sep_row + 1,
                 },
-                'properties': {'pixelSize': 8},
+                'properties': {'pixelSize': divider_height},
                 'fields': 'pixelSize',
             }
         })
@@ -431,7 +468,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         if col_def.get('is_separator'):
             continue
 
-        # Percentile companions: fixed width, small font, wrap for rank + over/under
+        # Percentile companions: fixed width, small font, two-line display
         if is_pct_companion:
             requests.append({
                 'updateDimensionProperties': {
@@ -453,7 +490,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                             'userEnteredFormat': {
                                 'textFormat': {'fontSize': pct_font_size},
                                 'verticalAlignment': 'MIDDLE',
-                                'wrapStrategy': 'WRAP',
+                                'wrapStrategy': 'CLIP',
                             },
                         },
                         'fields': 'userEnteredFormat(textFormat.fontSize,verticalAlignment,wrapStrategy)',
@@ -566,7 +603,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 22. Black background for cells where entity has no formula ----
     # Only for individual team sheets which have team/opponent rows.
     # Players and Teams sheets have summary rows instead — no black bg.
-    if tab_type == 'team' and n_data_rows > n_player_rows:
+    if tab_type == 'individual_team' and n_data_rows > n_player_rows:
         requests.extend(_build_null_formula_bg_requests(
             ws_id, columns_list, data_start, n_player_rows, n_data_rows
         ))

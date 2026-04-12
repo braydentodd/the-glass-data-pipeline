@@ -227,6 +227,7 @@ def _execute_per_entity(
     columns: Dict[str, Dict[str, Any]],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
+    refresh_mode: str = 'null_only',
 ) -> int:
     """Per-entity API calls for simple columns (e.g. commonplayerinfo).
 
@@ -238,14 +239,19 @@ def _execute_per_entity(
 
     with db_connection() as conn:
         with conn.cursor() as cur:
-            # Only fetch entities still missing data for any of the target columns
-            null_checks = ' OR '.join(
-                f'{quote_col(col)} IS NULL' for col in columns
-            )
-            cur.execute(
-                f"SELECT {quote_col(source_id_col)} FROM {entity_table}"
-                f" WHERE {null_checks}"
-            )
+            if refresh_mode == 'always':
+                cur.execute(
+                    f"SELECT {quote_col(source_id_col)} FROM {entity_table}"
+                )
+            else:
+                # Only fetch entities still missing data for any of the target columns
+                null_checks = ' OR '.join(
+                    f'{quote_col(col)} IS NULL' for col in columns
+                )
+                cur.execute(
+                    f"SELECT {quote_col(source_id_col)} FROM {entity_table}"
+                    f" WHERE {null_checks}"
+                )
             source_ids = [row[0] for row in cur.fetchall()]
 
     if not source_ids:
@@ -334,7 +340,10 @@ def execute_group(
         written += _execute_team_call(endpoint, columns, ctx, failed)
     elif tier in ('team', 'player'):
         if simple:
-            written += _execute_per_entity(endpoint, simple, ctx, failed)
+            written += _execute_per_entity(
+                endpoint, simple, ctx, failed,
+                refresh_mode=group.get('refresh_mode', 'null_only'),
+            )
         for col_name, source in pipelines.items():
             written += _execute_pipeline_column(col_name, source, ctx, failed)
         for col_name, source in multi_call.items():

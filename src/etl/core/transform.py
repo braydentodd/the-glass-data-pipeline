@@ -50,6 +50,18 @@ def safe_str(value: Any) -> Optional[str]:
     return str(value)
 
 
+def null_if_zero(value: Any) -> Optional[int]:
+    """Return None for 0/empty values; otherwise safe_int."""
+    if value is None or value == '' or str(value).lower() == 'nan':
+        return None
+    try:
+        if int(float(value)) == 0:
+            return None
+    except (ValueError, TypeError):
+        return None
+    return safe_int(value)
+
+
 def parse_height(height_str: Any) -> Optional[int]:
     """Parse height string (e.g. '6-10') to total inches. Returns None on failure."""
     if not height_str or height_str == '' or height_str == 'None':
@@ -101,6 +113,7 @@ TRANSFORMS: Dict[str, Callable] = {
     'safe_int': safe_int,
     'safe_float': safe_float,
     'safe_str': safe_str,
+    'null_if_zero': null_if_zero,
     'parse_height': parse_height,
     'parse_birthdate': parse_birthdate,
     'format_season': format_season,

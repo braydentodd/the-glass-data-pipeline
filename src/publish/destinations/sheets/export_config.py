@@ -56,15 +56,15 @@ def get_config_for_export(league: str,
 
     # --- Build full column lists for all sheet types --------------------
     team_columns = build_tab_columns(
-        entity='player', stats_mode='both', tab_type='team',
+        entity='player', stats_mode='both', tab_type='individual_team',
         league=league
     )
     league_columns = build_tab_columns(
-        entity='player', stats_mode='both', tab_type='players',
+        entity='player', stats_mode='both', tab_type='all_players',
         league=league
     )
     teams_columns = build_tab_columns(
-        entity='team', stats_mode='both', tab_type='teams',
+        entity='team', stats_mode='both', tab_type='all_teams',
         league=league
     )
 

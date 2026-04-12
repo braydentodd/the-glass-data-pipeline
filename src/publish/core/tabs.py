@@ -165,7 +165,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
             entity='player', stats_mode='both',
-            tab_type='team', default_mode=mode,
+            tab_type='individual_team', default_mode=mode,
             league=ctx.league)
 
         # ---- Headers ----
@@ -266,7 +266,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
         write_and_format(
             worksheet, columns, headers, data_rows,
             all_percentile_cells, n_player_rows,
-            display_name, 'team', show_advanced,
+            display_name, 'individual_team', show_advanced,
             partial_update, build_fn=build_formatting_requests,
         )
 
@@ -360,7 +360,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
             entity='team', stats_mode='both',
-            tab_type='teams', default_mode=mode,
+            tab_type='all_teams', default_mode=mode,
             league=ctx.league)
 
         # ---- Opponent percentile populations (base-section-keyed) ----
@@ -430,7 +430,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                 historical_data=hist_data,
                 postseason_data=post_data,
                 pct_by_rate=team_pct_by_rate,
-                entity_type='teams',
+                entity_type='all_teams',
                 opp_percentiles=opp_percentiles,
                 context={'team_players': player_groups.get(abbr, []), 'lookup_tables': lookup_tables},
             )
@@ -445,7 +445,9 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         merged_pops = _build_merged_pops(team_pct_by_rate)
         summary_rows, summary_pct = build_summary_rows(
             columns, merged_pops, mode, opp_percentiles=opp_percentiles)
-        summary_start = fmt['data_start_row'] + n_team_rows
+        divider_row = [''] * len(columns)
+        data_rows.append(divider_row)
+        summary_start = fmt['data_start_row'] + n_team_rows + 1
         for cell in summary_pct:
             cell['row'] = summary_start + cell.pop('row_offset')
         all_percentile_cells.extend(summary_pct)
@@ -455,7 +457,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         write_and_format(
             worksheet, columns, headers, data_rows,
             all_percentile_cells, n_team_rows,
-            'Teams', 'teams', show_advanced,
+            'Teams', 'all_teams', show_advanced,
             partial_update, build_fn=build_formatting_requests,
         )
 
@@ -510,7 +512,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
             entity='player', stats_mode='both',
-            tab_type='players', default_mode=mode,
+            tab_type='all_players', default_mode=mode,
             league=ctx.league)
 
         # ---- Headers ----
@@ -571,7 +573,9 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         # ---- Summary rows ----
         merged_pops = _build_merged_pops(player_pct_by_rate)
         summary_rows, summary_pct = build_summary_rows(columns, merged_pops, mode)
-        summary_start = fmt['data_start_row'] + n_player_rows
+        divider_row = [''] * len(columns)
+        data_rows.append(divider_row)
+        summary_start = fmt['data_start_row'] + n_player_rows + 1
         for cell in summary_pct:
             cell['row'] = summary_start + cell.pop('row_offset')
         all_percentile_cells.extend(summary_pct)
@@ -581,7 +585,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         write_and_format(
             worksheet, columns, headers, data_rows,
             all_percentile_cells, n_player_rows,
-            'Players', 'players', show_advanced,
+            'Players', 'all_players', show_advanced,
             partial_update, build_fn=build_formatting_requests,
         )
 

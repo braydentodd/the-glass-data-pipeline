@@ -8,7 +8,7 @@ maps display columns back to database column references.
 from typing import Any, Dict
 
 from src.publish.core.formulas import (
-    add, subtract, multiply, divide, lookup, team_average, seasons_in_query
+    add, subtract, multiply, divide, lookup, team_average, seasons_in_query, calculate_age
 )
 
 # ============================================================================
@@ -25,7 +25,7 @@ _VALID_SUBSECTIONS = {
     'movement', 'defense', 'opponent', 'team_ratings', 'nba',
     'League', 'Player',
 }
-_VALID_TABS = {'all_teams', 'all_players', 'team'}
+_VALID_TABS = {'all_teams', 'all_players', 'team', 'individual_team'}
 _VALID_STATS_MODES = {'basic', 'advanced', 'both'}
 _VALID_FORMATS = {'text', 'number', 'percentage', 'measurement'}
 _VALID_WIDTH_CLASSES = {

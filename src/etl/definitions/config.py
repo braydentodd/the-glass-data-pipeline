@@ -23,6 +23,7 @@ VALID_PG_TYPES = {
 VALID_ENTITY_TYPES = {'player', 'team', 'opponent'}
 VALID_SCOPES = {'entity', 'stats'}
 VALID_UPDATE_FREQUENCIES = {'daily', 'annual', None}
+VALID_REFRESH_MODES = {'null_only', 'always'}
 
 DB_COLUMNS_SCHEMA = {
     'type': {'required': True, 'types': (str,)},
@@ -34,6 +35,7 @@ DB_COLUMNS_SCHEMA = {
     'rate_group': {'required': True, 'types': (str, type(None))},
     'comment': {'required': True, 'types': (str, type(None))},
     'sources': {'required': True, 'types': (dict, type(None))},
+    'refresh_mode': {'required': False, 'types': (str,), 'allowed_values': VALID_REFRESH_MODES},
 }
 
 TABLES_SCHEMA = {

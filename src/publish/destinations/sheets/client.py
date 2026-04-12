@@ -165,12 +165,22 @@ def write_and_format(worksheet, columns, headers, data_rows,
     autoResizeDimensions sizes based on data only.  The real headers are
     written back in a second pass after formatting is applied.
     """
-    from src.publish.definitions.config import WIDTH_CLASSES
+    from src.publish.definitions.config import WIDTH_CLASSES, SHEET_FORMATTING
+
+    fmt = SHEET_FORMATTING
 
     n_cols = len(columns)
     filter_row = [''] * n_cols
-    all_rows = [list(headers['row1']), list(headers['row2']),
-                list(headers['row3']), filter_row] + data_rows
+    section_divider = [''] * n_cols
+    subsection_divider = [''] * n_cols
+    all_rows = [
+        list(headers['row1']),
+        section_divider,
+        list(headers['row2']),
+        subsection_divider,
+        list(headers['row3']),
+        filter_row,
+    ] + data_rows
 
     # Pad rows to full width
     all_rows = [r + [''] * (n_cols - len(r)) for r in all_rows]
@@ -191,11 +201,10 @@ def write_and_format(worksheet, columns, headers, data_rows,
             auto_col_indices.append(idx)
 
     saved_headers = {}
+    header_row_idx = fmt['column_header_row']
     for idx in auto_col_indices:
-        saved_headers[idx] = (all_rows[0][idx], all_rows[1][idx], all_rows[2][idx])
-        all_rows[0][idx] = ''
-        all_rows[1][idx] = ''
-        all_rows[2][idx] = ''
+        saved_headers[idx] = all_rows[header_row_idx][idx]
+        all_rows[header_row_idx][idx] = ''
 
     total_rows = len(all_rows)
     worksheet.resize(rows=total_rows, cols=n_cols)
@@ -217,30 +226,13 @@ def write_and_format(worksheet, columns, headers, data_rows,
 
     # Restore real header values for auto-width columns after auto-resize
     if saved_headers:
-        for idx, (h1, h2, h3) in saved_headers.items():
-            all_rows[0][idx] = h1
-            all_rows[1][idx] = h2
-            all_rows[2][idx] = h3
-        header_rows = all_rows[:3]
-        worksheet.update(range_name='A1', values=header_rows,
-                         value_input_option='USER_ENTERED')
-
-        # Second auto-resize pass: now that headers are restored, re-fit
-        # auto-width columns so they account for the header text width too
-        resize_requests = []
-        for idx in sorted(saved_headers.keys()):
-            resize_requests.append({
-                'autoResizeDimensions': {
-                    'dimensions': {
-                        'sheetId': worksheet.id,
-                        'dimension': 'COLUMNS',
-                        'startIndex': idx,
-                        'endIndex': idx + 1,
-                    },
-                }
-            })
-        if resize_requests:
-            worksheet.spreadsheet.batch_update({'requests': resize_requests})
+        for idx, value in saved_headers.items():
+            all_rows[header_row_idx][idx] = value
+        worksheet.update(
+            range_name=f"A{header_row_idx + 1}",
+            values=[all_rows[header_row_idx]],
+            value_input_option='USER_ENTERED',
+        )
 
 
 def move_sheet_to_position(worksheet, index):
