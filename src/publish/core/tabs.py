@@ -2,7 +2,7 @@ import logging
 from collections import defaultdict
 
 from src.core.db import get_db_connection
-from src.publish.definitions.config import STAT_RATES
+from src.publish.definitions.config import STAT_RATES, SECTION_CONFIG
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats, get_teams_from_db
 from src.publish.core.layout import build_headers, build_tab_columns, build_merged_entity_row, build_summary_rows
 from src.publish.destinations.sheets.payloads import build_formatting_requests
@@ -37,6 +37,47 @@ def _compute_pct_by_rate(section_data, entity_type, context_fn=None):
             else:
                 result[rate][section] = {}
     return result
+
+
+def _build_merged_pops(pct_by_rate):
+    """Build merged percentile populations dict for summary rows.
+
+    Creates composite keys like 'current_stats__per_possession:pts' for
+    stats column lookup, and also bare col_key entries for non-stats
+    columns (profile) so they can be found by build_summary_rows.
+    """
+    from src.publish.definitions.columns import TAB_COLUMNS
+
+    merged = {}
+    for rate_name in STAT_RATES:
+        rate_pcts = pct_by_rate.get(rate_name, {})
+        for section, pcts in rate_pcts.items():
+            for k, v in pcts.items():
+                merged[f'{section}__{rate_name}:{k}'] = v
+
+    # Add bare keys for non-stats columns with percentile
+    for col_key, col_def in TAB_COLUMNS.items():
+        if not col_def.get('percentile'):
+            continue
+        is_stats = any(
+            SECTION_CONFIG.get(s, {}).get('is_stats_section', False)
+            for s in col_def.get('sections', [])
+        )
+        if is_stats:
+            continue
+        # Use the first available population (all rates yield the same
+        # values for non-stats columns since they don't scale with rate)
+        for rate_name in STAT_RATES:
+            rate_pcts = pct_by_rate.get(rate_name, {})
+            for section, pcts in rate_pcts.items():
+                if col_key in pcts and col_key not in merged:
+                    merged[col_key] = pcts[col_key]
+                    break
+            if col_key in merged:
+                break
+
+    return merged
+
 
 # ============================================================================
 # TEAM TAB SYNC
@@ -157,6 +198,12 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
         data_rows = []
         all_percentile_cells = []
 
+        # Build lookup tables for profile column resolution (e.g. team abbr)
+        teams_db = get_teams_from_db(ctx.db_schema)
+        lookup_tables = {
+            'teams': {tid: {'abbr': abbr, 'name': name} for tid, (abbr, name) in teams_db.items()}
+        }
+
         for pid in all_player_ids:
             row, pct_cells = build_merged_entity_row(
                 player_id=pid,
@@ -166,6 +213,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
                 postseason_data=post_by_id.get(pid),
                 pct_by_rate=player_pct_by_rate,
                 entity_type='player',
+                context={'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
                 cell['row'] = fmt['data_start_row'] + len(data_rows)
@@ -174,8 +222,12 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
 
         n_player_rows = len(data_rows)
 
+        # ---- Separator row between players and team/opp ----
+        separator_row = [''] * len(columns)
+        data_rows.append(separator_row)
+
         # ---- Team + Opponents rows ----
-        team_ctx = {'team_players': current_players}
+        team_ctx = {'team_players': current_players, 'lookup_tables': lookup_tables}
         team_row, team_pct_cells = build_merged_entity_row(
             player_id=None,
             columns_list=columns,
@@ -197,7 +249,8 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
         )
 
         # Set row indices for team/opp percentile cells
-        team_row_idx = fmt['data_start_row'] + len(data_rows)
+        # +1 accounts for the separator row
+        team_row_idx = fmt['data_start_row'] + n_player_rows + 1
         opp_row_idx = team_row_idx + 1
         for cell in team_pct_cells:
             cell['row'] = team_row_idx
@@ -347,6 +400,9 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         teams_db = get_teams_from_db(ctx.db_schema)
         team_names_map = {abbr: name for _, (abbr, name) in teams_db.items()}
         abbrs = [abbr for _, (abbr, name) in teams_db.items()]
+        lookup_tables = {
+            'teams': {tid: {'abbr': abbr, 'name': name} for tid, (abbr, name) in teams_db.items()}
+        }
 
         # ---- Headers ----
         headers = build_headers(
@@ -376,7 +432,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                 pct_by_rate=team_pct_by_rate,
                 entity_type='teams',
                 opp_percentiles=opp_percentiles,
-                context={'team_players': player_groups.get(abbr, [])},
+                context={'team_players': player_groups.get(abbr, []), 'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
                 cell['row'] = fmt['data_start_row'] + len(data_rows)
@@ -386,12 +442,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         n_team_rows = len(data_rows)
 
         # ---- Summary rows ----
-        merged_pops = {}
-        for rate_name in STAT_RATES:
-            rate_pcts = team_pct_by_rate.get(rate_name, {})
-            for section, pcts in rate_pcts.items():
-                for k, v in pcts.items():
-                    merged_pops[f'{section}__{rate_name}:{k}'] = v
+        merged_pops = _build_merged_pops(team_pct_by_rate)
         summary_rows, summary_pct = build_summary_rows(
             columns, merged_pops, mode, opp_percentiles=opp_percentiles)
         summary_start = fmt['data_start_row'] + n_team_rows
@@ -493,6 +544,12 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         data_rows = []
         all_percentile_cells = []
 
+        # Build lookup tables for profile column resolution (e.g. team abbr)
+        teams_db = get_teams_from_db(ctx.db_schema)
+        lookup_tables = {
+            'teams': {tid: {'abbr': abbr, 'name': name} for tid, (abbr, name) in teams_db.items()}
+        }
+
         for pid in all_player_ids:
             row, pct_cells = build_merged_entity_row(
                 player_id=pid,
@@ -502,6 +559,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
                 postseason_data=post_by_id.get(pid),
                 pct_by_rate=player_pct_by_rate,
                 entity_type='player',
+                context={'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
                 cell['row'] = fmt['data_start_row'] + len(data_rows)
@@ -511,12 +569,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         n_player_rows = len(data_rows)
 
         # ---- Summary rows ----
-        merged_pops = {}
-        for rate_name in STAT_RATES:
-            rate_pcts = player_pct_by_rate.get(rate_name, {})
-            for section, pcts in rate_pcts.items():
-                for k, v in pcts.items():
-                    merged_pops[f'{section}__{rate_name}:{k}'] = v
+        merged_pops = _build_merged_pops(player_pct_by_rate)
         summary_rows, summary_pct = build_summary_rows(columns, merged_pops, mode)
         summary_start = fmt['data_start_row'] + n_player_rows
         for cell in summary_pct:

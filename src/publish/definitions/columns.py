@@ -23,8 +23,9 @@ _VALID_SECTIONS = {
 _VALID_SUBSECTIONS = {
     'rates', 'scoring', 'ball_management', 'rebounding',
     'movement', 'defense', 'opponent', 'team_ratings', 'nba',
+    'League', 'Player',
 }
-_VALID_TABS = {'teams', 'players', 'team'}
+_VALID_TABS = {'all_teams', 'all_players', 'team'}
 _VALID_STATS_MODES = {'basic', 'advanced', 'both'}
 _VALID_FORMATS = {'text', 'number', 'percentage', 'measurement'}
 _VALID_WIDTH_CLASSES = {
@@ -60,8 +61,8 @@ TAB_COLUMNS: Dict[str, Any] = {
     'name': {
         'description': 'Name',
         'sections': ['entities'],
-        'subsection': 'None',
-        'tabs': ['teams', 'players', 'team'],
+        'subsection': None,
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
         'editable': False,
@@ -76,7 +77,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{name}',
             'team': 'TEAM',
-            'teams': '{name}',
+            'all_teams': '{name}',
             'opponents': 'OPPONENTS'
         }
     },
@@ -84,7 +85,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Team Abbreviation',
         'sections': ['profile'],
         'subsection': 'League',
-        'tabs': ['players'],
+        'tabs': ['all_players'],
         'stats_mode': 'both',
         'percentile': None,
         'editable': False,
@@ -97,14 +98,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'align': 'center',
         'emphasis': None,
         'values': {
-            'player': lookup('team_id', 'teams', 'abbr')
+            'player': lookup('team_id', 'all_teams', 'abbr')
         }
     },
     'conf': {
         'description': 'Conference',
         'sections': ['entities'],
         'subsection': 'League',
-        'tabs': ['teams'],
+        'tabs': ['all_teams'],
         'stats_mode': 'both',
         'percentile': None,
         'editable': False,
@@ -117,14 +118,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'align': 'center',
         'emphasis': None,
         'values': {
-            'teams': '{conf}'
+            'all_teams': '{conf}'
         }
     },
     '#': {
         'description': 'Jersey Number',
         'sections': ['profile'],
         'subsection': 'League',
-        'tabs': ['players', 'team'],
+        'tabs': ['all_players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
         'editable': False,
@@ -144,7 +145,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Seasons with Playing Experience',
         'sections': ['profile'],
         'subsection': 'League',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -160,14 +161,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{seasons_exp}',
             'team': team_average('seasons_exp'),
-            'teams': team_average('seasons_exp')
+            'all_teams': team_average('seasons_exp')
         }
     },
     'age': {
         'description': 'Age',
         'sections': ['profile'],
         'subsection': 'Player',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'reverse',
         'editable': False,
@@ -180,16 +181,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'align': 'center',
         'emphasis': None,
         'values': {
-            'player': '{age}',
-            'team': team_average('age'),
-            'teams': team_average('age')
+            'player': calculate_age('birthdate'),
+            'team': team_average(calculate_age('birthdate')),
+            'all_teams': team_average(calculate_age('birthdate'))
         },
     },
     'ht': {
         'description': 'Height in Feet\'Inches"',
         'sections': ['profile'],
         'subsection': 'Player',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -204,14 +205,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{height_ins}',
             'team': team_average('height_ins'),
-            'teams': team_average('height_ins')
+            'all_teams': team_average('height_ins')
         }
     },
     'wt': {
         'description': 'Weight in Pounds',
         'sections': ['profile'],
         'subsection': 'Player',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -226,14 +227,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{weight_lbs}',
             'team': team_average('weight_lbs'),
-            'teams': team_average('weight_lbs')
+            'all_teams': team_average('weight_lbs')
         }
     },
     'ws': {
         'description': 'Wingspan in Feet\'Inches" (Editable)',
         'sections': ['profile'],
         'subsection': 'Player',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': True,
@@ -248,14 +249,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{wingspan_ins}',
             'team': team_average('wingspan_ins'),
-            'teams': team_average('wingspan_ins')
+            'all_teams': team_average('wingspan_ins')
         }
     },
     '🖐️': {
         'description': 'Handedness (Editable)',
         'sections': ['profile'],
         'subsection': 'Player',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
         'editable': True,
@@ -275,7 +276,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Personal thoughts, observations, findings, etc (Editable)',
         'sections': ['evaluation'],
         'subsection': None,
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
         'editable': True,
@@ -291,14 +292,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{notes}',
             'team': '{notes}',
-            'teams': '{notes}'
+            'all_teams': '{notes}'
         }
     },
     'szn': {
         'description': 'Seasons Played',
         'sections': ['historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -313,14 +314,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': seasons_in_query,
             'team': seasons_in_query,
-            'teams': seasons_in_query
+            'all_teams': seasons_in_query
         }
     },
     'gms': {
         'description': 'Games Played per Season',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -335,14 +336,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('games', seasons_in_query),
             'team': divide('games', seasons_in_query),
-            'teams': divide('games', seasons_in_query)
+            'all_teams': divide('games', seasons_in_query)
         },
     },
     'min': {
         'description': 'Minutes Played per Game',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -358,14 +359,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide(divide('minutes_x10', 10), 'games'),
             'team': divide(divide('minutes_x10', 10), 'games'),
-            'teams': divide(divide('minutes_x10', 10), 'games')
+            'all_teams': divide(divide('minutes_x10', 10), 'games')
         }
     },
     'pace': {
         'description': 'Possessions per 40 Mins',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -380,14 +381,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide(multiply('possessions', 40), divide('minutes_x10', 10)),
             'team': divide(multiply('possessions', 40), divide('minutes_x10', 10)),
-            'teams': divide(multiply('possessions', 40), divide('minutes_x10', 10))
+            'all_teams': divide(multiply('possessions', 40), divide('minutes_x10', 10))
         }
     },
     'pts': {
         'description': 'Points',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
@@ -402,7 +403,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'),
             'team': add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'),
-            'teams': add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'),
+            'all_teams': add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'),
             'opponents': add(multiply('opp_fg2m', 2), multiply('opp_fg3m', 3), 'opp_ftm')
         }
     },
@@ -410,7 +411,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Points per "True" FGA (FGA + FTA per FT Trip Estimation) or TS% * 2',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
@@ -425,7 +426,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide(add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'), add('fg2a', 'fg3a', multiply(0.44, 'fta'))),
             'team': divide(add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'), add('fg2a', 'fg3a', multiply(0.44, 'fta'))),
-            'teams': divide(add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'), add('fg2a', 'fg3a', multiply(0.44, 'fta'))),
+            'all_teams': divide(add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'), add('fg2a', 'fg3a', multiply(0.44, 'fta'))),
             'opponents': divide(add(multiply('opp_fg2m', 2), multiply('opp_fg3m', 3), 'opp_ftm'), add('opp_fg2a', 'opp_fg3a', multiply(0.44, 'opp_fta')))
         }
     },
@@ -433,7 +434,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Two-Point FGA',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
@@ -448,7 +449,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{fg2a}',
             'team': '{fg2a}',
-            'teams': '{fg2a}',
+            'all_teams': '{fg2a}',
             'opponents': '{opp_fg2a}'
         }
     },
@@ -456,7 +457,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Points per 2A',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
@@ -471,7 +472,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(2, divide('fg2m', 'fg2a')),
             'team': multiply(2, divide('fg2m', 'fg2a')),
-            'teams': multiply(2, divide('fg2m', 'fg2a')),
+            'all_teams': multiply(2, divide('fg2m', 'fg2a')),
             'opponents': multiply(2, divide('opp_fg2m', 'opp_fg2a'))
         }
     },
@@ -479,7 +480,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Open 2A at the Rim (Closest Defender Beyond 4 Feet; Shot Taken Within 5 feet of the Rim)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -494,14 +495,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{open_rim_fga}',
             'team': '{open_rim_fga}',
-            'teams': '{open_rim_fga}'
+            'all_teams': '{open_rim_fga}'
         }
     },
     'p/or': {
         'description': 'Points per Open 2A at the Rim (Closest Defender Beyond 4 Feet; Shot Taken Within 5 feet of the Rim)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -516,14 +517,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(2, divide('open_rim_fgm', 'open_rim_fga')),
             'team': multiply(2, divide('open_rim_fgm', 'open_rim_fga')),
-            'teams': multiply(2, divide('open_rim_fgm', 'open_rim_fga'))
+            'all_teams': multiply(2, divide('open_rim_fgm', 'open_rim_fga'))
         }
     },
     'cra': {
         'description': 'Contested 2A at the Rim (Closest Defender Within 4 Feet; Shot Taken Within 5 feet of the Rim)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -538,14 +539,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{cont_rim_fga}',
             'team': '{cont_rim_fga}',
-            'teams': '{cont_rim_fga}'
+            'all_teams': '{cont_rim_fga}'
         }
     },
     'p/cr': {
         'description': 'Points per Contested 2A at the Rim (Closest Defender Within 4 Feet; Shot Taken Within 5 feet of the Rim)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -560,14 +561,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(2, divide('cont_rim_fgm', 'cont_rim_fga')),
             'team': multiply(2, divide('cont_rim_fgm', 'cont_rim_fga')),
-            'teams': multiply(2, divide('cont_rim_fgm', 'cont_rim_fga'))
+            'all_teams': multiply(2, divide('cont_rim_fgm', 'cont_rim_fga'))
         }
     },
     'uar': {
         'description': 'Unassisted 2A Made at the Rim (Shot Taken Within 5 feet of the Rim)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -582,14 +583,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{unassisted_rim_fgm}',
             'team': '{unassisted_rim_fgm}',
-            'teams': '{unassisted_rim_fgm}'
+            'all_teams': '{unassisted_rim_fgm}'
         }
     },
     'oma': {
         'description': 'Open 2A in the Mid-Range (Closest Defender Beyond 4 Feet; Shot Taken Beyond 5 feet of the Rim and Within the Three-Point Line)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -604,14 +605,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': subtract('cont_fg2a', 'cont_rim_fga'),
             'team': subtract('cont_fg2a', 'cont_rim_fga'),
-            'teams': subtract('cont_fg2a', 'cont_rim_fga')
+            'all_teams': subtract('cont_fg2a', 'cont_rim_fga')
         }
     },
     'p/om': {
         'description': 'Points per Open 2A in the Mid-Range (Closest Defender Beyond 4 Feet; Shot Taken Beyond 5 feet of the Rim and Within the Three-Point Line)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -626,14 +627,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(2, divide(subtract('open_fg2m', 'open_rim_fgm'), subtract('open_fg2a', 'open_rim_fga'))),
             'team': multiply(2, divide(subtract('open_fg2m', 'open_rim_fgm'), subtract('open_fg2a', 'open_rim_fga'))),
-            'teams': multiply(2, divide(subtract('open_fg2m', 'open_rim_fgm'), subtract('open_fg2a', 'open_rim_fga')))
+            'all_teams': multiply(2, divide(subtract('open_fg2m', 'open_rim_fgm'), subtract('open_fg2a', 'open_rim_fga')))
         }
     },
     'cma': {
         'description': 'Contested 2A in the Mid-Range (Closest Defender Within 4 Feet; Shot Taken Beyond 5 feet of the Rim and Within the Three-Point Line)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -648,14 +649,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': subtract('cont_fg2a', 'cont_rim_fga'),
             'team': subtract('cont_fg2a', 'cont_rim_fga'),
-            'teams': subtract('cont_fg2a', 'cont_rim_fga')
+            'all_teams': subtract('cont_fg2a', 'cont_rim_fga')
         }
     },
     'p/cm': {
         'description': 'Points per Contested 2A in the Mid-Range (Closest Defender Within 4 Feet; Shot Taken Within 5 feet of the Rim and Within the Three-Point Line)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -670,14 +671,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(2, divide(subtract('cont_fg2m', 'cont_rim_fgm'), subtract('cont_fg2a', 'cont_rim_fga'))),
             'team': multiply(2, divide(subtract('cont_fg2m', 'cont_rim_fgm'), subtract('cont_fg2a', 'cont_rim_fga'))),
-            'teams': multiply(2, divide(subtract('cont_fg2m', 'cont_rim_fgm'), subtract('cont_fg2a', 'cont_rim_fga')))
+            'all_teams': multiply(2, divide(subtract('cont_fg2m', 'cont_rim_fgm'), subtract('cont_fg2a', 'cont_rim_fga')))
         }
     },
     'uam': {
         'description': 'Unassisted 2A Made in the Mid-Range (Shot Taken Beyond 5 feet of the Rim and Within the Three-Point Line)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -692,14 +693,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': subtract('unassisted_fg2m', 'unassisted_rim_fgm'),
             'team': subtract('unassisted_fg2m', 'unassisted_rim_fgm'),
-            'teams': subtract('unassisted_fgm', 'unassisted_rim_fgm')
+            'all_teams': subtract('unassisted_fgm', 'unassisted_rim_fgm')
         }
     },
     '3a': {
         'description': 'Three-Point FGA',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
@@ -714,7 +715,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{fg3a}',
             'team': '{fg3a}',
-            'teams': '{fg3a}',
+            'all_teams': '{fg3a}',
             'opponents': '{opp_fg3a}'
         }
     },
@@ -722,7 +723,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Points per 3A',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
@@ -737,7 +738,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(3, divide('fg3m', 'fg3a')),
             'team': multiply(3, divide('fg3m', 'fg3a')),
-            'teams': multiply(3, divide('fg3m', 'fg3a')),
+            'all_teams': multiply(3, divide('fg3m', 'fg3a')),
             'opponents': multiply(3, divide('opp_fg3m', 'opp_fg3a'))
         }
     },
@@ -745,7 +746,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Open 3A (Closest Defender Beyond 4 Feet)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -760,14 +761,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{open_fg3a}',
             'team': '{open_fg3a}',
-            'teams': '{open_fg3a}'
+            'all_teams': '{open_fg3a}'
         }
     },
     'p/o3': {
         'description': 'Points per Open 3A (Closest Defender Beyond 4 Feet)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -782,14 +783,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(3, divide('open_fg3m', 'open_fg3a')),
             'team': multiply(3, divide('open_fg3m', 'open_fg3a')),
-            'teams': multiply(3, divide('open_fg3m', 'open_fg3a'))
+            'all_teams': multiply(3, divide('open_fg3m', 'open_fg3a'))
         }
     },
     'c3a': {
         'description': 'Contested 3A (Closest Defender Within 4 Feet)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -804,14 +805,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{cont_fg3a}',
             'team': '{cont_fg3a}',
-            'teams': '{cont_fg3a}'
+            'all_teams': '{cont_fg3a}'
         }
     },
     'p/c3': {
         'description': 'Points per Contested 3A (Closest Defender Within 4 Feet)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -826,14 +827,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(3, divide('cont_fg3m', 'cont_fg3a')),
             'team': multiply(3, divide('cont_fg3m', 'cont_fg3a')),
-            'teams': multiply(3, divide('cont_fg3m', 'cont_fg3a'))
+            'all_teams': multiply(3, divide('cont_fg3m', 'cont_fg3a'))
         }
     },
     'ua3': {
         'description': 'Unassisted 3A Made',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -848,15 +849,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{unassisted_fg3m}',
             'team': '{unassisted_fg3m}',
-            'teams': '{unassisted_fg3m}'
+            'all_teams': '{unassisted_fg3m}'
         }
     },
     'ftr': {
         'description': 'Free throw Rate (FTA / FGA)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': False,
@@ -870,7 +871,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('fta', add('fg2a', 'fg3a')),
             'team': divide('fta', add('fg2a', 'fg3a')),
-            'teams': divide('fta', add('fg2a', 'fg3a')),
+            'all_teams': divide('fta', add('fg2a', 'fg3a')),
             'opponents': divide('opp_fta', add('opp_fg2a', 'opp_fg3a'))
         }
     },
@@ -878,8 +879,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Points per FTA',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': False,
@@ -894,7 +895,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('ftm', 'fta'),
             'team': divide('ftm', 'fta'),
-            'teams': divide('ftm', 'fta'),
+            'all_teams': divide('ftm', 'fta'),
             'opponents': divide('opp_ftm', 'opp_fta')
         }
     },
@@ -902,7 +903,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Dunks',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'scoring',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -917,14 +918,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{dunks}',
             'team': '{dunks}',
-            'teams': '{dunks}'
+            'all_teams': '{dunks}'
         }
     },
     'tou': {
         'description': 'Instances of Holding the Ball',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -939,14 +940,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{touches}',
             'team': '{touches}',
-            'teams': '{touches}'
+            'all_teams': '{touches}'
         }
     },
     'spt': {
         'description': 'Seconds per Touch',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'reverse',
         'editable': False,
@@ -961,14 +962,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide(multiply(60, 'time_on_ball'), 'touches'),
             'team': divide(multiply(60, 'time_on_ball'), 'touches'),
-            'teams': divide(multiply(60, 'time_on_ball'), 'touches')
+            'all_teams': divide(multiply(60, 'time_on_ball'), 'touches')
         }
     },
     '%trs': {
         'description': 'Percentage of Touches Resulting in a Shot',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -983,14 +984,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(100, divide(add('fg2a', 'fg3a', multiply(0.44, 'fta')), 'touches')),
             'team': multiply(100, divide(add('fg2a', 'fg3a', multiply(0.44, 'fta')), 'touches')),
-            'teams': multiply(100, divide(add('fg2a', 'fg3a', multiply(0.44, 'fta')), 'touches'))
+            'all_teams': multiply(100, divide(add('fg2a', 'fg3a', multiply(0.44, 'fta')), 'touches'))
         }
     },
     '%trp': {
         'description': 'Percentage of Touches Resulting in a Pass',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1005,14 +1006,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(100, divide('passes', 'touches')),
             'team': multiply(100, divide('passes', 'touches')),
-            'teams': multiply(100, divide('passes', 'touches'))
+            'all_teams': multiply(100, divide('passes', 'touches'))
         }
     },
     '%trt': {
         'description': 'Percentage of Touches Resulting in a Turnover',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'reverse',
         'editable': False,
@@ -1027,15 +1028,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(100, divide('turnovers', 'touches')),
             'team': multiply(100, divide('turnovers', 'touches')),
-            'teams': multiply(100, divide('turnovers', 'touches'))
+            'all_teams': multiply(100, divide('turnovers', 'touches'))
         }
     },
     'ast': {
         'description': 'Assists',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1049,7 +1050,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{assists}',
             'team': '{assists}',
-            'teams': '{assists}',
+            'all_teams': '{assists}',
             'opponents': '{opp_assists}'
         }
     },
@@ -1057,8 +1058,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Potential Assists (Passes that lead to a FGA)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1072,15 +1073,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{pot_assists}',
             'team': '{pot_assists}',
-            'teams': '{pot_assists}'
+            'all_teams': '{pot_assists}'
         }
     },
     '2ast': {
         'description': 'Secondary Assists (Passes that Lead to an Assist)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'advanced',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1095,15 +1096,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{sec_assists}',
             'team': '{sec_assists}',
-            'teams': '{sec_assists}'
+            'all_teams': '{sec_assists}'
         }
     },
     'tov': {
         'description': 'Turnovers',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'reverse',
         'editable': False,
         'scale_with_rate': True,
@@ -1124,7 +1125,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Offensive Rebound Percentage',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -1139,14 +1140,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('o_reb_pct_x1000', 10),
             'team': divide('o_reb_pct_x1000', 10),
-            'teams': divide('o_reb_pct_x1000', 10)
+            'all_teams': divide('o_reb_pct_x1000', 10)
         }
     },
     'cor%': {
         'description': 'Contested Offensive Rebound Percentage (Percentage of Offensive Rebounds that are Contested)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1162,14 +1163,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('cont_o_rebs', 'o_rebs'),
             'team': divide('cont_o_rebs', 'o_rebs'),
-            'teams': divide('cont_o_rebs', 'o_rebs')
+            'all_teams': divide('cont_o_rebs', 'o_rebs')
         }
     },
     'dr%': {
         'description': 'Defensive Rebound Percentage',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -1184,14 +1185,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('d_reb_pct_x1000', 10),
             'team': divide('d_reb_pct_x1000', 10),
-            'teams': divide('d_reb_pct_x1000', 10)
+            'all_teams': divide('d_reb_pct_x1000', 10)
         }
     },
     'cdr%': {
         'description': 'Contested Defensive Rebound Percentage (Percentage of Defensive Rebounds that are Contested)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1206,14 +1207,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('cont_d_rebs', 'd_rebs'),
             'team': divide('cont_d_rebs', 'd_rebs'),
-            'teams': divide('cont_d_rebs', 'd_rebs')
+            'all_teams': divide('cont_d_rebs', 'd_rebs')
         }
     },
     'pb%': {
         'description': 'Putbacks Percentage (Percentage of Offensive Rebounds that are Putbacks)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rebounding',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1228,14 +1229,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('putbacks', 'o_rebs'),
             'team': divide('putbacks', 'o_rebs'),
-            'teams': divide('putbacks', 'o_rebs')
+            'all_teams': divide('putbacks', 'o_rebs')
         }
     },
     'odst': {
         'description': 'Offensive Distance Traveled in Miles',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1250,14 +1251,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('o_dist_x10', 10),
             'team': divide('o_dist_x10', 10),
-            'teams': divide('o_dist_x10', 10)
+            'all_teams': divide('o_dist_x10', 10)
         }
     },
     'ddst': {
         'description': 'Defensive Distance Traveled in Miles',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1272,14 +1273,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('d_dist_x10', 10),
             'team': divide('d_dist_x10', 10),
-            'teams': divide('d_dist_x10', 10)
+            'all_teams': divide('d_dist_x10', 10)
         }
     },
     'dra': {
         'description': 'Defended 2A at the Rim (Closest Defender for FGA Within 5 Feet of the Rim)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1294,14 +1295,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{d_rim_fga}',
             'team': '{d_rim_fga}',
-            'teams': '{d_rim_fga}'
+            'all_teams': '{d_rim_fga}'
         }
     },
     'p/dr': {
         'description': 'Points Allowed per Defended FGA at the Rim (Closest Defender for FGA Within 5 Feet of the Rim)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'reverse',
         'editable': False,
@@ -1316,14 +1317,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(2, divide('d_rim_fgm', 'd_rim_fga')),
             'team': multiply(2, divide('d_rim_fgm', 'd_rim_fga')),
-            'teams': multiply(2, divide('d_rim_fgm', 'd_rim_fga'))
+            'all_teams': multiply(2, divide('d_rim_fgm', 'd_rim_fga'))
         }
     },
     'dma': {
         'description': 'Defended 2A in the Mid-Range (Closest Defender for FGA Beyond 5 Feet of the Rim and Within the Three-Point Line)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1338,14 +1339,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': subtract('d_fg2a', 'd_rim_fga'),
             'team': subtract('d_fg2a', 'd_rim_fga'),
-            'teams': subtract('d_fg2a', 'd_rim_fga')
+            'all_teams': subtract('d_fg2a', 'd_rim_fga')
         }
     },
     'p/dm': {
         'description': 'Points Allowed per Defended FGA in the Mid-Range (Closest Defender for FGA Beyond 5 Feet of the Rim and Within the Three-Point Line)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'reverse',
         'editable': False,
@@ -1360,14 +1361,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(2, divide(subtract('d_fg2m', 'd_rim_fgm'), subtract('d_fg2a', 'd_rim_fga'))),
             'team': multiply(2, divide(subtract('d_fg2m', 'd_rim_fgm'), subtract('d_fg2a', 'd_rim_fga'))),
-            'teams': multiply(2, divide(subtract('d_fg2m', 'd_rim_fgm'), subtract('d_fg2a', 'd_rim_fga')))
+            'all_teams': multiply(2, divide(subtract('d_fg2m', 'd_rim_fgm'), subtract('d_fg2a', 'd_rim_fga')))
         }
     },
     'd3a': {
         'description': 'Defended 3A (Closest Defender)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'standard',
         'editable': False,
@@ -1382,14 +1383,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{d_fg3a}',
             'team': '{d_fg3a}',
-            'teams': '{d_fg3a}'
+            'all_teams': '{d_fg3a}'
         }
     },
     'p/d3': {
         'description': 'Points Allowed per Defended 3A (Closest Defender)',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'advanced',
         'percentile': 'reverse',
         'editable': False,
@@ -1404,15 +1405,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': multiply(3, divide('d_fg3m', 'd_fg3a')),
             'team': multiply(3, divide('d_fg3m', 'd_fg3a')),
-            'teams': multiply(3, divide('d_fg3m', 'd_fg3a'))
+            'all_teams': multiply(3, divide('d_fg3m', 'd_fg3a'))
         }
     },
     'cont': {
-        'description': 'Shot Contests',
+        'description': 'Defensive Shot Contests',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'basic',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1426,15 +1427,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{contests}',
             'team': '{contests}',
-            'teams': '{contests}'
+            'all_teams': '{contests}'
         }
     },
     'blk': {
         'description': 'Blocks',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'basic',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1448,7 +1449,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{blocks}',
             'team': '{blocks}',
-            'teams': '{blocks}',
+            'all_teams': '{blocks}',
             'opponents': '{opp_blocks}'
         }
     },
@@ -1456,8 +1457,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Deflections of the ball on Defense',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'advanced',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1471,14 +1472,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{deflections}',
             'team': '{deflections}',
-            'teams': '{deflections}'
+            'all_teams': '{deflections}'
         }
     },
     'stl': {
         'description': 'Steals',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
@@ -1493,7 +1494,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{steals}',
             'team': '{steals}',
-            'teams': '{steals}',
+            'all_teams': '{steals}',
             'opponents': '{opp_steals}'
         }
     },
@@ -1501,8 +1502,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Steals + Charges Drawn',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1516,15 +1517,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': add('steals', 'charges_drawn'),
             'team': add('steals', 'charges_drawn'),
-            'teams': add('steals', 'charges_drawn')
+            'all_teams': add('steals', 'charges_drawn')
         }
     },
     'fls': {
         'description': 'Personal Fouls',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'reverse',
         'editable': False,
         'scale_with_rate': True,
@@ -1538,7 +1539,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{fouls}',
             'team': '{fouls}',
-            'teams': '{fouls}',
+            'all_teams': '{fouls}',
             'opponents': '{opp_fouls}'
         }
     },
@@ -1546,7 +1547,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'Win percentage',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
-        'tabs': ['teams', 'team'],
+        'tabs': ['all_teams', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -1561,14 +1562,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('wins', 'games'),
             'team': divide('wins', 'games'),
-            'teams': divide('wins', 'games')
+            'all_teams': divide('wins', 'games')
         }
     },
     'ortg': {
         'description': 'Team Offensive Rating When On Court',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
@@ -1584,15 +1585,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('o_rtg_x10', 10),
             'team': divide('o_rtg_x10', 10),
-            'teams': divide('o_rtg_x10', 10)
+            'all_teams': divide('o_rtg_x10', 10)
         }
     },
     'drtg': {
         'description': 'Team Defensive Rating When On Court',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
-        'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_teams', 'all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'reverse',
         'editable': False,
         'scale_with_rate': False,
@@ -1606,15 +1607,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': divide('d_rtg_x10', 10),
             'team': divide('d_rtg_x10', 10),
-            'teams': divide('d_rtg_x10', 10)
+            'all_teams': divide('d_rtg_x10', 10)
         }
     },
     'nooo': {
         'description': 'Net Offensive On/Off Team Rating',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
-        'tabs': ['players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': False,
@@ -1626,15 +1627,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'align': 'center',
         'emphasis': None,
         'values': {
-            'player': subtract(multiply(divide('o_rtg_x10', 10)), divide('off_o_rtg_x10', 10))
+            'player': subtract(divide('o_rtg_x10', 10), divide('off_o_rtg_x10', 10))
         }
     },
     'ndoo': {
         'description': 'Net Defensive on/off Team Rating',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
-        'tabs': ['players', 'team'],
-        'stats_mode': 'both',
+        'tabs': ['all_players', 'team'],
+        'stats_mode': 'basic',
         'percentile': 'reverse',
         'editable': False,
         'scale_with_rate': False,
@@ -1653,7 +1654,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'description': 'The Glass Entity ID',
         'sections': ['identity'],
         'subsection': None,
-        'tabs': ['teams', 'players', 'team'],
+        'tabs': ['all_teams', 'all_players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
         'editable': False,
@@ -1668,7 +1669,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': 'id',
             'team': 'id',
-            'teams': 'id'
+            'all_teams': 'id'
         }
     }
 }

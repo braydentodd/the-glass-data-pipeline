@@ -273,6 +273,7 @@ API_FIELD_NAMES = {
     'entity_id':   {'player': 'PLAYER_ID', 'team': 'TEAM_ID'},
     'entity_name': {'player': 'PLAYER_NAME', 'team': 'TEAM_NAME'},
     'special_ids': {'person': 'PERSON_ID'},
+    'id_aliases':  {'PLAYER_ID': ['PERSON_ID']},
 }
 
 

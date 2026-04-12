@@ -95,7 +95,7 @@ def get_config_for_export(league: str,
 
     column_ranges = {'team_sheet': {}, league_sheet: {}, 'teams_sheet': {}}
     for sec in ('current_stats', 'historical_stats', 'postseason_stats',
-                'profile', 'analysis'):
+                'profile', 'evaluation'):
         team_range = _section_range(team_columns, sec)
         league_range = _section_range(league_columns, sec)
         teams_range = _section_range(teams_columns, sec)

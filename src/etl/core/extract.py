@@ -16,12 +16,6 @@ from src.etl.core.transform import apply_transform, safe_int
 
 logger = logging.getLogger(__name__)
 
-# Some endpoints use PERSON_ID instead of PLAYER_ID for the same entity.
-_ID_ALIASES = {
-    'PLAYER_ID': ['PERSON_ID'],
-}
-
-
 # ============================================================================
 # FIELD EXTRACTION
 # ============================================================================
@@ -93,6 +87,7 @@ def extract_columns_from_result(
     entity: Literal['player', 'team'],
     entity_id_field: str,
     result_set_name: Optional[str] = None,
+    id_aliases: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[int, Dict[str, Any]]:
     """Extract all mapped columns from an API result for every entity.
 
@@ -115,11 +110,12 @@ def extract_columns_from_result(
 
         headers = rs['headers']
 
-        # Resolve entity ID field, falling back to known aliases
+        # Resolve entity ID field, falling back to source-provided aliases
         id_field = entity_id_field
         if id_field not in headers:
+            aliases = (id_aliases or {}).get(entity_id_field, [])
             id_field = next(
-                (a for a in _ID_ALIASES.get(entity_id_field, []) if a in headers),
+                (a for a in aliases if a in headers),
                 None,
             )
             if id_field is None:

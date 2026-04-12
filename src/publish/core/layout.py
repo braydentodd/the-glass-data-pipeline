@@ -16,6 +16,46 @@ def _base_section(ctx: str) -> str:
         return ctx.split('__')[0]
     return ctx
 
+
+def _format_companion(rank: float, diff: Optional[float], base_def: dict) -> str:
+    """Format a percentile companion cell as 'rank\\n+/-diff'.
+
+    Displays the percentile rank on the first line and the over/under
+    vs league average (50th percentile value) on the second line.
+    """
+    rank_str = str(round(rank))
+    if diff is None:
+        return rank_str
+    decimals = base_def.get('decimal_places', 1) or 0
+    diff_str = f"{diff:+.{decimals}f}"
+    return f"{rank_str}\n{diff_str}"
+
+
+_SEPARATOR_DEF = {
+    'is_separator': True,
+    'description': '',
+    'sections': [],
+    'subsection': None,
+    'tabs': ['teams', 'players', 'team'],
+    'stats_mode': 'both',
+    'percentile': None,
+    'editable': False,
+    'scale_with_rate': False,
+    'format': 'text',
+    'decimal_places': None,
+    'width_class': 3,
+    'leagues': ['nba', 'ncaa'],
+    'default': None,
+    'align': 'center',
+    'emphasis': None,
+    'values': {},
+}
+
+
+def _make_separator(context_key: str, visible: bool) -> Tuple:
+    """Create a separator column tuple for insertion between sections."""
+    return ('_sep', _SEPARATOR_DEF, visible, context_key)
+
 def generate_percentile_columns() -> dict:
     """Auto-generate percentile companion column defs for all columns with percentile set.
 
@@ -108,28 +148,32 @@ def get_columns_for_section_and_entity(section: str, entity: str,
                                        include_percentiles: bool = False) -> List[Tuple]:
     """
     Get ordered columns for a section and entity.
-    Stats sections are ordered by SUBSECTIONS; others by definition order.
+    All sections with subsection-assigned columns are ordered by SUBSECTIONS;
+    columns without a subsection come first in definition order.
     """
     columns = get_columns_by_filters(
         section=section, entity=entity,
         stats_mode=stats_mode, include_percentiles=include_percentiles
     )
-    section_config = SECTION_CONFIG.get(section, {})
 
-    if section_config.get('is_stats_section'):
-        subsec_groups = {}
-        for col_key, col_def in columns.items():
-            subsec = col_def.get('subsection')
+    # Separate columns with and without subsections
+    no_subsec = []
+    subsec_groups = {}
+    for col_key, col_def in columns.items():
+        subsec = col_def.get('subsection')
+        if subsec is None:
+            no_subsec.append((col_key, col_def))
+        else:
             if subsec not in subsec_groups:
                 subsec_groups[subsec] = []
             subsec_groups[subsec].append((col_key, col_def))
-        ordered = []
-        for subsec in SUBSECTIONS:
-            if subsec in subsec_groups:
-                ordered.extend(subsec_groups[subsec])
-        return ordered
-    else:
-        return [(k, v) for k, v in columns.items()]
+
+    # Columns without subsection first, then ordered by SUBSECTIONS
+    ordered = list(no_subsec)
+    for subsec in SUBSECTIONS:
+        if subsec in subsec_groups:
+            ordered.extend(subsec_groups[subsec])
+    return ordered
 
 
 def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
@@ -203,17 +247,31 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                 all_columns.append((pct_key, pct_def, visible, context_key))
 
     all_columns = []
+    prev_section_base = None
 
     for section in SECTIONS:
         section_cfg = SECTION_CONFIG.get(section, {})
+        section_base = section
 
         if section_cfg.get('is_stats_section'):
             # Triple: emit columns once per stat rate
             for stat_rate in STAT_RATES:
                 context_key = f'{section}__{stat_rate}'
                 mode_visible = (stat_rate == default_mode)
+
+                # Insert separator column between sections (one per rate variant)
+                if prev_section_base is not None and prev_section_base != section_base:
+                    all_columns.append(_make_separator(context_key, mode_visible))
+
                 _append_section_columns(section, context_key, mode_visible)
+
+            prev_section_base = section_base
         else:
+            # Insert separator column between sections (skip before first,
+            # skip after 'entities' since it flows into profile)
+            if prev_section_base is not None and prev_section_base != section_base and prev_section_base != 'entities':
+                all_columns.append(_make_separator(section, True))
+
             # Non-stats sections: single copy, always visible
             section_cols = get_columns_for_section_and_entity(
                 section=section, entity=None,
@@ -236,6 +294,8 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                 if col_def.get('percentile') and pct_key in pct_columns:
                     pct_def = pct_columns[pct_key]
                     all_columns.append((pct_key, pct_def, visible, section))
+
+        prev_section_base = section_base
 
     # --- Teams sheet: insert opponent columns ---
     if tab_type == 'teams':
@@ -391,6 +451,21 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
         section = entry[3] if len(entry) > 3 else (col_def.get('sections', ['unknown'])[0])
         subsection = col_def.get('subsection')
 
+        # Separator columns break merges and emit empty cells
+        if col_def.get('is_separator'):
+            if cur_section is not None and sec_start < idx:
+                merges.append({'row': 0, 'start_col': sec_start, 'end_col': idx, 'value': _get_display(cur_section)})
+            if cur_subsection is not None and sub_start < idx:
+                merges.append({'row': 1, 'start_col': sub_start, 'end_col': idx, 'value': SUBSECTIONS.get(cur_subsection, cur_subsection.title())})
+            cur_section = None
+            cur_subsection = None
+            sec_start = idx + 1
+            sub_start = idx + 1
+            row1.append('')
+            row2.append('')
+            row3.append('')
+            continue
+
         # Row 0: Section headers (grouped by section)
         if section != cur_section:
             if cur_section is not None and sec_start < idx:
@@ -409,9 +484,8 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
         else:
             row1.append('')
 
-        # Row 1: Subsection headers
-        sc = SECTION_CONFIG.get(_base_section(section), {})
-        if sc.get('is_stats_section') and subsection:
+        # Row 1: Subsection headers (all sections with subsections)
+        if subsection:
             if subsection != cur_subsection:
                 if cur_subsection is not None and sub_start < idx:
                     sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
@@ -422,7 +496,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
             else:
                 row2.append('')
         else:
-            # Close pending subsection merge when leaving stats section
+            # Close pending subsection merge when entering a column with no subsection
             if cur_subsection is not None and sub_start < idx:
                 sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
                 merges.append({'row': 1, 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
@@ -536,6 +610,10 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         col_ctx = entry[3] if len(entry) > 3 else None
         is_pct = col_def.get('is_generated_percentile', False)
 
+        if col_def.get('is_separator'):
+            row.append('')
+            continue
+
         col_ctx_cfg = SECTION_CONFIG.get(_base_section(col_ctx), {})
         is_stats_section = col_ctx_cfg.get('is_stats_section', False)
 
@@ -568,14 +646,16 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             if value is not None and isinstance(value, (int, float)) and base_key in pcts:
                 reverse = base_def.get('percentile') == 'reverse'
                 rank = get_percentile_rank(value, pcts[base_key], reverse)
-                row.append(round(rank))
+                median = _get_value_at_percentile(pcts[base_key], 50, reverse=False)
+                diff = value - median if median is not None else None
+                row.append(_format_companion(rank, diff, base_def))
             else:
                 row.append('')
             continue
 
         # Non-percentile column
-        # Info column (non-stat section) — simple field lookup
-        if not col_ctx_cfg.get('is_stats_section', False) and col_def.get('percentile') is None:
+        # Non-stats section column — evaluate formula and format
+        if not col_ctx_cfg.get('is_stats_section', False):
             use_entity = sec_entity if section_data and is_stats_section else primary_entity
             _col_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else mode
             value = evaluate_formula(col_key, use_entity, entity_type, _col_mode, context)
@@ -583,6 +663,9 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
                 row.append('')
             elif col_def.get('format') == 'measurement':
                 row.append(format_height(value))
+            elif col_def.get('percentile') is not None:
+                formatted = format_stat_value(value, col_def)
+                row.append(formatted if formatted is not None else '')
             else:
                 row.append(value)
             continue
@@ -690,7 +773,9 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                         if value is not None:
                             reverse = base_col_def.get('percentile') == 'reverse'
                             rank = get_percentile_rank(value, opp_pop, reverse)
-                            row[col_idx] = round(rank)
+                            median = _get_value_at_percentile(opp_pop, 50, reverse=False)
+                            diff = value - median if median is not None else None
+                            row[col_idx] = _format_companion(rank, diff, base_col_def)
                             percentile_cells.append({
                                 'col': col_idx,
                                 'percentile': rank,
@@ -760,24 +845,55 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
 
 def _get_value_at_percentile(sorted_values: List, percentile: float,
                              reverse: bool = False) -> Any:
-    """Get the interpolated value at a given percentile (0-100) from sorted values."""
+    """Get the interpolated value at a given percentile (0-100) from sorted values.
+
+    Supports both plain sorted lists and weighted (value, weight) tuples
+    from calculate_all_percentiles.
+    """
     if not sorted_values:
         return None
-    n = len(sorted_values)
+
+    # Detect weighted tuples vs plain values
+    is_weighted = isinstance(sorted_values[0], (tuple, list))
+
+    if is_weighted:
+        values = [entry[0] for entry in sorted_values]
+        weights = [entry[1] for entry in sorted_values]
+    else:
+        values = sorted_values
+        weights = None
+
+    n = len(values)
     if n == 1:
-        return sorted_values[0]
-    # For reverse columns (lower = better), Best (100) → lowest value
+        return values[0]
+
+    # For reverse columns (lower = better), Best (100) -> lowest value
     if reverse:
         percentile = 100 - percentile
-    idx = percentile / 100 * (n - 1)
-    lower = int(idx)
-    upper = min(lower + 1, n - 1)
-    frac = idx - lower
-    v_lower = sorted_values[lower]
-    v_upper = sorted_values[upper]
-    if not isinstance(v_lower, (int, float)) or not isinstance(v_upper, (int, float)):
-        return None
-    return v_lower * (1 - frac) + v_upper * frac
+
+    if weights:
+        # Weighted interpolation: find the value at the given percentile
+        # using cumulative weight distribution
+        total_weight = sum(weights)
+        if total_weight <= 0:
+            return None
+        target = (percentile / 100.0) * total_weight
+        cumulative = 0.0
+        for i, (val, w) in enumerate(sorted_values):
+            cumulative += w
+            if cumulative >= target:
+                return val
+        return values[-1]
+    else:
+        idx = percentile / 100 * (n - 1)
+        lower = int(idx)
+        upper = min(lower + 1, n - 1)
+        frac = idx - lower
+        v_lower = values[lower]
+        v_upper = values[upper]
+        if not isinstance(v_lower, (int, float)) or not isinstance(v_upper, (int, float)):
+            return None
+        return v_lower * (1 - frac) + v_upper * frac
 
 
 def build_summary_rows(columns_list: List[Tuple],
@@ -804,6 +920,10 @@ def build_summary_rows(columns_list: List[Tuple],
         for col_idx, entry in enumerate(columns_list):
             col_key, col_def = entry[0], entry[1]
             col_ctx = entry[3] if len(entry) > 3 else None
+
+            if col_def.get('is_separator'):
+                row.append('')
+                continue
 
             # Name column gets the label
             if col_key == 'name':
@@ -880,7 +1000,10 @@ def build_summary_rows(columns_list: List[Tuple],
                     reverse = col_def.get('percentile') == 'reverse'
                     val = _get_value_at_percentile(sorted_vals, pct_level, reverse)
                     if val is not None:
-                        formatted = format_stat_value(val, col_def)
+                        if col_def.get('format') == 'measurement':
+                            formatted = format_height(val)
+                        else:
+                            formatted = format_stat_value(val, col_def)
                         row.append(formatted if formatted is not None else '')
                         pct_cells.append({
                             'col': col_idx,

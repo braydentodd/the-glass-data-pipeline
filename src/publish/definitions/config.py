@@ -139,6 +139,11 @@ SHEET_FORMATTING = {
     'subsection_border_weight': 1,
     'header_border_color': 'white',
     'data_border_color': 'black',
+    'inner_vertical_border_weight': 1,
+
+    # Separator columns between sections
+    'separator_width': 3,
+    'separator_bg': 'dark_gray',
 
     # Alignment
     'default_h_align': 'CENTER',
@@ -149,12 +154,12 @@ SHEET_FORMATTING = {
 
     # Default visibility
     'hide_advanced_columns': True,
-    'hide_subsection_row': True,
+    'hide_subsection_row': False,
     'hide_identity_section': True,
 
     # percentile companion column formatting
-    'percentile_companion_width': 19,      # pixels
-    'percentile_companion_font_size': 5,   # pt
+    'percentile_companion_width': 35,      # pixels (wider to fit rank + over/under)
+    'percentile_companion_font_size': 6,   # pt
 
     # Layout — 4 header rows
     'section_header_row': 0,
@@ -190,8 +195,8 @@ SECTION_CONFIG = {
         'is_stats_section': False,
         'toggleable': True,
     },
-    'analysis': {
-        'display_name': 'Analysis',
+    'evaluation': {
+        'display_name': 'Evaluation',
         'is_stats_section': False,
         'toggleable': True,
     },
@@ -241,15 +246,19 @@ MENU_CONFIG = {
 SECTIONS = [
     'entities',
     'profile',
-    'analysis',
+    'evaluation',
     'current_stats',
     'historical_stats',
     'postseason_stats',
     'identity',
 ]
 
-# Stat subsections and their display names (used in Row 2 subsection headers)
+# Subsections and their display names (used in Row 2 subsection headers)
 SUBSECTIONS = {
+    # Profile subsections
+    'League': 'League',                     # Team, Conference, Jersey, Experience
+    'Player': 'Player',                     # Age, Height, Weight, Wingspan, Handedness
+    # Stats subsections
     'rates': 'Rates',                       # Games, Minutes, Possessions
     'scoring': 'Scoring',                   # Pts, TS%, fg2/3, Rim/Mid/3PT tracking, FT
     'ball_management': 'Ball Management',   # Touches, Assists, Potential Assists, Turnovers

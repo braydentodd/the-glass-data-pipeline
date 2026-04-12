@@ -44,8 +44,8 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     data_border_color = get_color_for_raw(COLORS[fmt['data_border_color']])
     wrap_strategy = fmt.get('wrap_strategy', 'CLIP')
 
-    # Subsection row visibility matches advanced stats state
-    hide_subsection_row = not show_advanced
+    # Subsection row is always visible
+    hide_subsection_row = False
 
     # --- Fast path for partial update (mode / timeframe changes) ---------
     # Skip all structural formatting, resize, and widths; only reapply data-dependent pieces.
@@ -328,49 +328,48 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 10. Section borders (vertical) — white in all header rows, black in data ----
-    section_boundaries = _get_section_boundaries(columns_list)
-    for boundary_col in section_boundaries:
-        # Header portion (all header rows) — white border
+    # ---- 10. Separator columns between sections (dark background, narrow width) ----
+    separator_bg = get_color_for_raw(COLORS[fmt.get('separator_bg', 'dark_gray')])
+    separator_width = fmt.get('separator_width', 3)
+    for idx, entry in enumerate(columns_list):
+        col_def = entry[1]
+        if not col_def.get('is_separator'):
+            continue
+        # Set narrow fixed width
         requests.append({
-            'updateBorders': {
-                'range': _range(ws_id, 0, header_end, boundary_col, boundary_col + 1),
-                'left': _border_style(border_weight, header_border_color),
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': ws_id,
+                    'dimension': 'COLUMNS',
+                    'startIndex': idx,
+                    'endIndex': idx + 1,
+                },
+                'properties': {'pixelSize': separator_width},
+                'fields': 'pixelSize',
             }
         })
-        # Data portion — black border
-        if n_data_rows > 0:
-            requests.append({
-                'updateBorders': {
-                    'range': _range(ws_id, data_start, total_rows, boundary_col, boundary_col + 1),
-                    'left': _border_style(border_weight, data_border_color),
-                }
-            })
+        # Dark background for ALL rows (header + data)
+        requests.append({
+            'repeatCell': {
+                'range': _range(ws_id, 0, max(total_rows, header_end), idx, idx + 1),
+                'cell': {
+                    'userEnteredFormat': {
+                        'backgroundColor': separator_bg,
+                    },
+                },
+                'fields': 'userEnteredFormat.backgroundColor',
+            }
+        })
 
-    # ---- 11. Subsection borders (always drawn under section borders — UI manages visibility) ----
-    subsection_boundaries = _get_subsection_boundaries(columns_list)
-    sub_hdr_row = fmt['subsection_header_row']  # 0-indexed row 1
-    sub_border_weight = fmt.get('subsection_border_weight', 1)
-    
-    # We only draw a subsection border if it doesn't overlap a darker section border
-    filtered_sub_boundaries = [b for b in subsection_boundaries if b not in section_boundaries]
-    
-    for boundary_col in filtered_sub_boundaries:
-        # Header portion (from subsection row through filter row) — white border
+    # ---- 11. 1pt inner vertical borders on data grid ----
+    if n_data_rows > 0:
+        inner_border_weight = fmt.get('inner_vertical_border_weight', 1)
         requests.append({
             'updateBorders': {
-                'range': _range(ws_id, sub_hdr_row, header_end, boundary_col, boundary_col + 1),
-                'left': _border_style(sub_border_weight, header_border_color),
+                'range': _range(ws_id, data_start, total_rows, 0, n_cols),
+                'innerVertical': _border_style(inner_border_weight, data_border_color),
             }
         })
-        # Data portion — black border
-        if n_data_rows > 0:
-            requests.append({
-                'updateBorders': {
-                    'range': _range(ws_id, data_start, total_rows, boundary_col, boundary_col + 1),
-                    'left': _border_style(sub_border_weight, data_border_color),
-                }
-            })
 
     # ---- 12. Horizontal borders between header rows — white, weight 2 ----
     # Between section header (row 0) and subsection header (row 1)
@@ -390,13 +389,33 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
 
     # ---- 13. (Removed — no horizontal border between headers and data) ----
 
-    # ---- 14. Border above team/opp rows (horizontal divider) — black ----
+    # ---- 14. Separator row above team/opp rows (dark background divider) ----
+    # The caller inserts an empty separator row between player data and team/opp rows.
+    # We style that row with the separator background color.
     if n_player_rows > 0 and n_data_rows > n_player_rows:
-        team_row = data_start + n_player_rows
+        sep_row = data_start + n_player_rows
         requests.append({
-            'updateBorders': {
-                'range': _range(ws_id, team_row, team_row + 1, 0, n_cols),
-                'top': _border_style(border_weight, data_border_color),
+            'repeatCell': {
+                'range': _range(ws_id, sep_row, sep_row + 1, 0, n_cols),
+                'cell': {
+                    'userEnteredFormat': {
+                        'backgroundColor': separator_bg,
+                    },
+                },
+                'fields': 'userEnteredFormat.backgroundColor',
+            }
+        })
+        # Make the separator row narrow (8px)
+        requests.append({
+            'updateDimensionProperties': {
+                'range': {
+                    'sheetId': ws_id,
+                    'dimension': 'ROWS',
+                    'startIndex': sep_row,
+                    'endIndex': sep_row + 1,
+                },
+                'properties': {'pixelSize': 8},
+                'fields': 'pixelSize',
             }
         })
 
@@ -408,7 +427,11 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         is_pct_companion = col_def.get('is_generated_percentile', False)
         wc = col_def.get('width_class')
 
-        # Percentile companions: fixed width, small font, top-aligned
+        # Separator columns — width already handled in section 10
+        if col_def.get('is_separator'):
+            continue
+
+        # Percentile companions: fixed width, small font, wrap for rank + over/under
         if is_pct_companion:
             requests.append({
                 'updateDimensionProperties': {
@@ -430,9 +453,10 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                             'userEnteredFormat': {
                                 'textFormat': {'fontSize': pct_font_size},
                                 'verticalAlignment': 'MIDDLE',
+                                'wrapStrategy': 'WRAP',
                             },
                         },
-                        'fields': 'userEnteredFormat(textFormat.fontSize,verticalAlignment)',
+                        'fields': 'userEnteredFormat(textFormat.fontSize,verticalAlignment,wrapStrategy)',
                     }
                 })
             continue
@@ -603,19 +627,18 @@ def _get_section_boundaries(columns_list: List[Tuple]) -> List[int]:
 
 
 def _get_subsection_boundaries(columns_list: List[Tuple]) -> List[int]:
-    """Get column indices where subsections change within stats sections."""
+    """Get column indices where subsections change within any section."""
     boundaries = []
     prev_subsection = None
     prev_section = None
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
         col_ctx = entry[3] if len(entry) > 3 else None
-        col_ctx_cfg = SECTION_CONFIG.get(col_ctx, {})
-        if not col_ctx_cfg.get('is_stats_section'):
+        subsection = col_def.get('subsection')
+        if subsection is None:
             prev_subsection = None
             prev_section = col_ctx
             continue
-        subsection = col_def.get('subsection')
         # New subsection within same section
         if (subsection != prev_subsection and prev_subsection is not None
                 and col_ctx == prev_section):
@@ -638,8 +661,9 @@ def _build_null_formula_bg_requests(ws_id: int, columns_list: List[Tuple],
     """
     black = get_color_for_raw(COLORS['black'])
     requests = []
-    team_row = data_start + n_player_rows
-    opp_row = data_start + n_player_rows + 1
+    # +1 offset accounts for the separator row between players and team/opp
+    team_row = data_start + n_player_rows + 1
+    opp_row = data_start + n_player_rows + 2
 
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]

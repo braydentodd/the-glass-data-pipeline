@@ -23,10 +23,11 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 def _validate_section_subsection(sheets_columns: dict) -> List[str]:
-    """Validate that subsection values are consistent with stats sections.
+    """Validate that stats columns have a subsection assigned.
 
-    Non-stats columns (profiles, evaluation, identity) should
-    not have a subsection.  Stats columns should have one.
+    Stats columns require a subsection for ordering and header display.
+    Non-stats columns may optionally have subsections (e.g. profile
+    uses 'League' and 'Player' subsections).
     """
     from src.publish.definitions.config import SECTION_CONFIG
 
@@ -43,11 +44,6 @@ def _validate_section_subsection(sheets_columns: dict) -> List[str]:
         if is_stats and subsection is None:
             errors.append(
                 f"TAB_COLUMNS['{col_name}']: stats column missing 'subsection'"
-            )
-        elif not is_stats and subsection is not None:
-            errors.append(
-                f"TAB_COLUMNS['{col_name}']: non-stats column has unexpected "
-                f"subsection '{subsection}'"
             )
 
     return errors

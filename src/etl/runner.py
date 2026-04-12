@@ -158,6 +158,7 @@ def _run_groups(
                 team_ids=team_ids,
                 rate_limit_delay=api_config.get('rate_limit_delay', 1.2),
                 max_consecutive_failures=api_config.get('max_consecutive_failures', 5),
+                id_aliases=api_field_names.get('id_aliases', {}),
             )
 
             with db_connection() as conn:
@@ -330,8 +331,10 @@ def run_etl(
             entities, season, season_type, season_type_name, team_ids, failed,
             **source_kw,
         )
+        # Always seed RS records for new entities — PO/PI records are created
+        # only when those season types are explicitly backfilled.
         for ent in entities:
-            total_rows += seed_empty_stats(ent, season, season_type, db_schema)
+            total_rows += seed_empty_stats(ent, season, 'rs', db_schema)
 
     if phase in ('full', 'backfill'):
         total_rows += _backfill(

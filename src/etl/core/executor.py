@@ -52,6 +52,7 @@ class ExecutionContext:
     team_ids: Dict[str, int] = field(default_factory=dict)
     rate_limit_delay: float = 1.2
     max_consecutive_failures: int = 5
+    id_aliases: Dict[str, list] = field(default_factory=dict)
 
 
 # ============================================================================
@@ -78,6 +79,7 @@ def _execute_league_wide(
 
     rows = extract_columns_from_result(
         result, columns, ctx.entity, ctx.entity_id_field,
+        id_aliases=ctx.id_aliases,
     )
     return write_entity_rows(
         ctx.entity, ctx.scope, rows, ctx.season, ctx.season_type, ctx.db_schema,
@@ -284,6 +286,7 @@ def _execute_per_entity(
 
         extracted = extract_columns_from_result(
             result, columns, ctx.entity, ctx.entity_id_field,
+            id_aliases=ctx.id_aliases,
         )
         all_rows.update(extracted)
 

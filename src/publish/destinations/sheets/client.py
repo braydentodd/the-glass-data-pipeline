@@ -225,6 +225,23 @@ def write_and_format(worksheet, columns, headers, data_rows,
         worksheet.update(range_name='A1', values=header_rows,
                          value_input_option='USER_ENTERED')
 
+        # Second auto-resize pass: now that headers are restored, re-fit
+        # auto-width columns so they account for the header text width too
+        resize_requests = []
+        for idx in sorted(saved_headers.keys()):
+            resize_requests.append({
+                'autoResizeDimensions': {
+                    'dimensions': {
+                        'sheetId': worksheet.id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                }
+            })
+        if resize_requests:
+            worksheet.spreadsheet.batch_update({'requests': resize_requests})
+
 
 def move_sheet_to_position(worksheet, index):
     """Move a worksheet to a specific tab position in the workbook."""
