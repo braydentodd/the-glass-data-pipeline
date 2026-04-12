@@ -215,7 +215,7 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
     Calculate minute-weighted percentile populations for all stat columns.
 
     Columns in stats sections are weighted by minutes played.
-    Non-stats columns (player_info, etc.) use weight = 1.
+    Non-stats columns (profile), etc.) use weight = 1.
 
     Args:
         context_fn: Optional callable(entity_dict) -> context_dict.

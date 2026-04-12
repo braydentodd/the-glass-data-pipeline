@@ -873,7 +873,7 @@ def build_summary_rows(columns_list: List[Tuple],
                         })
                         continue
 
-            # Non-stats columns with percentile (player_info): direct col_key lookup
+            # Non-stats columns with percentile (profile): direct col_key lookup
             if not is_stats_section and col_def.get('percentile'):
                 sorted_vals = percentile_pops.get(col_key)
                 if sorted_vals:

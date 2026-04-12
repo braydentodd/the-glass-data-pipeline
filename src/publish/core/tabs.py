@@ -21,7 +21,7 @@ def _compute_pct_by_rate(section_data, entity_type, context_fn=None):
             {'current_stats': [...], 'historical_stats': [...], 'postseason_stats': [...]}
         entity_type: 'player', 'team', or 'opponents'
         context_fn: Optional callable(entity_dict) -> context_dict.
-                    Needed for team entities whose player_info columns use
+                    Needed for team entities whose profile columns use
                     team_average (requires per-entity team_players context).
 
     Returns:

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def _validate_section_subsection(sheets_columns: dict) -> List[str]:
     """Validate that subsection values are consistent with stats sections.
 
-    Non-stats columns (entities, player_info, analysis, identity) should
+    Non-stats columns (profiles, evaluation, identity) should
     not have a subsection.  Stats columns should have one.
     """
     from src.publish.definitions.config import SECTION_CONFIG

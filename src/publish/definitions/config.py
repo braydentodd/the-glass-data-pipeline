@@ -153,7 +153,7 @@ SHEET_FORMATTING = {
     'hide_identity_section': True,
 
     # percentile companion column formatting
-    'percentile_companion_width': 16,      # pixels
+    'percentile_companion_width': 19,      # pixels
     'percentile_companion_font_size': 5,   # pt
 
     # Layout — 4 header rows
@@ -185,8 +185,8 @@ SECTION_CONFIG = {
         'is_stats_section': False,
         'toggleable': False,
     },
-    'player_info': {
-        'display_name': 'Player Info',
+    'profile': {
+        'display_name': 'Profile',
         'is_stats_section': False,
         'toggleable': True,
     },
@@ -211,7 +211,7 @@ SECTION_CONFIG = {
         'toggleable': True,
     },
     'identity': {
-        'display_name': 'ID',
+        'display_name': 'Identity',
         'is_stats_section': False,
         'toggleable': False,
     },
@@ -240,7 +240,7 @@ MENU_CONFIG = {
 # Section order — left-to-right column layout
 SECTIONS = [
     'entities',
-    'player_info',
+    'profile',
     'analysis',
     'current_stats',
     'historical_stats',
@@ -271,7 +271,7 @@ WIDTH_CLASSES = {
     'four_char_dec': 32,
     'three_char_dec': 26,
     'two_char_dec': 20,
-    'two_char': 18,
+    'two_char': 19,
 }
 
 # Maps column values-dict keys to the entity type they represent

@@ -17,7 +17,7 @@ from src.publish.core.formulas import (
 
 # Valid attribute value sets (co-located with the schema they constrain)
 _VALID_SECTIONS = {
-    'entities', 'player_info', 'analysis',
+    'entities', 'profile', 'evaluation',
     'current_stats', 'historical_stats', 'postseason_stats', 'identity',
 }
 _VALID_SUBSECTIONS = {
@@ -60,7 +60,7 @@ TAB_COLUMNS: Dict[str, Any] = {
     'name': {
         'description': 'Name',
         'sections': ['entities'],
-        'subsection': None,
+        'subsection': 'None',
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
@@ -82,8 +82,8 @@ TAB_COLUMNS: Dict[str, Any] = {
     },
     'team': {
         'description': 'Team Abbreviation',
-        'sections': ['entities'],
-        'subsection': None,
+        'sections': ['profile'],
+        'subsection': 'League',
         'tabs': ['players'],
         'stats_mode': 'both',
         'percentile': None,
@@ -94,6 +94,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': lookup('team_id', 'teams', 'abbr')
         }
@@ -101,7 +103,7 @@ TAB_COLUMNS: Dict[str, Any] = {
     'conf': {
         'description': 'Conference',
         'sections': ['entities'],
-        'subsection': None,
+        'subsection': 'League',
         'tabs': ['teams'],
         'stats_mode': 'both',
         'percentile': None,
@@ -112,14 +114,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'teams': '{conf}'
         }
     },
     '#': {
         'description': 'Jersey Number',
-        'sections': ['player_info'],
-        'subsection': None,
+        'sections': ['profile'],
+        'subsection': 'League',
         'tabs': ['players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
@@ -130,14 +134,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'two_char',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{jersey_num}'
         }
     },
     'exp': {
         'description': 'Seasons with Playing Experience',
-        'sections': ['player_info'],
-        'subsection': None,
+        'sections': ['profile'],
+        'subsection': 'League',
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
@@ -149,6 +155,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba', 'ncaa'],
         'team_row_display': 'average',
         'default': '0',
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{seasons_exp}',
             'team': team_average('seasons_exp'),
@@ -157,8 +165,8 @@ TAB_COLUMNS: Dict[str, Any] = {
     },
     'age': {
         'description': 'Age',
-        'sections': ['player_info'],
-        'subsection': None,
+        'sections': ['profile'],
+        'subsection': 'Player',
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
         'percentile': 'reverse',
@@ -166,9 +174,11 @@ TAB_COLUMNS: Dict[str, Any] = {
         'scale_with_rate': False,
         'format': 'number',
         'decimal_places': 1,
-        'width_class': 'two_char_dec',
+        'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{age}',
             'team': team_average('age'),
@@ -177,8 +187,8 @@ TAB_COLUMNS: Dict[str, Any] = {
     },
     'ht': {
         'description': 'Height in Feet\'Inches"',
-        'sections': ['player_info'],
-        'subsection': None,
+        'sections': ['profile'],
+        'subsection': 'Player',
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
@@ -189,6 +199,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'measurement',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{height_ins}',
             'team': team_average('height_ins'),
@@ -197,8 +209,8 @@ TAB_COLUMNS: Dict[str, Any] = {
     },
     'wt': {
         'description': 'Weight in Pounds',
-        'sections': ['player_info'],
-        'subsection': None,
+        'sections': ['profile'],
+        'subsection': 'Player',
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
@@ -209,6 +221,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{weight_lbs}',
             'team': team_average('weight_lbs'),
@@ -217,8 +231,8 @@ TAB_COLUMNS: Dict[str, Any] = {
     },
     'ws': {
         'description': 'Wingspan in Feet\'Inches" (Editable)',
-        'sections': ['player_info'],
-        'subsection': None,
+        'sections': ['profile'],
+        'subsection': 'Player',
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
         'percentile': 'standard',
@@ -229,6 +243,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'measurement',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{wingspan_ins}',
             'team': team_average('wingspan_ins'),
@@ -237,8 +253,8 @@ TAB_COLUMNS: Dict[str, Any] = {
     },
     '🖐️': {
         'description': 'Handedness (Editable)',
-        'sections': ['player_info'],
-        'subsection': None,
+        'sections': ['profile'],
+        'subsection': 'Player',
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
         'percentile': None,
@@ -249,13 +265,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'two_char',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{hand}'
         }
     },
     'notes': {
-        'description': 'Analysis/Thoughts (Editable)',
-        'sections': ['analysis'],
+        'description': 'Personal thoughts, observations, findings, etc (Editable)',
+        'sections': ['evaluation'],
         'subsection': None,
         'tabs': ['teams', 'players', 'team'],
         'stats_mode': 'both',
@@ -269,6 +287,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'team_row_display': 'editable',
         'default': None,
         'align': 'left',
+        'emphasis': None,
         'values': {
             'player': '{notes}',
             'team': '{notes}',
@@ -289,6 +308,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': 0,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': seasons_in_query,
             'team': seasons_in_query,
@@ -309,6 +330,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': 0,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('games', seasons_in_query),
             'team': divide('games', seasons_in_query),
@@ -330,6 +353,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba', 'ncaa'],
         'team_row_display': 'team_value',
         'default': 0,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide(divide('minutes_x10', 10), 'games'),
             'team': divide(divide('minutes_x10', 10), 'games'),
@@ -337,7 +362,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         }
     },
     'pace': {
-        'description': 'Possessions per 48 Mins',
+        'description': 'Possessions per 40 Mins',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'rates',
         'tabs': ['teams', 'players', 'team'],
@@ -350,10 +375,12 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
-            'player': divide(multiply('possessions', 48), divide('minutes_x10', 10)),
-            'team': divide(multiply('possessions', 48), divide('minutes_x10', 10)),
-            'teams': divide(multiply('possessions', 48), divide('minutes_x10', 10))
+            'player': divide(multiply('possessions', 40), divide('minutes_x10', 10)),
+            'team': divide(multiply('possessions', 40), divide('minutes_x10', 10)),
+            'teams': divide(multiply('possessions', 40), divide('minutes_x10', 10))
         }
     },
     'pts': {
@@ -370,6 +397,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'),
             'team': add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'),
@@ -391,6 +420,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide(add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'), add('fg2a', 'fg3a', multiply(0.44, 'fta'))),
             'team': divide(add(multiply('fg2m', 2), multiply('fg3m', 3), 'ftm'), add('fg2a', 'fg3a', multiply(0.44, 'fta'))),
@@ -412,6 +443,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{fg2a}',
             'team': '{fg2a}',
@@ -433,6 +466,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(2, divide('fg2m', 'fg2a')),
             'team': multiply(2, divide('fg2m', 'fg2a')),
@@ -454,6 +489,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{open_rim_fga}',
             'team': '{open_rim_fga}',
@@ -474,6 +511,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(2, divide('open_rim_fgm', 'open_rim_fga')),
             'team': multiply(2, divide('open_rim_fgm', 'open_rim_fga')),
@@ -494,6 +533,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{cont_rim_fga}',
             'team': '{cont_rim_fga}',
@@ -514,6 +555,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(2, divide('cont_rim_fgm', 'cont_rim_fga')),
             'team': multiply(2, divide('cont_rim_fgm', 'cont_rim_fga')),
@@ -534,6 +577,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{unassisted_rim_fgm}',
             'team': '{unassisted_rim_fgm}',
@@ -554,6 +599,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': subtract('cont_fg2a', 'cont_rim_fga'),
             'team': subtract('cont_fg2a', 'cont_rim_fga'),
@@ -574,6 +621,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(2, divide(subtract('open_fg2m', 'open_rim_fgm'), subtract('open_fg2a', 'open_rim_fga'))),
             'team': multiply(2, divide(subtract('open_fg2m', 'open_rim_fgm'), subtract('open_fg2a', 'open_rim_fga'))),
@@ -594,6 +643,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': subtract('cont_fg2a', 'cont_rim_fga'),
             'team': subtract('cont_fg2a', 'cont_rim_fga'),
@@ -614,6 +665,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(2, divide(subtract('cont_fg2m', 'cont_rim_fgm'), subtract('cont_fg2a', 'cont_rim_fga'))),
             'team': multiply(2, divide(subtract('cont_fg2m', 'cont_rim_fgm'), subtract('cont_fg2a', 'cont_rim_fga'))),
@@ -634,6 +687,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': subtract('unassisted_fg2m', 'unassisted_rim_fgm'),
             'team': subtract('unassisted_fg2m', 'unassisted_rim_fgm'),
@@ -654,6 +709,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{fg3a}',
             'team': '{fg3a}',
@@ -675,6 +732,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(3, divide('fg3m', 'fg3a')),
             'team': multiply(3, divide('fg3m', 'fg3a')),
@@ -696,6 +755,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{open_fg3a}',
             'team': '{open_fg3a}',
@@ -716,6 +777,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(3, divide('open_fg3m', 'open_fg3a')),
             'team': multiply(3, divide('open_fg3m', 'open_fg3a')),
@@ -736,6 +799,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{cont_fg3a}',
             'team': '{cont_fg3a}',
@@ -756,6 +821,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(3, divide('cont_fg3m', 'cont_fg3a')),
             'team': multiply(3, divide('cont_fg3m', 'cont_fg3a')),
@@ -776,6 +843,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{unassisted_fg3m}',
             'team': '{unassisted_fg3m}',
@@ -796,6 +865,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('fta', add('fg2a', 'fg3a')),
             'team': divide('fta', add('fg2a', 'fg3a')),
@@ -814,10 +885,12 @@ TAB_COLUMNS: Dict[str, Any] = {
         'scale_with_rate': False,
         'format': 'number',
         'decimal_places': 2,
-        'width_class': 'two_char_dec',
+        'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'team_row_display': 'team_value',
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('ftm', 'fta'),
             'team': divide('ftm', 'fta'),
@@ -839,6 +912,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{dunks}',
             'team': '{dunks}',
@@ -859,6 +934,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{touches}',
             'team': '{touches}',
@@ -879,6 +956,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'two_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide(multiply(60, 'time_on_ball'), 'touches'),
             'team': divide(multiply(60, 'time_on_ball'), 'touches'),
@@ -899,6 +978,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(100, divide(add('fg2a', 'fg3a', multiply(0.44, 'fta')), 'touches')),
             'team': multiply(100, divide(add('fg2a', 'fg3a', multiply(0.44, 'fta')), 'touches')),
@@ -919,6 +1000,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(100, divide('passes', 'touches')),
             'team': multiply(100, divide('passes', 'touches')),
@@ -939,6 +1022,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(100, divide('turnovers', 'touches')),
             'team': multiply(100, divide('turnovers', 'touches')),
@@ -959,6 +1044,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{assists}',
             'team': '{assists}',
@@ -971,7 +1058,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'ball_management',
         'tabs': ['teams', 'players', 'team'],
-        'stats_mode': 'advanced',
+        'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -980,6 +1067,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{pot_assists}',
             'team': '{pot_assists}',
@@ -1001,6 +1090,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba'],
         'team_row_display': 'team_value',
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{sec_assists}',
             'team': '{sec_assists}',
@@ -1021,6 +1112,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{turnovers}',
             'team': '{turnovers}',
@@ -1041,6 +1134,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('o_reb_pct_x1000', 10),
             'team': divide('o_reb_pct_x1000', 10),
@@ -1062,6 +1157,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba'],
         'team_row_display': 'team_value',
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('cont_o_rebs', 'o_rebs'),
             'team': divide('cont_o_rebs', 'o_rebs'),
@@ -1082,6 +1179,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('d_reb_pct_x1000', 10),
             'team': divide('d_reb_pct_x1000', 10),
@@ -1102,6 +1201,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('cont_d_rebs', 'd_rebs'),
             'team': divide('cont_d_rebs', 'd_rebs'),
@@ -1122,13 +1223,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('putbacks', 'o_rebs'),
             'team': divide('putbacks', 'o_rebs'),
             'teams': divide('putbacks', 'o_rebs')
         }
     },
-        'odst': {
+    'odst': {
         'description': 'Offensive Distance Traveled in Miles',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'movement',
@@ -1142,6 +1245,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('o_dist_x10', 10),
             'team': divide('o_dist_x10', 10),
@@ -1162,6 +1267,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('d_dist_x10', 10),
             'team': divide('d_dist_x10', 10),
@@ -1182,6 +1289,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{d_rim_fga}',
             'team': '{d_rim_fga}',
@@ -1202,6 +1311,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(2, divide('d_rim_fgm', 'd_rim_fga')),
             'team': multiply(2, divide('d_rim_fgm', 'd_rim_fga')),
@@ -1222,6 +1333,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': subtract('d_fg2a', 'd_rim_fga'),
             'team': subtract('d_fg2a', 'd_rim_fga'),
@@ -1242,6 +1355,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(2, divide(subtract('d_fg2m', 'd_rim_fgm'), subtract('d_fg2a', 'd_rim_fga'))),
             'team': multiply(2, divide(subtract('d_fg2m', 'd_rim_fgm'), subtract('d_fg2a', 'd_rim_fga'))),
@@ -1262,6 +1377,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{d_fg3a}',
             'team': '{d_fg3a}',
@@ -1282,6 +1399,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': multiply(3, divide('d_fg3m', 'd_fg3a')),
             'team': multiply(3, divide('d_fg3m', 'd_fg3a')),
@@ -1302,6 +1421,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{contests}',
             'team': '{contests}',
@@ -1322,6 +1443,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{blocks}',
             'team': '{blocks}',
@@ -1343,6 +1466,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{deflections}',
             'team': '{deflections}',
@@ -1363,6 +1488,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{steals}',
             'team': '{steals}',
@@ -1384,6 +1511,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': add('steals', 'charges_drawn'),
             'team': add('steals', 'charges_drawn'),
@@ -1404,6 +1533,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': '{fouls}',
             'team': '{fouls}',
@@ -1425,6 +1556,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('wins', 'games'),
             'team': divide('wins', 'games'),
@@ -1446,6 +1579,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'leagues': ['nba', 'ncaa'],
         'team_row_display': 'team_value',
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('o_rtg_x10', 10),
             'team': divide('o_rtg_x10', 10),
@@ -1466,6 +1601,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': divide('d_rtg_x10', 10),
             'team': divide('d_rtg_x10', 10),
@@ -1486,8 +1623,10 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
-            'player': subtract(divide('o_rtg_x10', 10), divide('off_o_rtg_x10', 10))
+            'player': subtract(multiply(divide('o_rtg_x10', 10)), divide('off_o_rtg_x10', 10))
         }
     },
     'ndoo': {
@@ -1504,6 +1643,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': subtract(divide('d_rtg_x10', 10), divide('off_d_rtg_x10', 10))
         }
@@ -1522,6 +1663,8 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'auto',
         'leagues': ['nba'],
         'default': None,
+        'align': 'center',
+        'emphasis': None,
         'values': {
             'player': 'id',
             'team': 'id',
