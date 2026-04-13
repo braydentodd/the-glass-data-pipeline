@@ -2,8 +2,8 @@ import logging
 from typing import Dict, List, Optional, Tuple
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
-from src.publish.core.formatting import get_color_for_percentile, get_color_for_raw, get_color_dict
-from src.publish.core.layout import get_column_index
+from src.publish.destinations.sheets.colors import get_color_for_percentile, get_color_for_raw, get_color_dict
+from src.publish.destinations.sheets.layout import get_column_index
 
 def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               header_merges: list, n_data_rows: int,
@@ -97,6 +97,29 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 },
             },
             'fields': 'gridProperties(frozenRowCount,frozenColumnCount,hideGridlines)',
+        }
+    })
+
+    # ---- 1b. Explicit default row heights (do this before specific divider heights) ----
+    requests.append({
+        'updateDimensionProperties': {
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': 0, 'endIndex': total_rows },
+            'properties': {'pixelSize': fmt.get('row_height_default', 21)},
+            'fields': 'pixelSize',
+        }
+    })
+    requests.append({
+        'updateDimensionProperties': {
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': fmt['section_header_row'], 'endIndex': fmt['section_header_row'] + 1 },
+            'properties': {'pixelSize': fmt.get('row_height_section_header', 25)},
+            'fields': 'pixelSize',
+        }
+    })
+    requests.append({
+        'updateDimensionProperties': {
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': fmt['filter_row'], 'endIndex': fmt['filter_row'] + 1 },
+            'properties': {'pixelSize': fmt.get('row_height_filter', 12)},
+            'fields': 'pixelSize',
         }
     })
 
@@ -264,9 +287,10 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 'cell': {
                     'userEnteredFormat': {
                         'backgroundColor': divider_bg,
+                        'textFormat': {'fontSize': 2},
                     },
                 },
-                'fields': 'userEnteredFormat.backgroundColor',
+                'fields': 'userEnteredFormat(backgroundColor,textFormat)',
             }
         })
         requests.append({
@@ -470,19 +494,20 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         sep_row = data_start + n_player_rows
         if tab_type == 'individual_team':
             divider_bg = data_separator_bg
-            divider_height = fmt.get('header_divider_height', 2)
+            divider_height = fmt.get('footer_divider_height', 4)
         else:
             divider_bg = get_color_for_raw(COLORS[fmt.get('footer_divider_bg', 'black')])
-            divider_height = fmt.get('footer_divider_height', 2)
+            divider_height = fmt.get('footer_divider_height', 4)
         requests.append({
             'repeatCell': {
                 'range': _range(ws_id, sep_row, sep_row + 1, 0, n_cols),
                 'cell': {
                     'userEnteredFormat': {
                         'backgroundColor': divider_bg,
+                        'textFormat': {'fontSize': 2},
                     },
                 },
-                'fields': 'userEnteredFormat.backgroundColor',
+                'fields': 'userEnteredFormat(backgroundColor,textFormat)',
             }
         })
         requests.append({
@@ -644,29 +669,6 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             'filter': {
                 'range': _range(ws_id, fmt['filter_row'], filter_end, 0, n_cols),
             }
-        }
-    })
-
-    # ---- 20. Explicit Row Heights ----
-    requests.append({
-        'updateDimensionProperties': {
-            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': 0, 'endIndex': total_rows },
-            'properties': {'pixelSize': fmt.get('row_height_default', 21)},
-            'fields': 'pixelSize',
-        }
-    })
-    requests.append({
-        'updateDimensionProperties': {
-            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': fmt['section_header_row'], 'endIndex': fmt['section_header_row'] + 1 },
-            'properties': {'pixelSize': fmt.get('row_height_section_header', 25)},
-            'fields': 'pixelSize',
-        }
-    })
-    requests.append({
-        'updateDimensionProperties': {
-            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': fmt['filter_row'], 'endIndex': fmt['filter_row'] + 1 },
-            'properties': {'pixelSize': fmt.get('row_height_filter', 12)},
-            'fields': 'pixelSize',
         }
     })
 

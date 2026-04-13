@@ -4,7 +4,7 @@ from collections import defaultdict
 from src.core.db import get_db_connection
 from src.publish.definitions.config import STAT_RATES, SECTION_CONFIG
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats, get_teams_from_db
-from src.publish.core.layout import build_headers, build_tab_columns, build_merged_entity_row, build_summary_rows
+from src.publish.destinations.sheets.layout import build_headers, build_tab_columns, build_merged_entity_row, build_summary_rows
 from src.publish.destinations.sheets.payloads import build_formatting_requests
 from src.publish.core.calculations import calculate_all_percentiles, evaluate_expression
 

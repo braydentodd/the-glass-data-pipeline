@@ -20,7 +20,7 @@ from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (
     GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING
 )
-from src.publish.core.layout import build_tab_columns, get_column_index
+from src.publish.destinations.sheets.layout import build_tab_columns, get_column_index
 from src.publish.destinations.sheets.client import get_sheets_client
 
 load_dotenv()

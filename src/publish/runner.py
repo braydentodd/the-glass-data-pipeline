@@ -20,7 +20,7 @@ load_dotenv()
 from src.core.db import get_db_connection, get_table_name
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, get_teams_from_db
 from src.publish.destinations.sheets.client import get_sheets_client
-from src.publish.core.tabs import sync_teams_tab, sync_team_tab, sync_players_tab, _compute_pct_by_rate
+from src.publish.destinations.sheets.tabs import sync_teams_tab, sync_team_tab, sync_players_tab, _compute_pct_by_rate
 from src.publish.definitions.config import (
     STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG, COMPUTED_ENTITY_FIELDS,
 )
