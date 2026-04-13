@@ -44,6 +44,6 @@ All settings in `config/etl.py`:
 │   └── api.py           # Flask API
 ├── config/
 │   └── etl.py           # All configuration
-└── apps-script/
+└── apps_script/
     └── Code.js          # Google Sheets UI
 \`\`\`

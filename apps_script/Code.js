@@ -1,5 +1,5 @@
 /**
- * apps-script/Code.js
+ * apps_script/Code.js
  *
  * Unified, config-driven UI layer for The Glass stats spreadsheets.
  * ALL data calculations and syncing are performed by the Python backend CLI.

@@ -678,6 +678,15 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
 
 
 
+    # ---- 21b. Bottom border on the last row of the sheet ----
+    if n_data_rows > 0:
+        requests.append({
+            'updateBorders': {
+                'range': _range(ws_id, total_rows - 1, total_rows, 0, n_cols),
+                'bottom': _border_style(2, get_color_for_raw(COLORS['black']))
+            }
+        })
+
     # ---- 22. Black background for cells where entity has no formula ----
     # Only for individual team sheets which have team/opponent rows.
     # Players and Teams sheets have summary rows instead — no black bg.

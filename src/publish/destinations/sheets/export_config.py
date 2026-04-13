@@ -15,7 +15,7 @@ from src.publish.destinations.sheets.payloads import _get_subsection_boundaries,
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path(__file__).resolve().parents[4] / 'apps-script' / 'config'
+OUTPUT_DIR = Path(__file__).resolve().parents[4] / 'apps_script' / 'config'
 
 
 def get_config_for_export(league: str,
@@ -353,7 +353,7 @@ def get_config_for_export(league: str,
 
 
 # ============================================================================
-# CONFIG EXPORT — generate apps-script/config/<LEAGUE>_generated.js
+# CONFIG EXPORT — generate apps_script/config/<LEAGUE>_generated.js
 # ============================================================================
 
 
