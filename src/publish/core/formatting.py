@@ -1,11 +1,7 @@
 from typing import List, Optional, Any
+from src.core.config import format_season_label
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (STAT_RATE_LABELS)
-
-def _format_season_label(season_year: int) -> str:
-    """Convert end-year integer to season string: 2026 -> '2025-26'."""
-    return f"{season_year - 1}-{str(season_year)[2:]}"
-
 
 def format_stat_value(value: Any, col_def: dict) -> Any:
     """Format a stat value for display according to column definition."""
@@ -67,7 +63,7 @@ def format_section_header(section: str, historical_config: Optional[dict] = None
 
     # Current stats: just "YYYY-YY Regular Season Stats (rate)"
     if section == 'current_stats':
-        season_str = _format_season_label(current_season)
+        season_str = format_season_label(current_season)
         header = f"{season_str} {season_label} Stats"
         rate_label = STAT_RATE_LABELS.get(mode, '')
         return f"{header} {rate_label}" if rate_label else header

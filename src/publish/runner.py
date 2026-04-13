@@ -295,7 +295,7 @@ def main():
 
     # Export Apps Script config if requested (standalone action)
     if args.export_config:
-        from src.publish.destinations.sheets.export_config import export_config
+        from src.publish.core.export_config import export_config
         path = export_config(league)
         logger.info('Config exported to %s', path)
         return

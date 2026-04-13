@@ -523,50 +523,61 @@ function _rehideAlwaysHidden(sheet, sheetType) {
  * Respects: active stat rate, advanced/basic toggle, section visibility.
  */
 function _reapplyToggles(sheet, sheetType) {
-  var config   = _getConfig();
-  var props    = PropertiesService.getDocumentProperties();
-  var rangeKey = _getRangeKey(sheetType);
-  var maxCols  = sheet.getMaxColumns();
+  var config     = _getConfig();
+  var props      = PropertiesService.getDocumentProperties();
+  var rangeKey   = _getRangeKey(sheetType);
+  var maxCols    = sheet.getMaxColumns();
 
-  var showAdv = (props.getProperty('SHOW_ADVANCED') === 'true');
+  var showAdv    = (props.getProperty('SHOW_ADVANCED') === 'true');
   var activeRate = props.getProperty('STATS_RATE') || config.default_stat_rate;
 
-  var colMeta = (config.column_metadata || {})[rangeKey] || [];
+  var statsCols   = (config.stats_column_indices || {})[rangeKey] || [];
+  var advCols     = (config.advanced_column_indices || {})[rangeKey] || [];
+  var basicCols   = (config.basic_column_indices || {})[rangeKey] || [];
+  var rateRanges  = (config.rate_column_ranges || {})[rangeKey] || {};
+  var sectionCols = (config.section_column_indices || {})[rangeKey] || {};
+
   var showList = [];
   var hideList = [];
 
-  for (var i = 0; i < colMeta.length; i++) {
-    var meta = colMeta[i];
-    var colIdx = meta.col;
+  for (var c = 0; c < statsCols.length; c++) {
+    var colIdx = statsCols[c];
     if (colIdx > maxCols) continue;
-
-    var isAdvanced = meta.adv || false;
-    var isBasic    = meta.bas || false;
-    var isStats    = meta.stats || false;
-    var secName    = meta.sec || '';
-
-    if (!isStats) continue;
-
-    // Determine base section and rate from composite key
-    var baseSection = secName;
-    var colRate = null;
-    if (secName.indexOf('__') !== -1) {
-      var parts = secName.split('__');
-      baseSection = parts[0];
-      colRate = parts[1];
-    }
 
     var shouldShow = true;
 
     // Hide columns that belong to a non-active stat rate
-    if (colRate && colRate !== activeRate) {
+    var belongsToRate = false;
+    var matchesActiveRate = false;
+    for (var r in rateRanges) {
+      if (rateRanges[r].indexOf(colIdx) !== -1) {
+        belongsToRate = true;
+        if (r === activeRate) matchesActiveRate = true;
+      }
+    }
+
+    if (belongsToRate && !matchesActiveRate) {
       shouldShow = false;
     } else {
       // Respect section-level visibility
-      var secVisKey = baseSection ? 'SECTION_VIS_' + baseSection.toUpperCase() : null;
-      if (secVisKey && props.getProperty(secVisKey) === 'false') {
+      var belongsToVisibleSection = true;
+      for (var sec in sectionCols) {
+        if (sectionCols[sec].indexOf(colIdx) !== -1) {
+          var secVisKey = 'SECTION_VIS_' + sec.toUpperCase();
+          if (props.getProperty(secVisKey) === 'false') {
+            belongsToVisibleSection = false;
+          }
+          break; // Assume a column belongs to at most 1 base stats section
+        }
+      }
+
+      if (!belongsToVisibleSection) {
         shouldShow = false;
       } else {
+        // Advanced vs Basic visibility logic
+        var isAdvanced = advCols.indexOf(colIdx) !== -1;
+        var isBasic = basicCols.indexOf(colIdx) !== -1;
+
         if (isAdvanced && !showAdv) shouldShow = false;
         if (isBasic && showAdv)     shouldShow = false;
       }
@@ -595,19 +606,15 @@ function _setSectionVisibility(sectionKey, makeVisible, label) {
     var rangeKey = _getRangeKey(sheetType);
     var maxCols  = sheet.getMaxColumns();
 
-    var colMeta = ((config.column_metadata || {})[rangeKey] || []);
-    var sectionCols = [];
-    for (var m = 0; m < colMeta.length; m++) {
-      var meta = colMeta[m];
-      var baseSec = meta.sec || '';
-      if (baseSec.indexOf('__') !== -1) baseSec = baseSec.split('__')[0];
-      if (baseSec === sectionKey && meta.col <= maxCols) {
-        sectionCols.push(meta.col);
-      }
+    var sectionColsObj = (config.section_column_indices || {})[rangeKey] || {};
+    var sectionCols = sectionColsObj[sectionKey] || [];
+    var validCols = [];
+    for (var c = 0; c < sectionCols.length; c++) {
+      if (sectionCols[c] <= maxCols) validCols.push(sectionCols[c]);
     }
 
-    if (sectionCols.length > 0) {
-      _batchColumns(sheet, sectionCols, makeVisible);
+    if (validCols.length > 0) {
+      _batchColumns(sheet, validCols, makeVisible);
       updatedCount++;
     }
 
@@ -646,14 +653,13 @@ function showAllSections() {
   _applyToAllSheets(function(sheet, sheetType) {
     var rangeKey = _getRangeKey(sheetType);
     var maxCols  = sheet.getMaxColumns();
-    var colMeta  = ((config.column_metadata || {})[rangeKey] || []);
+    var sectionColsObj = (config.section_column_indices || {})[rangeKey] || {};
     var showCols = [];
 
-    for (var i = 0; i < colMeta.length; i++) {
-      var baseSec = colMeta[i].sec || '';
-      if (baseSec.indexOf('__') !== -1) baseSec = baseSec.split('__')[0];
-      if (colMeta[i].col <= maxCols && toggleableKeys.indexOf(baseSec) !== -1) {
-        showCols.push(colMeta[i].col);
+    for (var m = 0; m < toggleableKeys.length; m++) {
+      var arr = sectionColsObj[toggleableKeys[m]] || [];
+      for (var c = 0; c < arr.length; c++) {
+        if (arr[c] <= maxCols) showCols.push(arr[c]);
       }
     }
 

@@ -10,7 +10,8 @@ from typing import Dict, List, Optional, Tuple
 from psycopg2.extras import RealDictCursor
 
 from src.core.db import get_db_connection
-from src.publish.definitions.config import SEASON_TYPE_GROUPS, COMPUTED_ENTITY_FIELDS
+from src.core.config import SEASON_TYPE_GROUPS
+from src.publish.definitions.config import COMPUTED_ENTITY_FIELDS
 
 logger = logging.getLogger(__name__)
 

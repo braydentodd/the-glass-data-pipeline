@@ -107,10 +107,12 @@ def get_current_season_year() -> int:
     return now.year + 1 if now.month >= 7 else now.year
 
 
+from src.core.config import format_season_label
+
 def get_current_season() -> str:
     """Current season as a display string, e.g. '2025-26'."""
     end_year = get_current_season_year()
-    return f"{end_year - 1}-{str(end_year)[-2:]}"
+    return format_season_label(end_year)
 
 
 # ============================================================================

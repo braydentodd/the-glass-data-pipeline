@@ -60,24 +60,6 @@ DEFAULT_STAT_RATE = 'per_possession'
 
 COMPUTED_ENTITY_FIELDS = {}
 
-# ============================================================================
-# SEASON TYPE CLASSIFICATION
-# Season type codes are grouped into "regular_season" vs "postseason".
-# Queries use these groups to decide which season_type values to aggregate.
-# ============================================================================
-
-SEASON_TYPE_GROUPS = {
-    'regular_season': ('rs',),
-    'postseason': ('po', 'pi', 'ct'),
-}
-
-SEASON_TYPE_LABELS = {
-    'rs': 'Regular Season',
-    'po': 'Playoffs',
-    'pi': 'Play-In',
-    'ct': 'Conference Tournament',
-}
-
 STAT_RATE_LABELS = {
     'per_possession': f"per {int(STAT_CONSTANTS['default_per_possessions'])} Poss",
     'per_game': 'per Game',
