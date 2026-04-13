@@ -395,6 +395,10 @@ def derive_db_fields(league: str = None, stats_sections: frozenset = None,
             if not refs:
                 continue
 
+            # team_average implies we extract info from the player entity/stats
+            if isinstance(expr, tuple) and expr[0] == 'team_average':
+                entity_type = 'player'
+
             if is_stats:
                 if entity_type == 'player':
                     player_stats |= refs

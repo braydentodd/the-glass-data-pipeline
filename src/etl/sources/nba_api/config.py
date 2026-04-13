@@ -226,7 +226,7 @@ ENDPOINTS: Dict[str, Dict[str, Any]] = {
         'entity_types': ['player'],
     },
 
-    'commonplayerinfo': {
+    'commonallplayers': {
         'min_season': None,
         'execution_tier': 'player',
         'default_result_set': 'CommonPlayerInfo',

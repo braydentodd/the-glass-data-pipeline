@@ -189,7 +189,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'sources': {
             'nba': {
                 'player': {
-                    'endpoint': 'commonplayerinfo',
+                    'endpoint': 'commonallplayers',
                     'field': 'HEIGHT',
                     'transform': 'parse_height',
                 },
@@ -207,7 +207,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'comment': None,
         'sources': {
             'nba': {
-                'player': {'endpoint': 'commonplayerinfo', 'field': 'WEIGHT'},
+                'player': {'endpoint': 'commonallplayers', 'field': 'WEIGHT'},
             },
         },
     },
@@ -241,7 +241,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'comment': None,
         'sources': {
             'nba': {
-                'player': {'endpoint': 'commonplayerinfo', 'field': 'JERSEY'},
+                'player': {'endpoint': 'commonallplayers', 'field': 'JERSEY'},
             },
         },
     },
@@ -257,7 +257,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'sources': {
             'nba': {
                 'player': {
-                    'endpoint': 'commonplayerinfo',
+                    'endpoint': 'commonallplayers',
                     'field': 'BIRTHDATE',
                     'transform': 'parse_birthdate',
                 },
@@ -286,7 +286,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'comment': None,
         'sources': {
             'nba': {
-                'player': {'endpoint': 'commonplayerinfo', 'field': 'SEASON_EXP'},
+                'player': {'endpoint': 'commonallplayers', 'field': 'SEASON_EXP'},
             },
         },
     },
@@ -302,7 +302,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'sources': {
             'nba': {
                 'player': {
-                    'endpoint': 'commonplayerinfo',
+                    'endpoint': 'commonallplayers',
                     'field': 'FROM_YEAR',
                     'transform': 'format_season',
                 },

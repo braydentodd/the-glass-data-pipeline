@@ -37,7 +37,7 @@ _SEPARATOR_DEF = {
     'description': '',
     'sections': [],
     'subsection': None,
-    'tabs': ['all_teams', 'all_players', 'team', 'individual_team'],
+    'tabs': ['all_teams', 'all_players', 'individual_team'],
     'stats_mode': 'both',
     'percentile': None,
     'editable': False,
@@ -107,7 +107,7 @@ def _make_companion_def(base_def: dict, base_key: str,
         'values': base_def.get('values', {}),
         'is_opponent_col': base_def.get('is_opponent_col', False),
         'width_class': SHEET_FORMATTING.get('percentile_companion_width', 10),
-        'tabs': base_def.get('tabs', ['teams', 'players', 'team']),
+        'tabs': base_def.get('tabs', ['all_teams', 'all_players', 'individual_team']),
     }
 
 
@@ -203,8 +203,8 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
     hide_advanced = fmt.get('hide_advanced_columns', True)
 
     _TAB_TYPE_KEY = {
-        'individual_team': 'team',
-        'team': 'team',
+        'individual_team': 'individual_team',
+        'team': 'individual_team',
         'all_players': 'all_players',
         'players': 'all_players',
         'all_teams': 'all_teams',
@@ -215,7 +215,7 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
     pct_columns = generate_percentile_columns()
 
     def _normalize_tabs(col_def):
-        col_tabs = col_def.get('tabs', ['all_teams', 'all_players', 'team'])
+        col_tabs = col_def.get('tabs', ['all_teams', 'all_players', 'individual_team'])
         if isinstance(col_tabs, str):
             return [col_tabs]
         return col_tabs

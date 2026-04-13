@@ -35,7 +35,7 @@ DB_COLUMNS_SCHEMA = {
     'rate_group': {'required': True, 'types': (str, type(None))},
     'comment': {'required': True, 'types': (str, type(None))},
     'sources': {'required': True, 'types': (dict, type(None))},
-    'refresh_mode': {'required': False, 'types': (str,), 'allowed_values': VALID_REFRESH_MODES},
+    'removed_refresh_mode': {'required': False, 'types': (str,), 'allowed_values': VALID_REFRESH_MODES},
 }
 
 TABLES_SCHEMA = {

@@ -227,7 +227,7 @@ def _execute_per_entity(
     columns: Dict[str, Dict[str, Any]],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
-    refresh_mode: str = 'null_only',
+    removed_refresh_mode: str = 'null_only',
 ) -> int:
     """Per-entity API calls for simple columns (e.g. commonplayerinfo).
 
@@ -239,7 +239,7 @@ def _execute_per_entity(
 
     with db_connection() as conn:
         with conn.cursor() as cur:
-            if refresh_mode == 'always':
+            if removed_refresh_mode == 'always':
                 cur.execute(
                     f"SELECT {quote_col(source_id_col)} FROM {entity_table}"
                 )
@@ -342,7 +342,7 @@ def execute_group(
         if simple:
             written += _execute_per_entity(
                 endpoint, simple, ctx, failed,
-                refresh_mode=group.get('refresh_mode', 'null_only'),
+                removed_refresh_mode=group.get('removed_refresh_mode', 'null_only'),
             )
         for col_name, source in pipelines.items():
             written += _execute_pipeline_column(col_name, source, ctx, failed)

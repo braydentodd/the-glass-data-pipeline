@@ -167,8 +167,8 @@ SHEET_FORMATTING = {
     'hide_identity_section': True,
 
     # percentile companion column formatting
-    'percentile_companion_width': 35,      # pixels (wider to fit rank + over/under)
-    'percentile_companion_font_size': 6,   # pt
+    'percentile_companion_width': 18,      # pixels (wider to fit rank + over/under)
+    'percentile_companion_font_size': 5,   # pt
 
     # Layout — 4 header rows
     'section_header_row': 0,
@@ -286,11 +286,11 @@ SUBSECTIONS = {
 
 WIDTH_CLASSES = {
     'auto': None,
-    'measurement': 38,
-    'four_char': 28,
-    'four_char_dec': 32,
-    'three_char_dec': 26,
-    'two_char_dec': 20,
+    'measurement': 33,
+    'four_char': 31,
+    'four_char_dec': 31,
+    'three_char_dec': 22,
+    'two_char_dec': 19,
     'two_char': 19,
 }
 

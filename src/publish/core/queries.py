@@ -212,9 +212,9 @@ def fetch_team_stats(conn, team_abbr: str, section: str, historical_config: Opti
     teams_tbl = ctx.team_entity_table
     stats_tbl = ctx.team_stats_table
 
-    t_fields = [f't.{_quote_col(f)}' for f in sorted(ctx.team_entity_fields) if f != 'updated_at']
+    t_select, t_group = _build_entity_fields([f for f in sorted(ctx.team_entity_fields) if f != 'updated_at'], 't')
     s_fields = [f's.{_quote_col(f)}' for f in sorted(ctx.team_stat_fields)]
-    all_fields = t_fields + s_fields + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
+    all_fields = t_select + s_fields + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
 
     if section == 'current_stats':
         query = f"""
@@ -236,7 +236,7 @@ def fetch_team_stats(conn, team_abbr: str, section: str, historical_config: Opti
 
         s_sums = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(ctx.team_stat_fields)]
         s_sums.append(f'COUNT(DISTINCT s.{season_col_name}) AS {season_col_name}')
-        all_aggregates = t_fields + s_sums + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
+        all_aggregates = t_select + s_sums + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
         
         query = f"""
         SELECT {', '.join(all_aggregates)}
@@ -246,7 +246,7 @@ def fetch_team_stats(conn, team_abbr: str, section: str, historical_config: Opti
             {season_filter}
             AND s.season_type IN %s
         WHERE t.{ctx.team_abbr_col} = %s
-        GROUP BY {', '.join(t_fields)}
+        GROUP BY {', '.join(t_group)}
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (*params, season_types, team_abbr))
@@ -274,9 +274,9 @@ def fetch_all_teams(conn, section: str, historical_config: Optional[dict],
     teams_tbl = ctx.team_entity_table
     stats_tbl = ctx.team_stats_table
 
-    t_fields = [f't.{_quote_col(f)}' for f in sorted(ctx.team_entity_fields) if f != 'updated_at']
+    t_select, t_group = _build_entity_fields([f for f in sorted(ctx.team_entity_fields) if f != 'updated_at'], 't')
     s_fields = [f's.{_quote_col(f)}' for f in sorted(ctx.team_stat_fields)]
-    all_fields = t_fields + s_fields + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
+    all_fields = t_select + s_fields + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
 
     if section == 'current_stats':
         query = f"""
@@ -296,14 +296,14 @@ def fetch_all_teams(conn, section: str, historical_config: Optional[dict],
 
         s_sums = [f'SUM(s.{_quote_col(f)}) AS {_quote_col(f)}' for f in sorted(ctx.team_stat_fields)]
         s_sums.append(f'COUNT(DISTINCT s.{season_col_name}) AS {season_col_name}')
-        all_aggregates = t_fields + s_sums + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
+        all_aggregates = t_select + s_sums + [f"t.{_quote_col(ctx.team_abbr_col)} AS team_abbr"]
 
         query = f"""
         SELECT {', '.join(all_aggregates)}
         FROM {stats_tbl} s
         INNER JOIN {teams_tbl} t ON s.entity_id = t.id
         WHERE s.season_type IN %s {season_filter}
-        GROUP BY {', '.join(t_fields)}
+        GROUP BY {', '.join(t_group)}
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, (season_types, *params))

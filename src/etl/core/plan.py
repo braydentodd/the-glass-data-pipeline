@@ -31,8 +31,8 @@ def _enrich_source(source: Dict[str, Any], col_meta: Dict[str, Any]) -> Dict[str
     if 'transform' not in enriched and 'pipeline' not in enriched and 'multi_call' not in enriched:
         base_type = col_meta.get('type', '').split('(')[0]
         enriched['transform'] = TYPE_TRANSFORMS.get(base_type, 'safe_int')
-    if 'refresh_mode' not in enriched:
-        enriched['refresh_mode'] = col_meta.get('refresh_mode', 'null_only')
+    if 'removed_refresh_mode' not in enriched:
+        enriched['removed_refresh_mode'] = col_meta.get('removed_refresh_mode', 'null_only')
     return enriched
 
 
@@ -225,15 +225,15 @@ def build_call_groups(
     groups: List[Dict[str, Any]] = []
 
     for (ep, frozen_params), cols in simple_groups.items():
-        refresh_mode = 'always' if any(
-            src.get('refresh_mode') == 'always' for src in cols.values()
+        removed_refresh_mode = 'always' if any(
+            src.get('removed_refresh_mode') == 'always' for src in cols.values()
         ) else 'null_only'
         groups.append({
             'endpoint': ep,
             'params': dict(frozen_params),
             'tier': tier_for_endpoint(ep, endpoints),
             'columns': cols,
-            'refresh_mode': refresh_mode,
+            'removed_refresh_mode': removed_refresh_mode,
         })
 
     # Merge team_call columns that share the same endpoint into one group
@@ -249,7 +249,7 @@ def build_call_groups(
             'params': {},
             'tier': 'team_call',
             'columns': cols,
-            'refresh_mode': 'null_only',
+            'removed_refresh_mode': 'null_only',
         })
 
     return groups
