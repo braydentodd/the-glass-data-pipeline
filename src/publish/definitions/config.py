@@ -144,15 +144,21 @@ SHEET_FORMATTING = {
     # Separator columns between sections/subsections
     'section_separator_width': 4,
     'subsection_separator_width': 2,
-    'separator_bg': 'dark_gray',
+    'header_separator_bg': 'white',
+    'data_separator_bg': 'black',
 
     # Header divider rows
     'header_divider_height': 2,
-    'header_divider_bg': 'dark_gray',
+    'header_divider_bg': 'white',
 
     # Footer divider row
-    'footer_divider_height': 2,
+    'footer_divider_height': 4,
     'footer_divider_bg': 'black',
+
+    # Row heights
+    'row_height_section_header': 25,
+    'row_height_filter': 12,
+    'row_height_default': 21,
 
     # Alignment
     'default_h_align': 'CENTER',
@@ -274,7 +280,7 @@ SUBSECTIONS = {
     'scoring': 'Scoring',                   # Pts, TS%, fg2/3, Rim/Mid/3PT tracking, FT
     'ball_management': 'Ball Management',   # Touches, Assists, Potential Assists, Turnovers
     'rebounding': 'Rebounding',             # OREB%, DREB%, Contested OREB/DREB%, Putbacks
-    'movement': 'Movement',                 # Offensive/Defensive distance traveled
+    'distance': 'Distance',                 # Offensive/Defensive distance traveled
     'defense': 'Defense',                   # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
     'opponent': 'Opponent',                 # All opponent stats (Teams sheet only, between defense and on/off)
     'team_ratings': 'Team Ratings',         # Offensive/Defensive Rating, Off-court ratings
@@ -289,7 +295,7 @@ WIDTH_CLASSES = {
     'measurement': 33,
     'four_char': 31,
     'four_char_dec': 31,
-    'three_char_dec': 22,
+    'three_char_dec': 24,
     'two_char_dec': 19,
     'two_char': 19,
 }

@@ -23,11 +23,26 @@ def _format_companion(rank: float, diff: Optional[float], base_def: dict) -> str
     Displays the percentile rank on the first line and the over/under
     vs league average (50th percentile value) on the second line.
     """
-    rank_str = str(round(rank))
+    rank_str = f"{rank:.1f}"
+    if '.' in rank_str:
+        rank_str = rank_str.rstrip('0').rstrip('.')
+
     if diff is None:
         return rank_str
-    decimals = base_def.get('decimal_places', 1) or 0
+
+    decimals = base_def.get('decimal_places')
+    if decimals is None:
+        decimals = 1
+
     diff_str = f"{diff:+.{decimals}f}"
+    if '.' in diff_str:
+        diff_str = diff_str.rstrip('0').rstrip('.')
+
+    if diff_str in ('+', '-'):
+        diff_str = '+0'
+    if diff_str == '-0':
+        diff_str = '+0'
+
     return f"{rank_str}\n{diff_str}"
 
 
@@ -449,15 +464,22 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
 
         # Separator columns break merges and emit empty cells
         if col_def.get('is_separator'):
-            if cur_section is not None and sec_start < idx:
-                merges.append({'row': fmt['section_header_row'], 'start_col': sec_start, 'end_col': idx, 'value': _get_display(cur_section)})
+            sep_type = col_def.get('separator_type', 'section')
+            if sep_type == 'section':
+                if cur_section is not None and sec_start < idx:
+                    merges.append({'row': fmt['section_header_row'], 'start_col': sec_start, 'end_col': idx, 'value': _get_display(cur_section)})
+                cur_section = None
+                sec_start = idx + 1
             if cur_subsection is not None and sub_start < idx:
                 merges.append({'row': fmt['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': SUBSECTIONS.get(cur_subsection, cur_subsection.title())})
-            cur_section = None
             cur_subsection = None
-            sec_start = idx + 1
             sub_start = idx + 1
-            row1.append('')
+            if sep_type == 'section':
+                row1.append('')
+            else:
+                # If subsection separator, the section merge continues
+                # but we emit an empty cell for row1 (won't be seen because it's merged)
+                row1.append('')
             row2.append('')
             row3.append('')
             continue

@@ -22,7 +22,7 @@ _VALID_SECTIONS = {
 }
 _VALID_SUBSECTIONS = {
     'rates', 'scoring', 'ball_management', 'rebounding',
-    'movement', 'defense', 'opponent', 'team_ratings', 'nba',
+    'distance', 'defense', 'opponent', 'team_ratings', 'nba',
     'League', 'Player',
 }
 _VALID_TABS = {'all_teams', 'all_players', 'individual_team'}
@@ -54,6 +54,7 @@ TAB_COLUMNS_SCHEMA = {
     'default':         {'required': True,  'types': (str, int, float, type(None))},
     'align':           {'required': False, 'types': (str,),         'allowed_values': _VALID_ALIGNS, 'default': 'center'},
     'emphasis':        {'required': False, 'types': (str, type(None)), 'allowed_values': _VALID_EMPHASIS, 'default': None},
+    'font_size':       {'required': False, 'types': (int, type(None)), 'default': None},
     'values':          {'required': True,  'types': (dict,)},
 }
 
@@ -1288,9 +1289,9 @@ TAB_COLUMNS: Dict[str, Any] = {
     'odst': {
         'description': 'Offensive Distance Traveled in Miles',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'movement',
+        'subsection': 'distance',
         'tabs': ['all_teams', 'all_players', 'individual_team'],
-        'stats_mode': 'advanced',
+        'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1311,9 +1312,9 @@ TAB_COLUMNS: Dict[str, Any] = {
     'ddst': {
         'description': 'Defensive Distance Traveled in Miles',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'subsection': 'movement',
+        'subsection': 'distance',
         'tabs': ['all_teams', 'all_players', 'individual_team'],
-        'stats_mode': 'advanced',
+        'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': True,
@@ -1628,9 +1629,9 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': divide('wins', 'games'),
-            'team': divide('wins', 'games'),
-            'all_teams': divide('wins', 'games')
+            'player': multiply(divide('wins', 'games'), 100),
+            'team': multiply(divide('wins', 'games'), 100),
+            'all_teams': multiply(divide('wins', 'games'), 100)
         }
     },
     'ortg': {
@@ -1662,7 +1663,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
         'tabs': ['all_teams', 'all_players', 'individual_team'],
-        'stats_mode': 'basic',
+        'stats_mode': 'both',
         'percentile': 'reverse',
         'editable': False,
         'scale_with_rate': False,
@@ -1685,7 +1686,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
         'tabs': ['all_players', 'individual_team'],
-        'stats_mode': 'basic',
+        'stats_mode': 'both',
         'percentile': 'standard',
         'editable': False,
         'scale_with_rate': False,
@@ -1706,7 +1707,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'team_ratings',
         'tabs': ['all_players', 'individual_team'],
-        'stats_mode': 'basic',
+        'stats_mode': 'both',
         'percentile': 'reverse',
         'editable': False,
         'scale_with_rate': False,

@@ -303,6 +303,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             col_def = entry[1]
             col_align = col_def.get('align', 'center').upper()
             col_emphasis = col_def.get('emphasis')
+            col_font_size = col_def.get('font_size')
 
             if col_align != fmt['default_h_align']:
                 requests.append({
@@ -315,16 +316,25 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     }
                 })
 
-            if col_emphasis == 'bold':
+            if col_emphasis == 'bold' or col_font_size is not None:
+                text_format = {}
+                fields = []
+                if col_emphasis == 'bold':
+                    text_format['bold'] = True
+                    fields.append('userEnteredFormat.textFormat.bold')
+                if col_font_size is not None:
+                    text_format['fontSize'] = col_font_size
+                    fields.append('userEnteredFormat.textFormat.fontSize')
+
                 requests.append({
                     'repeatCell': {
                         'range': _range(ws_id, data_start, total_rows, idx, idx + 1),
                         'cell': {
                             'userEnteredFormat': {
-                                'textFormat': {'bold': True},
+                                'textFormat': text_format,
                             },
                         },
-                        'fields': 'userEnteredFormat.textFormat.bold',
+                        'fields': ','.join(fields),
                     }
                 })
 
@@ -359,8 +369,9 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 10. Separator columns between sections/subsections (dark background) ----
-    separator_bg = get_color_for_raw(COLORS[fmt.get('separator_bg', 'dark_gray')])
+    # ---- 10. Separator columns between sections/subsections ----
+    header_separator_bg = get_color_for_raw(COLORS[fmt.get('header_separator_bg', 'white')])
+    data_separator_bg = get_color_for_raw(COLORS[fmt.get('data_separator_bg', 'black')])
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
         if not col_def.get('is_separator'):
@@ -383,22 +394,35 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 'fields': 'pixelSize',
             }
         })
-        # Dark background for ALL rows (header + data)
+        # Background for header rows
         requests.append({
             'repeatCell': {
-                'range': _range(ws_id, 0, max(total_rows, header_end), idx, idx + 1),
+                'range': _range(ws_id, 0, data_start, idx, idx + 1),
                 'cell': {
                     'userEnteredFormat': {
-                        'backgroundColor': separator_bg,
+                        'backgroundColor': header_separator_bg,
                     },
                 },
                 'fields': 'userEnteredFormat.backgroundColor',
             }
         })
+        # Background for data rows
+        if n_data_rows > 0:
+            requests.append({
+                'repeatCell': {
+                    'range': _range(ws_id, data_start, total_rows, idx, idx + 1),
+                    'cell': {
+                        'userEnteredFormat': {
+                            'backgroundColor': data_separator_bg,
+                        },
+                    },
+                    'fields': 'userEnteredFormat.backgroundColor',
+                }
+            })
 
     # ---- 11. Column borders (skip frozen divider + stat/companion) ----
     frozen_cols = fmt.get('frozen_cols', 0)
-    header_border_end = fmt['column_header_row'] + 1
+    header_border_end = fmt['filter_row'] + 1
     for col_idx in range(1, n_cols):
         left_def = columns_list[col_idx - 1][1]
         right_def = columns_list[col_idx][1]
@@ -421,13 +445,31 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     'range': _range(ws_id, data_start, total_rows, col_idx, col_idx + 1),
                     'left': _border_style(column_border_weight, column_data_color),
                 }
+            }
+        )
+
+    # ---- 11b. Clear all borders across horizontal divider rows ----
+    # Ensures cleanly rendered separators without vertical border cut-throughs
+    for row_key in ('section_divider_row', 'subsection_divider_row'):
+        row_idx = fmt.get(row_key)
+        if row_idx is not None:
+            requests.append({
+                'updateBorders': {
+                    'range': _range(ws_id, row_idx, row_idx + 1, 0, n_cols),
+                    'top': {'style': 'NONE'},
+                    'bottom': {'style': 'NONE'},
+                    'left': {'style': 'NONE'},
+                    'right': {'style': 'NONE'},
+                    'innerHorizontal': {'style': 'NONE'},
+                    'innerVertical': {'style': 'NONE'},
+                }
             })
 
     # ---- 14. Divider rows above team/opp or summary footers ----
     if n_player_rows > 0 and n_data_rows > n_player_rows:
         sep_row = data_start + n_player_rows
         if tab_type == 'individual_team':
-            divider_bg = separator_bg
+            divider_bg = data_separator_bg
             divider_height = fmt.get('header_divider_height', 2)
         else:
             divider_bg = get_color_for_raw(COLORS[fmt.get('footer_divider_bg', 'black')])
@@ -453,6 +495,17 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 },
                 'properties': {'pixelSize': divider_height},
                 'fields': 'pixelSize',
+            }
+        })
+        requests.append({
+            'updateBorders': {
+                'range': _range(ws_id, sep_row, sep_row + 1, 0, n_cols),
+                'top': {'style': 'NONE'},
+                'bottom': {'style': 'NONE'},
+                'left': {'style': 'NONE'},
+                'right': {'style': 'NONE'},
+                'innerHorizontal': {'style': 'NONE'},
+                'innerVertical': {'style': 'NONE'},
             }
         })
 
@@ -591,6 +644,29 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             'filter': {
                 'range': _range(ws_id, fmt['filter_row'], filter_end, 0, n_cols),
             }
+        }
+    })
+
+    # ---- 20. Explicit Row Heights ----
+    requests.append({
+        'updateDimensionProperties': {
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': 0, 'endIndex': total_rows },
+            'properties': {'pixelSize': fmt.get('row_height_default', 21)},
+            'fields': 'pixelSize',
+        }
+    })
+    requests.append({
+        'updateDimensionProperties': {
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': fmt['section_header_row'], 'endIndex': fmt['section_header_row'] + 1 },
+            'properties': {'pixelSize': fmt.get('row_height_section_header', 25)},
+            'fields': 'pixelSize',
+        }
+    })
+    requests.append({
+        'updateDimensionProperties': {
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': fmt['filter_row'], 'endIndex': fmt['filter_row'] + 1 },
+            'properties': {'pixelSize': fmt.get('row_height_filter', 12)},
+            'fields': 'pixelSize',
         }
     })
 
