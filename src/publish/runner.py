@@ -20,7 +20,7 @@ load_dotenv()
 from src.core.db import get_db_connection, get_table_name
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, get_teams_from_db
 from src.publish.destinations.sheets.client import get_sheets_client
-from src.publish.destinations.sheets.tabs import sync_teams_tab, sync_team_tab, sync_players_tab, _compute_pct_by_rate
+from src.publish.core.executor import sync_teams_tab, sync_team_tab, sync_players_tab, _compute_pct_by_rate
 from src.publish.definitions.config import (
     STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG, COMPUTED_ENTITY_FIELDS,
 )
@@ -90,23 +90,32 @@ def _precompute_percentiles(
         current_season_year=current_season_year,
         season_type_val=season_type_val,
     )
+    from src.publish.definitions.config import STAT_CONSTANTS
     conn = get_db_connection()
     try:
         needs_current = sync_section is None or sync_section == 'current_stats'
         needs_historical = sync_section is None or sync_section == 'historical_stats'
         needs_postseason = sync_section is None or sync_section == 'postseason_stats'
 
+        supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+
         all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw) if needs_current else []
-        all_players_hist = fetch_all_players(
-            conn, 'historical_stats', **query_kw) if needs_historical else []
-        all_players_post = fetch_all_players(
-            conn, 'postseason_stats', **query_kw) if needs_postseason else []
+        
         _empty_teams = {'teams': [], 'opponents': []}
         all_teams_curr = fetch_all_teams(conn, 'current_stats', **query_kw) if needs_current else _empty_teams
-        all_teams_hist = fetch_all_teams(
-            conn, 'historical_stats', **query_kw) if needs_historical else _empty_teams
-        all_teams_post = fetch_all_teams(
-            conn, 'postseason_stats', **query_kw) if needs_postseason else _empty_teams
+        
+        all_players_hist = {}
+        all_players_post = {}
+        all_teams_hist = {}
+        all_teams_post = {}
+        
+        for y in supported_years:
+            hist_kw = query_kw.copy()
+            hist_kw['historical_config'] = {'mode': 'seasons', 'value': y}
+            all_players_hist[y] = fetch_all_players(conn, 'historical_stats', **hist_kw) if needs_historical else []
+            all_players_post[y] = fetch_all_players(conn, 'postseason_stats', **hist_kw) if needs_postseason else []
+            all_teams_hist[y] = fetch_all_teams(conn, 'historical_stats', **hist_kw) if needs_historical else _empty_teams
+            all_teams_post[y] = fetch_all_teams(conn, 'postseason_stats', **hist_kw) if needs_postseason else _empty_teams
 
         # Build player groups for team_average context in team percentiles
         from collections import defaultdict
@@ -120,22 +129,22 @@ def _precompute_percentiles(
             abbr = entity.get(ctx.team_abbr_field)
             return {'team_players': player_groups.get(abbr, [])}
 
+        player_dict = {'current_stats': all_players_curr}
+        team_dict = {'current_stats': all_teams_curr['teams']}
+        opp_dict = {'current_stats': all_teams_curr['opponents']}
+        
+        for y in supported_years:
+            player_dict[f'historical_stats_{y}yr'] = all_players_hist[y]
+            player_dict[f'postseason_stats_{y}yr'] = all_players_post[y]
+            team_dict[f'historical_stats_{y}yr'] = all_teams_hist[y]['teams']
+            team_dict[f'postseason_stats_{y}yr'] = all_teams_post[y]['teams']
+            opp_dict[f'historical_stats_{y}yr'] = all_teams_hist[y]['opponents']
+            opp_dict[f'postseason_stats_{y}yr'] = all_teams_post[y]['opponents']
+
         precomputed = {
-            'player': _compute_pct_by_rate({
-                'current_stats': all_players_curr,
-                'historical_stats': all_players_hist,
-                'postseason_stats': all_players_post,
-            }, 'player'),
-            'team': _compute_pct_by_rate({
-                'current_stats': all_teams_curr['teams'],
-                'historical_stats': all_teams_hist['teams'],
-                'postseason_stats': all_teams_post['teams'],
-            }, 'team', context_fn=_team_context_fn),
-            'opponents': _compute_pct_by_rate({
-                'current_stats': all_teams_curr['opponents'],
-                'historical_stats': all_teams_hist['opponents'],
-                'postseason_stats': all_teams_post['opponents'],
-            }, 'opponents'),
+            'player': _compute_pct_by_rate(player_dict, 'player'),
+            'team': _compute_pct_by_rate(team_dict, 'team', context_fn=_team_context_fn),
+            'opponents': _compute_pct_by_rate(opp_dict, 'opponents'),
         }
         logger.info('  Percentile populations ready (%d rates)', len(STAT_RATES))
         return precomputed
@@ -237,17 +246,17 @@ def sync_league(
 
     # ---- Sync aggregate tabs (Players then Teams) ----
     # If priority_tab is an aggregate tab name, sync it first
-    aggregate_order = ['players', 'teams']
+    aggregate_order = ['all_players', 'all_teams']
     if priority_tab and priority_tab.lower() in aggregate_order:
         first = priority_tab.lower()
         aggregate_order = [first] + [s for s in aggregate_order if s != first]
 
     for tab_name in aggregate_order:
         try:
-            if tab_name == 'players':
-                sync_players_tab(ctx, client, spreadsheet, **sync_kwargs)
+            if tab_name == 'all_players':
+                sync_players_tab(ctx, client, spreadsheet, precomputed=precomputed, **sync_kwargs)
             else:
-                sync_teams_tab(ctx, client, spreadsheet, **sync_kwargs)
+                sync_teams_tab(ctx, client, spreadsheet, precomputed=precomputed, **sync_kwargs)
         except Exception as exc:
             logger.error(f'  {tab_name.title()} tab failed: {exc}', exc_info=True)
 
@@ -270,12 +279,12 @@ def main():
     parser.add_argument('--league', choices=['nba', 'ncaa'], required=True,
                         help='The league to sync')
     parser.add_argument('--tab', metavar='NAME',
-                        help='Sync this tab first (team abbr like BOS, or "players"/"teams")')
+                        help='Sync this tab first (team abbr like BOS, or "all_players"/"all_teams")')
     parser.add_argument('--rate',
                         choices=STAT_RATES,
                         default=None,
                         help=f'Stats rate (default: {DEFAULT_STAT_RATE})')
-    parser.add_argument('--hist-seasons', type=int, default=None,
+    parser.add_argument('--historical-timeframe', type=int, default=None,
                         help='Historical timeframe: number of previous seasons to include')
     parser.add_argument('--partial-update', action='store_true',
                         help='Fast sync: skip structural formatting, only update data + colors')

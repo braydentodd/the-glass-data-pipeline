@@ -41,6 +41,7 @@ STAT_CONSTANTS = {
     'default_per_possessions': 100.0,   # Possessions base for per-possession stats
     'cache_ttl_seconds': 300,           # API response cache TTL
     'max_historical_years': 20,         # Max seasons shown in UI timeframe toggle
+    'supported_historical_timeframes': [1, 3, 5, 7], # Configured available timeframes
 }
 
 # ============================================================================

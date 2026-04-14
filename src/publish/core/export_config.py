@@ -94,8 +94,17 @@ def get_config_for_export(league: str,
         return {'start': min(indices) + 1, 'count': len(indices)}
 
     column_ranges = {'team_sheet': {}, league_sheet: {}, 'teams_sheet': {}}
-    for sec in ('current_stats', 'historical_stats', 'postseason_stats',
-                'profile', 'evaluation'):
+    
+    supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+    
+    sections_to_map = ['profile', 'evaluation']
+    for rate in STAT_RATES:
+        sections_to_map.append(f'current_stats__{rate}')
+        for y in supported_years:
+            sections_to_map.append(f'historical_stats_{y}yr__{rate}')
+            sections_to_map.append(f'postseason_stats_{y}yr__{rate}')
+            
+    for sec in sections_to_map:
         team_range = _section_range(team_columns, sec)
         league_range = _section_range(league_columns, sec)
         teams_range = _section_range(teams_columns, sec)
@@ -349,6 +358,7 @@ def get_config_for_export(league: str,
         'stat_rate_labels': STAT_RATE_LABELS,
         'menu': MENU_CONFIG,
         'max_historical_timeframe': STAT_CONSTANTS.get('max_historical_years', 20),
+        'supported_historical_timeframes': STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7]),
     }
 
 

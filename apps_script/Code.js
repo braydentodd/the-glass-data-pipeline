@@ -59,12 +59,10 @@ function _getConfig() {
     });
 
     // Timeframe handlers
-    var maxYears = config.max_historical_timeframe || 20;
-    for (var y = 1; y <= maxYears; y++) {
-      (function(years) {
-        globalThis['setTimeframe' + years] = function() { _setTimeframe(years); };
-      })(y);
-    }
+    var supportedTimeframes = config.supported_historical_timeframes || [1, 3, 5, 7];
+    supportedTimeframes.forEach(function(y) {
+      globalThis['setTimeframe' + y] = function() { _setTimeframe(y); };
+    });
   } catch (e) {
     // Simple trigger context — functions registered on next authorized execution.
   }
@@ -86,10 +84,10 @@ function onOpen() {
     // --- Timeframe submenu ---
     var timeConfig = menuConfig.historical_timeframe || {};
     var timeMenu = ui.createMenu(timeConfig.display_name || 'Historical Timeframe');
-    var maxYears = config.max_historical_timeframe || 20;
-    for (var y = 1; y <= maxYears; y++) {
+    var supportedTimeframes = config.supported_historical_timeframes || [1, 3, 5, 7];
+    supportedTimeframes.forEach(function(y) {
       timeMenu.addItem('Previous ' + y + ' Season' + (y > 1 ? 's' : ''), 'setTimeframe' + y);
-    }
+    });
     menu.addSubMenu(timeMenu);
 
     // --- Stats Rate submenu ---
@@ -234,9 +232,47 @@ function _setTimeframe(years) {
   var props = PropertiesService.getDocumentProperties();
   props.setProperty('HISTORICAL_TIMEFRAME', String(years));
   var label = years + ' season' + (years > 1 ? 's' : '');
-  SpreadsheetApp.getActiveSpreadsheet().toast(
-    'Timeframe set to ' + label + '. Run Python sync to apply.', 'Updated', 4
-  );
+  
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var sheetName = sheet.getName();
+  var sheetType = _getSheetType(sheetName);
+  if (!sheetType) return;
+  
+  var config = _getConfig();
+  var ranges = config.column_ranges || {};
+  var sheetRanges = ranges[sheetType] || {};
+  
+  var supportedTimeframes = config.supported_historical_timeframes || [1, 3, 5, 7];
+  var currentRate = props.getProperty('STATS_RATE') || (config.stat_rates ? config.stat_rates[0] : 'per_possession');
+  var advancedVisible = props.getProperty('ADVANCED_STATS_VISIBLE') === 'true';
+  
+  // Hide all historical and postseason segments
+  supportedTimeframes.forEach(function(y) {
+      if (y !== years) {
+          var histKey = 'historical_stats_' + y + 'yr__' + currentRate;
+          var postKey = 'postseason_stats_' + y + 'yr__' + currentRate;
+          
+          if (sheetRanges[histKey]) {
+             sheet.hideColumns(sheetRanges[histKey].start, sheetRanges[histKey].count);
+          }
+          if (sheetRanges[postKey]) {
+             sheet.hideColumns(sheetRanges[postKey].start, sheetRanges[postKey].count);
+          }
+      }
+  });
+
+  // Show the user's targeted timeframe segments for the current rate
+  var targetHistKey = 'historical_stats_' + years + 'yr__' + currentRate;
+  var targetPostKey = 'postseason_stats_' + years + 'yr__' + currentRate;
+
+  if (sheetRanges[targetHistKey]) {
+      sheet.showColumns(sheetRanges[targetHistKey].start, sheetRanges[targetHistKey].count);
+  }
+  if (sheetRanges[targetPostKey]) {
+      sheet.showColumns(sheetRanges[targetPostKey].start, sheetRanges[targetPostKey].count);
+  }
+  
+  SpreadsheetApp.getActiveSpreadsheet().toast('Timeframe swapped to ' + label, 'Updated', 2);
 }
 
 // ============================================================

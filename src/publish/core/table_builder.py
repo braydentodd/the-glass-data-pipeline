@@ -201,7 +201,8 @@ def get_columns_for_section_and_entity(section: str, entity: str,
 def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                         tab_type: str = 'individual_team',
                         default_mode: str = DEFAULT_STAT_RATE,
-                        league: str = None) -> List[Tuple]:
+                        league: str = None,
+                        default_timeframe: int = 3) -> List[Tuple]:
     """
     Build complete column structure for a tab with rate tripling.
 
@@ -285,16 +286,31 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
         section_base = section
 
         if section_cfg.get('is_stats_section'):
-            # Triple: emit columns once per stat rate
-            for stat_rate in STAT_RATES:
-                context_key = f'{section}__{stat_rate}'
-                mode_visible = (stat_rate == default_mode)
+            # Current stats just use the normal rate tripling
+            if section == 'current_stats':
+                for stat_rate in STAT_RATES:
+                    context_key = f'{section}__{stat_rate}'
+                    mode_visible = (stat_rate == default_mode)
 
-                # Insert separator column between sections (one per rate variant)
-                if prev_section_base is not None and prev_section_base != section_base:
-                    all_columns.append(_make_separator(context_key, mode_visible))
-
-                _append_section_columns(section, context_key, mode_visible)
+                    if prev_section_base is not None and prev_section_base != section_base:
+                        all_columns.append(_make_separator(context_key, mode_visible))
+                    _append_section_columns(section, context_key, mode_visible)
+            else:
+                # Historical and Postseason expand by rate AND timeframe
+                from src.publish.definitions.config import STAT_CONSTANTS
+                supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+                for y in supported_years:
+                    for stat_rate in STAT_RATES:
+                        context_key = f'{section}_{y}yr__{stat_rate}'
+                        # Only show default rate and first timeframe (which is the default or 3? Let's hide all by default except one, wait...)
+                        # By default, we show '3' seasons if not specified. Wait, we should probably hide all here and let Google sheets script toggle?
+                        # No, the first initial state we should show the default rate for the default timeframe.
+                        mode_visible = (stat_rate == default_mode and y == default_timeframe)
+                        
+                        if prev_section_base is not None and prev_section_base != section_base:
+                            all_columns.append(_make_separator(context_key, mode_visible))
+                        
+                        _append_section_columns(section, context_key, mode_visible)
 
             prev_section_base = section_base
         else:
@@ -731,23 +747,48 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
     pct_by_rate: {rate: {base_section: {col_key: sorted_values}}}
     opp_percentiles: {col_key: {composite_section: sorted_vals}}
     """
-    # Build section_data with composite keys for all rates
-    _SECTION_TO_DATA = {
-        'current_stats': (current_data, ''),
-        'historical_stats': (historical_data, historical_timeframe),
-        'postseason_stats': (postseason_data, post_seasons),
-    }
-
     section_data = {}
     for rate_name in STAT_RATES:
         rate_pcts = pct_by_rate.get(rate_name, {})
-        for base_section, (entity_data, seasons) in _SECTION_TO_DATA.items():
-            if entity_data:
-                composite_key = f'{base_section}__{rate_name}'
-                section_pcts = rate_pcts.get(base_section, {})
-                section_data[composite_key] = (entity_data, section_pcts, seasons)
+        
+        # Handle current stats
+        if current_data:
+            section_data[f'current_stats__{rate_name}'] = (current_data, rate_pcts.get('current_stats', {}), '')
+            
+        # Handle historical stats (dict mapped by supported years)
+        if historical_data:
+            if isinstance(historical_data, dict):
+                for y, h_data in historical_data.items():
+                    if h_data:
+                        section_data[f'historical_stats_{y}yr__{rate_name}'] = (
+                            h_data, rate_pcts.get(f'historical_stats_{y}yr', {}), str(y)
+                        )
+            else:
+                section_data[f'historical_stats__{rate_name}'] = (
+                    historical_data, rate_pcts.get('historical_stats', {}), historical_timeframe
+                )
+                
+        # Handle postseason stats (dict mapped by supported years)
+        if postseason_data:
+            if isinstance(postseason_data, dict):
+                for y, p_data in postseason_data.items():
+                    if p_data:
+                        section_data[f'postseason_stats_{y}yr__{rate_name}'] = (
+                            p_data, rate_pcts.get(f'postseason_stats_{y}yr', {}), str(y)
+                        )
+            else:
+                section_data[f'postseason_stats__{rate_name}'] = (
+                    postseason_data, rate_pcts.get('postseason_stats', {}), post_seasons
+                )
 
-    primary_entity = current_data or historical_data or postseason_data or {}
+    if current_data:
+        primary_entity = current_data
+    elif isinstance(historical_data, dict) and any(historical_data.values()):
+        primary_entity = next(d for d in historical_data.values() if d)
+    elif isinstance(postseason_data, dict) and any(postseason_data.values()):
+        primary_entity = next(d for d in postseason_data.values() if d)
+    else:
+        primary_entity = historical_data or postseason_data or {}
 
     row = build_entity_row(
         primary_entity, columns_list, {},

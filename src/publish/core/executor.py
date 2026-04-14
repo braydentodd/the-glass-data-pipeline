@@ -41,7 +41,7 @@ def _compute_pct_by_rate(section_data, entity_type, context_fn=None):
 
 def _build_merged_pops(pct_by_rate):
     """Build merged percentile populations dict for summary rows.
-
+    
     Creates composite keys like 'current_stats__per_possession:pts' for
     stats column lookup, and also bare col_key entries for non-stats
     columns (profile) so they can be found by build_summary_rows.
@@ -59,23 +59,23 @@ def _build_merged_pops(pct_by_rate):
     for col_key, col_def in TAB_COLUMNS.items():
         if not col_def.get('percentile'):
             continue
-        is_stats = any(
-            SECTION_CONFIG.get(s, {}).get('is_stats_section', False)
-            for s in col_def.get('sections', [])
-        )
-        if is_stats:
-            continue
-        # Use the first available population (all rates yield the same
-        # values for non-stats columns since they don't scale with rate)
-        for rate_name in STAT_RATES:
-            rate_pcts = pct_by_rate.get(rate_name, {})
-            for section, pcts in rate_pcts.items():
-                if col_key in pcts and col_key not in merged:
-                    merged[col_key] = pcts[col_key]
+        bare_key = f'current_stats__per_game:{col_key}'
+        if bare_key in merged:
+            merged[col_key] = merged[bare_key]
+        else:
+            found = False
+            for rate_name in STAT_RATES:
+                k2 = f'current_stats__{rate_name}:{col_key}'
+                if k2 in merged:
+                    merged[col_key] = merged[k2]
+                    found = True
                     break
-            if col_key in merged:
-                break
-
+            if not found:
+                # Need to look through all keys
+                for k, v in merged.items():
+                    if k.endswith(f':{col_key}'):
+                        merged[col_key] = v
+                        break
     return merged
 
 
@@ -113,13 +113,25 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
 
     conn = get_db_connection()
     try:
+        from src.publish.definitions.config import STAT_CONSTANTS
+        supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+        
         # ---- Fetch raw data ----
         current_players = fetch_players_for_team(conn, team_abbr, 'current_stats', **query_kw)
-        hist_players = fetch_players_for_team(conn, team_abbr, 'historical_stats', **query_kw)
-        post_players = fetch_players_for_team(conn, team_abbr, 'postseason_stats', **query_kw)
         team_data_curr = fetch_team_stats(conn, team_abbr, 'current_stats', **query_kw)
-        team_data_hist = fetch_team_stats(conn, team_abbr, 'historical_stats', **query_kw)
-        team_data_post = fetch_team_stats(conn, team_abbr, 'postseason_stats', **query_kw)
+        
+        hist_players = {}
+        post_players = {}
+        team_data_hist = {}
+        team_data_post = {}
+        
+        for y in supported_years:
+            hist_kw = query_kw.copy()
+            hist_kw['historical_config'] = {'mode': 'seasons', 'value': y}
+            hist_players[y] = fetch_players_for_team(conn, team_abbr, 'historical_stats', **hist_kw)
+            post_players[y] = fetch_players_for_team(conn, team_abbr, 'postseason_stats', **hist_kw)
+            team_data_hist[y] = fetch_team_stats(conn, team_abbr, 'historical_stats', **hist_kw)
+            team_data_post[y] = fetch_team_stats(conn, team_abbr, 'postseason_stats', **hist_kw)
 
         # ---- Percentile populations (all rates, league-wide) ----
         if precomputed:
@@ -176,8 +188,8 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
 
         # ---- Index players by id for merging ----
         curr_by_id = {p.get('id'): p for p in current_players}
-        hist_by_id = {p.get('id'): p for p in hist_players}
-        post_by_id = {p.get('id'): p for p in post_players}
+        hist_by_id = {y: {p.get('id'): p for p in hist_players[y]} for y in supported_years}
+        post_by_id = {y: {p.get('id'): p for p in post_players[y]} for y in supported_years}
 
         # ---- Collect player IDs ----
         all_player_ids = []
@@ -188,11 +200,12 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
                 all_player_ids.append(pid)
                 seen.add(pid)
         if ctx.include_hist_post_players:
-            for p in hist_players + post_players:
-                pid = p.get('id')
-                if pid and pid not in seen:
-                    all_player_ids.append(pid)
-                    seen.add(pid)
+            for y in supported_years:
+                for p in hist_players[y] + post_players[y]:
+                    pid = p.get('id')
+                    if pid and pid not in seen:
+                        all_player_ids.append(pid)
+                        seen.add(pid)
 
         # ---- Build merged player rows (all modes at once) ----
         data_rows = []
@@ -205,12 +218,15 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
         }
 
         for pid in all_player_ids:
+            hist_data_dict = {y: hist_by_id[y].get(pid) for y in supported_years}
+            post_data_dict = {y: post_by_id[y].get(pid) for y in supported_years}
+            
             row, pct_cells = build_merged_entity_row(
                 player_id=pid,
                 columns_list=columns,
                 current_data=curr_by_id.get(pid),
-                historical_data=hist_by_id.get(pid),
-                postseason_data=post_by_id.get(pid),
+                historical_data=hist_data_dict,
+                postseason_data=post_data_dict,
                 pct_by_rate=player_pct_by_rate,
                 entity_type='player',
                 context={'lookup_tables': lookup_tables},
@@ -305,7 +321,8 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                      show_advanced=False,
                      historical_config=None,
                      partial_update=False,
-                     sync_section=None):
+                     sync_section=None,
+                     precomputed=None):
     """Sync the league-wide Teams tab with all stat modes."""
     logger.info('  Syncing Teams tab...')
     fmt = ctx.sheet_formatting
@@ -324,10 +341,19 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
 
     conn = get_db_connection()
     try:
+        from src.publish.definitions.config import STAT_CONSTANTS
+        supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+
         # ---- Fetch all teams for 3 sections ----
         all_teams_curr = fetch_all_teams(conn, 'current_stats', **query_kw)
-        all_teams_hist = fetch_all_teams(conn, 'historical_stats', **query_kw)
-        all_teams_post = fetch_all_teams(conn, 'postseason_stats', **query_kw)
+        
+        all_teams_hist = {}
+        all_teams_post = {}
+        for y in supported_years:
+            hist_kw = query_kw.copy()
+            hist_kw['historical_config'] = {'mode': 'seasons', 'value': y}
+            all_teams_hist[y] = fetch_all_teams(conn, 'historical_stats', **hist_kw)
+            all_teams_post[y] = fetch_all_teams(conn, 'postseason_stats', **hist_kw)
 
         # ---- Enrich team data with minute-weighted player info averages ----
         all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw)
@@ -339,23 +365,35 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
 
         # ---- Recombine team + opponent fields into full rows ----
         full_curr = _combine_team_opp(all_teams_curr)
-        full_hist = _combine_team_opp(all_teams_hist)
-        full_post = _combine_team_opp(all_teams_post)
+        full_hist = {y: _combine_team_opp(all_teams_hist[y]) for y in supported_years}
+        full_post = {y: _combine_team_opp(all_teams_post[y]) for y in supported_years}
 
         curr_by_abbr = {d.get(ctx.team_abbr_field): d for d in full_curr}
-        hist_by_abbr = {d.get(ctx.team_abbr_field): d for d in full_hist}
-        post_by_abbr = {d.get(ctx.team_abbr_field): d for d in full_post}
+        hist_by_abbr = {y: {d.get(ctx.team_abbr_field): d for d in full_hist[y]} for y in supported_years}
+        post_by_abbr = {y: {d.get(ctx.team_abbr_field): d for d in full_post[y]} for y in supported_years}
 
         # ---- Team percentile populations (all rates) ----
-        def _team_context_fn(entity):
-            abbr = entity.get(ctx.team_abbr_field)
-            return {'team_players': player_groups.get(abbr, [])}
+        if precomputed:
+            team_pct_by_rate = precomputed['team']
+            opp_pct_by_rate = precomputed['opponents']
+        else:
+            def _team_context_fn(entity):
+                abbr = entity.get(ctx.team_abbr_field)
+                return {'team_players': player_groups.get(abbr, [])}
 
-        team_pct_by_rate = _compute_pct_by_rate({
-            'current_stats': all_teams_curr['teams'],
-            'historical_stats': all_teams_hist['teams'],
-            'postseason_stats': all_teams_post['teams'],
-        }, 'team', context_fn=_team_context_fn)
+            team_dict = {'current_stats': all_teams_curr['teams']}
+            for y in supported_years:
+                team_dict[f'historical_stats_{y}yr'] = all_teams_hist[y]['teams']
+                team_dict[f'postseason_stats_{y}yr'] = all_teams_post[y]['teams']
+                
+            team_pct_by_rate = _compute_pct_by_rate(team_dict, 'team', context_fn=_team_context_fn)
+            
+            opp_dict = {'current_stats': all_teams_curr['opponents']}
+            for y in supported_years:
+                opp_dict[f'historical_stats_{y}yr'] = all_teams_hist[y]['opponents']
+                opp_dict[f'postseason_stats_{y}yr'] = all_teams_post[y]['opponents']
+                
+            opp_pct_by_rate = _compute_pct_by_rate(opp_dict, 'opponents')
 
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
@@ -366,9 +404,11 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         # ---- Opponent percentile populations (base-section-keyed) ----
         _data_by_base = {
             'current_stats': full_curr,
-            'historical_stats': full_hist,
-            'postseason_stats': full_post,
         }
+        for y in supported_years:
+            _data_by_base[f'historical_stats_{y}yr'] = full_hist[y]
+            _data_by_base[f'postseason_stats_{y}yr'] = full_post[y]
+            
         opp_percentiles = {}
         seen_opp = set()
         for entry in columns:
@@ -416,19 +456,23 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
 
         for abbr in abbrs:
             curr_data = curr_by_abbr.get(abbr)
-            hist_data = hist_by_abbr.get(abbr)
-            post_data = post_by_abbr.get(abbr)
+            hist_data_dict = {y: hist_by_abbr[y].get(abbr) for y in supported_years}
+            post_data_dict = {y: post_by_abbr[y].get(abbr) for y in supported_years}
 
-            for d in [curr_data, hist_data, post_data]:
-                if d:
-                    d['name'] = team_names_map.get(abbr, abbr)
+            if curr_data:
+                curr_data['name'] = team_names_map.get(abbr, abbr)
+            for y in supported_years:
+                if hist_data_dict[y]:
+                    hist_data_dict[y]['name'] = team_names_map.get(abbr, abbr)
+                if post_data_dict[y]:
+                    post_data_dict[y]['name'] = team_names_map.get(abbr, abbr)
 
             row, pct_cells = build_merged_entity_row(
                 player_id=None,
                 columns_list=columns,
                 current_data=curr_data,
-                historical_data=hist_data,
-                postseason_data=post_data,
+                historical_data=hist_data_dict,
+                postseason_data=post_data_dict,
                 pct_by_rate=team_pct_by_rate,
                 entity_type='all_teams',
                 opp_percentiles=opp_percentiles,
@@ -478,7 +522,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
                        show_advanced=False,
                        historical_config=None,
                        partial_update=False,
-                       sync_section=None):
+                       sync_section=None, precomputed=None):
     """Sync the league-wide Players tab with all stat modes."""
     logger.info('  Syncing Players tab...')
     fmt = ctx.sheet_formatting
@@ -497,17 +541,29 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
 
     conn = get_db_connection()
     try:
+        from src.publish.definitions.config import STAT_CONSTANTS
+        supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+
         # ---- Fetch all players league-wide ----
         all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw)
-        all_players_hist = fetch_all_players(conn, 'historical_stats', **query_kw)
-        all_players_post = fetch_all_players(conn, 'postseason_stats', **query_kw)
+        
+        all_players_hist = {}
+        all_players_post = {}
+        for y in supported_years:
+            hist_kw = query_kw.copy()
+            hist_kw['historical_config'] = {'mode': 'seasons', 'value': y}
+            all_players_hist[y] = fetch_all_players(conn, 'historical_stats', **hist_kw)
+            all_players_post[y] = fetch_all_players(conn, 'postseason_stats', **hist_kw)
 
         # ---- Percentile populations (all rates) ----
-        player_pct_by_rate = _compute_pct_by_rate({
-            'current_stats': all_players_curr,
-            'historical_stats': all_players_hist,
-            'postseason_stats': all_players_post,
-        }, 'player')
+        if precomputed:
+            player_pct_by_rate = precomputed['player']
+        else:
+            player_dict = {'current_stats': all_players_curr}
+            for y in supported_years:
+                player_dict[f'historical_stats_{y}yr'] = all_players_hist[y]
+                player_dict[f'postseason_stats_{y}yr'] = all_players_post[y]
+            player_pct_by_rate = _compute_pct_by_rate(player_dict, 'player')
 
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
@@ -523,8 +579,8 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
 
         # ---- Index players by id ----
         curr_by_id = {p.get('id'): p for p in all_players_curr}
-        hist_by_id = {p.get('id'): p for p in all_players_hist}
-        post_by_id = {p.get('id'): p for p in all_players_post}
+        hist_by_id = {y: {p.get('id'): p for p in all_players_hist[y]} for y in supported_years}
+        post_by_id = {y: {p.get('id'): p for p in all_players_post[y]} for y in supported_years}
 
         # ---- Unique player IDs sorted by current-season minutes ----
         all_player_ids = []
@@ -536,11 +592,13 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
             if pid and pid not in seen:
                 all_player_ids.append(pid)
                 seen.add(pid)
-        for p in all_players_hist + all_players_post:
-            pid = p.get('id')
-            if pid and pid not in seen:
-                all_player_ids.append(pid)
-                seen.add(pid)
+                
+        for y in supported_years:
+            for p in all_players_hist[y] + all_players_post[y]:
+                pid = p.get('id')
+                if pid and pid not in seen:
+                    all_player_ids.append(pid)
+                    seen.add(pid)
 
         # ---- Build player rows (all modes at once) ----
         data_rows = []
@@ -553,12 +611,15 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         }
 
         for pid in all_player_ids:
+            hist_data_dict = {y: hist_by_id[y].get(pid) for y in supported_years}
+            post_data_dict = {y: post_by_id[y].get(pid) for y in supported_years}
+            
             row, pct_cells = build_merged_entity_row(
                 player_id=pid,
                 columns_list=columns,
                 current_data=curr_by_id.get(pid),
-                historical_data=hist_by_id.get(pid),
-                postseason_data=post_by_id.get(pid),
+                historical_data=hist_data_dict,
+                postseason_data=post_data_dict,
                 pct_by_rate=player_pct_by_rate,
                 entity_type='player',
                 context={'lookup_tables': lookup_tables},

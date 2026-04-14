@@ -15,5 +15,7 @@ Real O/D Reb %s
 playtype data
 Gravity
 
+transition/halfcourt
+
 heaves
 Season team IDs
