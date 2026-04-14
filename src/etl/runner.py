@@ -303,6 +303,10 @@ def run_etl(
         source, phase, season, season_type_name, entity,
     )
 
+    # Trigger provider-specific validation if defined
+    if hasattr(config_mod, 'validate_provider_config'):
+        config_mod.validate_provider_config()
+
     validate_config(endpoints, endpoints_schema)
     ensure_tables(db_schema)
 

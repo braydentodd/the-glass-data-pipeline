@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Tuple
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, STAT_CONSTANTS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
 from src.publish.destinations.sheets.styles import get_color_for_percentile, get_color_for_raw, get_color_dict, get_border_style, create_cell_format, create_text_format
-from src.publish.destinations.sheets.layout import get_column_index
+from src.publish.core.table_builder import get_column_index
 
 def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               header_merges: list, n_data_rows: int,

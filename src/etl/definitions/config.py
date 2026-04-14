@@ -54,6 +54,15 @@ ETL_CONFIG_SCHEMA = {
     'auto_resume': {'required': True, 'types': (bool,)},
 }
 
+ETL_TABLES_SCHEMA = {
+    'columns': {'required': True, 'types': (dict,)},
+    'unique_key': {'required': False, 'types': (list,)},
+}
+
+SOURCES_SCHEMA = {
+    'leagues': {'required': True, 'types': (list,)},
+}
+
 
 # ============================================================================
 # DEFAULT TRANSFORMS BY COLUMN TYPE

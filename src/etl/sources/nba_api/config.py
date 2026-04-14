@@ -287,10 +287,70 @@ API_FIELD_NAMES = {
 
 
 # ============================================================================
+# SCHEMA VALIDATORS
+# ============================================================================
+
+def validate_provider_config() -> list:
+    from src.core.config_validation import validate_flat_config, validate_dict_config
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    errors = []
+    
+    errors.extend(validate_flat_config(SEASON_CONFIG, SEASON_CONFIG_SCHEMA, 'SEASON_CONFIG'))
+    errors.extend(validate_flat_config(API_CONFIG, API_CONFIG_SCHEMA, 'API_CONFIG'))
+    errors.extend(validate_flat_config(RETRY_CONFIG, RETRY_CONFIG_SCHEMA, 'RETRY_CONFIG'))
+    errors.extend(validate_dict_config(SEASON_TYPES, SEASON_TYPES_SCHEMA, 'SEASON_TYPES'))
+    errors.extend(validate_dict_config(ENDPOINTS, ENDPOINTS_SCHEMA, 'ENDPOINTS'))
+    
+    if errors:
+        for err in errors:
+            logger.error('nba_api config validation: %s', err)
+    
+    return errors
+
+
+# ============================================================================
 # VALIDATION SCHEMAS  (co-located with the config they describe)
 # ============================================================================
 
 VALID_EXECUTION_TIERS = {'league', 'player', 'team', 'team_call'}
+
+SEASON_CONFIG_SCHEMA = {
+    'current_season': {'required': True, 'types': (str,)},
+    'current_season_year': {'required': True, 'types': (int,)},
+    'season_type': {'required': True, 'types': (str,)},
+    'backfill_start': {'required': True, 'types': (str,)},
+    'tracking_start': {'required': True, 'types': (str,)},
+    'hustle_start': {'required': True, 'types': (str,)},
+    'onoff_start': {'required': True, 'types': (str,)},
+    'combine_start_year': {'required': True, 'types': (int,)},
+}
+
+API_CONFIG_SCHEMA = {
+    'rate_limit_delay': {'required': True, 'types': (int, float)},
+    'per_player_rate_limit': {'required': True, 'types': (int, float)},
+    'timeout_default': {'required': True, 'types': (int, float)},
+    'timeout_bulk': {'required': True, 'types': (int, float)},
+    'backoff_divisor': {'required': True, 'types': (int, float)},
+    'cooldown_after_batch_seconds': {'required': True, 'types': (int, float)},
+    'max_consecutive_failures': {'required': True, 'types': (int,)},
+    'roster_batch_size': {'required': True, 'types': (int,)},
+    'roster_batch_cooldown': {'required': True, 'types': (int, float)},
+    'league_id': {'required': True, 'types': (str,)},
+    'per_mode_simple': {'required': True, 'types': (str,)},
+    'per_mode_time': {'required': True, 'types': (str,)},
+    'per_mode_detailed': {'required': True, 'types': (str,)},
+    'last_n_games': {'required': True, 'types': (str,)},
+    'month': {'required': True, 'types': (str,)},
+    'opponent_team_id': {'required': True, 'types': (str,)},
+    'period': {'required': True, 'types': (str,)},
+}
+
+RETRY_CONFIG_SCHEMA = {
+    'max_retries': {'required': True, 'types': (int,)},
+    'backoff_base': {'required': True, 'types': (int, float)},
+}
 
 ENDPOINTS_SCHEMA = {
     'min_season': {'required': True, 'types': (str, type(None))},

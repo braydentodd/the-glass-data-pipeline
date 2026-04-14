@@ -9,9 +9,9 @@ from src.publish.definitions.config import (
     STAT_CONSTANTS, STAT_RATE_LABELS, DEFAULT_STAT_RATE, SHEET_FORMATTING, COLORS,
     COLOR_THRESHOLDS, SUBSECTIONS, WIDTH_CLASSES, MENU_CONFIG
 )
-from src.publish.destinations.sheets.layout import build_tab_columns, get_column_index
+from src.publish.core.table_builder import build_tab_columns, get_column_index
 from src.publish.core.formatting import get_reverse_stats, get_editable_fields
-from src.publish.destinations.sheets.payloads import _get_subsection_boundaries, _get_section_boundaries
+from src.publish.destinations.sheets.api_builder import _get_subsection_boundaries, _get_section_boundaries
 
 logger = logging.getLogger(__name__)
 

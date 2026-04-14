@@ -304,3 +304,100 @@ SUMMARY_THRESHOLDS = [
     ('25th', 25),
     ('Worst', 0),
 ]
+
+
+# ============================================================================
+# SCHEMA VALIDATORS
+# ============================================================================
+
+GOOGLE_SHEETS_CONFIG_SCHEMA = {
+    'credentials_file': {'required': True, 'types': (str, type(None))},
+    'spreadsheet_id': {'required': True, 'types': (str, type(None))},
+    'spreadsheet_name': {'required': True, 'types': (str,)},
+    'scopes': {'required': True, 'types': (list,)},
+}
+
+STAT_CONSTANTS_SCHEMA = {
+    'default_per_minute': {'required': True, 'types': (float, int)},
+    'default_per_possessions': {'required': True, 'types': (float, int)},
+    'cache_ttl_seconds': {'required': True, 'types': (int,)},
+    'max_historical_years': {'required': True, 'types': (int,)},
+}
+
+SHEET_FORMATTING_SCHEMA = {
+    'header_font': {'required': True, 'types': (str,)},
+    'data_font': {'required': True, 'types': (str,)},
+    'section_header_size': {'required': True, 'types': (int,)},
+    'team_name_size': {'required': True, 'types': (int,)},
+    'subsection_header_size': {'required': True, 'types': (int,)},
+    'column_header_size': {'required': True, 'types': (int,)},
+    'data_size': {'required': True, 'types': (int,)},
+    'header_bg': {'required': True, 'types': (str,)},
+    'header_fg': {'required': True, 'types': (str,)},
+    'header_description_spacer_count': {'required': True, 'types': (int,)},
+    'row_even_bg': {'required': True, 'types': (str,)},
+    'row_odd_bg': {'required': True, 'types': (str,)},
+    'border_weight': {'required': True, 'types': (int,)},
+    'subsection_border_weight': {'required': True, 'types': (int,)},
+    'header_border_color': {'required': True, 'types': (str,)},
+    'data_border_color': {'required': True, 'types': (str,)},
+    'column_border_weight': {'required': True, 'types': (int,)},
+    'column_border_color_header': {'required': True, 'types': (str,)},
+    'column_border_color_data': {'required': True, 'types': (str,)},
+    'section_separator_width': {'required': True, 'types': (int,)},
+    'subsection_separator_width': {'required': True, 'types': (int,)},
+    'header_separator_bg': {'required': True, 'types': (str,)},
+    'data_separator_bg': {'required': True, 'types': (str,)},
+    'header_divider_height': {'required': True, 'types': (int,)},
+    'header_divider_bg': {'required': True, 'types': (str,)},
+    'footer_divider_height': {'required': True, 'types': (int,)},
+    'footer_divider_bg': {'required': True, 'types': (str,)},
+    'row_height_section_header': {'required': True, 'types': (int,)},
+    'row_height_filter': {'required': True, 'types': (int,)},
+    'row_height_default': {'required': True, 'types': (int,)},
+    'default_h_align': {'required': True, 'types': (str,)},
+    'default_v_align': {'required': True, 'types': (str,)},
+    'wrap_strategy': {'required': True, 'types': (str,)},
+    'hide_advanced_columns': {'required': True, 'types': (bool,)},
+    'hide_subsection_row': {'required': True, 'types': (bool,)},
+    'hide_identity_section': {'required': True, 'types': (bool,)},
+    'percentile_companion_width': {'required': True, 'types': (int,)},
+    'percentile_companion_font_size': {'required': True, 'types': (int,)},
+    'section_header_row': {'required': True, 'types': (int,)},
+    'section_divider_row': {'required': True, 'types': (int,)},
+    'subsection_header_row': {'required': True, 'types': (int,)},
+    'subsection_divider_row': {'required': True, 'types': (int,)},
+    'column_header_row': {'required': True, 'types': (int,)},
+    'filter_row': {'required': True, 'types': (int,)},
+    'data_start_row': {'required': True, 'types': (int,)},
+    'header_row_count': {'required': True, 'types': (int,)},
+    'frozen_rows': {'required': True, 'types': (int,)},
+    'frozen_cols': {'required': True, 'types': (int,)},
+    'row_sections': {'required': True, 'types': (list,)},
+    'sync_delay_seconds': {'required': True, 'types': (int,)},
+}
+
+SECTION_CONFIG_SCHEMA = {
+    'display_name': {'required': True, 'types': (str,)},
+    'is_stats_section': {'required': True, 'types': (bool,)},
+    'toggleable': {'required': True, 'types': (bool,)},
+}
+
+COLORS_SCHEMA = {
+    'red': {'required': True, 'types': (int, float)},
+    'green': {'required': True, 'types': (int, float)},
+    'blue': {'required': True, 'types': (int, float)},
+}
+
+COLOR_THRESHOLDS_SCHEMA = {
+    'low': {'required': True, 'types': (int, float)},
+    'mid': {'required': True, 'types': (int, float)},
+    'high': {'required': True, 'types': (int, float)},
+}
+
+MENU_CONFIG_SCHEMA = {
+    'display_name': {'required': True, 'types': (str,)},
+    'max_value': {'required': False, 'types': (int,)},
+    'show_label': {'required': False, 'types': (str,)},
+    'hide_label': {'required': False, 'types': (str,)},
+}

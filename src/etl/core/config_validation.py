@@ -144,15 +144,22 @@ def validate_config(
         RuntimeError: If any validation errors are found.
     """
     from src.etl.definitions import (
-        DB_COLUMNS, TABLES, ETL_CONFIG,
+        DB_COLUMNS, TABLES, ETL_CONFIG, ETL_TABLES, SOURCES,
         DB_COLUMNS_SCHEMA, TABLES_SCHEMA, ETL_CONFIG_SCHEMA,
+        ETL_TABLES_SCHEMA, SOURCES_SCHEMA
     )
+    from src.core.config_validation import validate_core_constants
 
     errors: List[str] = []
+
+    # Cross-repo foundational validations
+    errors.extend(validate_core_constants())
 
     # Schema validations
     errors.extend(validate_dict_config(DB_COLUMNS, DB_COLUMNS_SCHEMA, 'DB_COLUMNS'))
     errors.extend(validate_dict_config(TABLES, TABLES_SCHEMA, 'TABLES'))
+    errors.extend(validate_dict_config(ETL_TABLES, ETL_TABLES_SCHEMA, 'ETL_TABLES'))
+    errors.extend(validate_dict_config(SOURCES, SOURCES_SCHEMA, 'SOURCES'))
     errors.extend(validate_flat_config(ETL_CONFIG, ETL_CONFIG_SCHEMA, 'ETL_CONFIG'))
 
     if endpoints and endpoints_schema:

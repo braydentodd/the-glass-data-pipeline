@@ -83,3 +83,13 @@ def validate_flat_config(
 ) -> List[str]:
     """Validate a flat config dict (keys are the attributes)."""
     return validate_entry(data, schema, config_name)
+
+def validate_core_constants() -> List[str]:
+    """Validates the core constants exported in src/core/config.py against their schema."""
+    from src.core.config import SEASON_TYPE_GROUPS, CORE_CONFIG_SCHEMA
+    
+    errors: List[str] = []
+    if 'SEASON_TYPE_GROUPS' in CORE_CONFIG_SCHEMA:
+        errors.extend(validate_entry(SEASON_TYPE_GROUPS, CORE_CONFIG_SCHEMA['SEASON_TYPE_GROUPS'], "SEASON_TYPE_GROUPS"))
+        
+    return errors

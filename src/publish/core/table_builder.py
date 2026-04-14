@@ -718,7 +718,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                             postseason_data: Optional[dict],
                             pct_by_rate: dict,
                             entity_type: str = 'player',
-                            hist_seasons: str = '', post_seasons: str = '',
+                            historical_timeframe: str = '', post_seasons: str = '',
                             opp_percentiles: Optional[dict] = None,
                             context: Optional[dict] = None) -> Tuple[list, List[dict]]:
     """
@@ -734,7 +734,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
     # Build section_data with composite keys for all rates
     _SECTION_TO_DATA = {
         'current_stats': (current_data, ''),
-        'historical_stats': (historical_data, hist_seasons),
+        'historical_stats': (historical_data, historical_timeframe),
         'postseason_stats': (postseason_data, post_seasons),
     }
 

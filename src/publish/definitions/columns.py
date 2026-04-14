@@ -7,7 +7,7 @@ maps display columns back to database column references.
 
 from typing import Any, Dict
 
-from src.publish.core.formulas import (
+from src.publish.definitions.formulas import (
     add, subtract, multiply, divide, lookup, team_average, seasons_in_query, calculate_age
 )
 
@@ -101,7 +101,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': lookup('team_id', 'all_teams', 'abbr')
+            'player': lookup('team_id', 'teams', 'abbr')
         }
     },
     'conf': {

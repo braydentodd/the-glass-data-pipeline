@@ -16,6 +16,19 @@ def format_season_label(season_year: int) -> str:
     return f"{season_year - 1}-{str(season_year)[2:]}"
 
 # ============================================================================
+# SCHEMA VALIDATION DEFINITIONS
+# ============================================================================
+
+CORE_CONFIG_SCHEMA = {
+    'SEASON_TYPE_GROUPS': {
+        'regular_season': {'required': True, 'types': (tuple, list)},
+        'postseason': {'required': True, 'types': (tuple, list)},
+    },
+    'SEASON_TYPE_LABELS': { # Using dict string match conceptually
+    }
+}
+
+# ============================================================================
 # SEASON TYPE CLASSIFICATION
 # Season type codes are grouped into "regular_season" vs "postseason".
 # Queries use these groups to decide which season_type values to aggregate.

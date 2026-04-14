@@ -301,7 +301,7 @@ def main():
         return
 
     # Build historical timeframe config (never includes current season)
-    num_seasons = args.hist_seasons or int(os.environ.get('HISTORICAL_TIMEFRAME', '3'))
+    num_seasons = args.historical_timeframe or int(os.environ.get('HISTORICAL_TIMEFRAME', '3'))
     historical_config = {'mode': 'seasons', 'value': num_seasons}
 
     sync_league(league, rate, show_advanced, historical_config, partial_update, sync_section, priority_tab)
