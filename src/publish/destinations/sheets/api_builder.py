@@ -44,9 +44,6 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     column_data_color = get_color_for_raw(COLORS[fmt.get('column_border_color_data', 'black')])
     wrap_strategy = fmt.get('wrap_strategy', 'CLIP')
 
-    # Subsection row is always visible
-    hide_subsection_row = False
-
     # --- Fast path for partial update (mode / timeframe changes) ---------
     # Skip all structural formatting, resize, and widths; only reapply data-dependent pieces.
     if partial_update:
@@ -275,7 +272,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         })
 
     # ---- 6c. Header divider rows (section/subsection) ----
-    divider_bg = get_color_for_raw(COLORS[fmt.get('header_divider_bg', 'dark_gray')])
+    divider_bg = get_color_for_raw(COLORS[fmt.get('header_divider_bg', 'white')])
     divider_height = fmt.get('header_divider_height', 2)
     for row_key in ('section_divider_row', 'subsection_divider_row'):
         row_idx = fmt.get(row_key)
@@ -628,21 +625,6 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     'fields': 'hiddenByUser',
                 }
             })
-
-    # ---- 17. Hide subsection row (tied to advanced stats state) ----
-    if hide_subsection_row:
-        requests.append({
-            'updateDimensionProperties': {
-                'range': {
-                    'sheetId': ws_id,
-                    'dimension': 'ROWS',
-                    'startIndex': fmt['subsection_header_row'],
-                    'endIndex': fmt['subsection_header_row'] + 1,
-                },
-                'properties': {'hiddenByUser': True},
-                'fields': 'hiddenByUser',
-            }
-        })
 
     # ---- 19. Hide identity section columns ----
     if fmt.get('hide_identity_section', True):

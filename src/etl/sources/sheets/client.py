@@ -28,6 +28,21 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+import re
+
+def _parse_measurement(val_str: str):
+    if not val_str: return None
+    v = str(val_str).strip()
+    match = re.match(r"^(\d+)'(\d+)\"?$", v)
+    if match:
+        return int(match.group(1)) * 12 + int(match.group(2))
+    try:
+        inches = int(v)
+        if 0 < inches < 120: return inches
+    except ValueError:
+        pass
+    return None
+
 def _get_editable_defs() -> List[dict]:
     """Return list of editable column definitions with their DB field names."""
     defs = []
@@ -128,6 +143,8 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
         try:
             ws = spreadsheet.worksheet(players_sheet_name)
         except Exception:
+            ws = spreadsheet.worksheet('ALL_PLAYERS')
+        except Exception:
             ws = spreadsheet.worksheet('PLAYERS')
 
         _, data_rows = _read_sheet_data(ws, header_rows)
@@ -152,6 +169,8 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
                     value = row[col_idx]
                     if value == '':
                         value = None
+                    elif mapping.get('format') == 'measurement':
+                        value = _parse_measurement(value)
                     fields[mapping['db_field']] = value
             if fields:
                 updates.append((player_id, fields))
@@ -164,7 +183,10 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
     # ---- Sync team editable fields from Teams sheet ----
     if team_col_map:
         try:
-            ws = spreadsheet.worksheet('TEAMS')
+            ws = spreadsheet.worksheet('ALL_TEAMS')
+        except Exception:
+            try:
+                ws = spreadsheet.worksheet('TEAMS')
         except Exception:
             logger.warning('TEAMS worksheet not found — skipping team edits')
             return results
@@ -198,6 +220,8 @@ def sync_edits(league: str, dry_run: bool = False) -> Dict[str, int]:
                     value = row[col_idx]
                     if value == '':
                         value = None
+                    elif mapping.get('format') == 'measurement':
+                        value = _parse_measurement(value)
                     fields[mapping['db_field']] = value
             if fields:
                 updates.append((team_id, fields))

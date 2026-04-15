@@ -239,8 +239,8 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
         n_player_rows = len(data_rows)
 
         # ---- Separator row between players and team/opp ----
-        separator_row = [''] * len(columns)
-        data_rows.append(separator_row)
+        divider_row = [''] * len(columns)
+        data_rows.append(divider_row)
 
         # ---- Team + Opponents rows ----
         team_ctx = {'team_players': current_players, 'lookup_tables': lookup_tables}
