@@ -6,15 +6,25 @@ from src.publish.core.calculations import get_percentile_rank, evaluate_formula,
 from src.publish.core.formatting import format_section_header, format_stat_value, format_height
 
 
+import re
 def _base_section(ctx: str) -> str:
     """Extract the base section name from a potentially composite context key.
 
     'current_stats__per_possession' -> 'current_stats'
+    'historical_stats_3yr__per_possession' -> 'historical_stats'
     'entities' -> 'entities'
     """
-    if ctx and '__' in ctx:
-        return ctx.split('__')[0]
-    return ctx
+    if not ctx:
+        return ctx
+
+    ctx_prefix = ctx.split('__')[0]
+    
+    # Match the mapped prefix cleanly against registered config sections
+    for section in SECTIONS:
+        if ctx_prefix.startswith(section):
+            return section
+            
+    return ctx_prefix
 
 
 def _format_companion(rank: float, diff: Optional[float], base_def: dict) -> str:

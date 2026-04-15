@@ -15,7 +15,7 @@ GOOGLE_SHEETS_CONFIG = {
     'nba': {
         'credentials_file': os.getenv('GOOGLE_CREDENTIALS_FILE'),
         'spreadsheet_id': os.getenv('NBA_SPREADSHEET_ID'),
-        'spreadsheet_name': os.getenv('NBA_SPREADSHEET_NAME', 'The Glass'),
+        'spreadsheet_name': 'NBA Data (The Glass)',
         'scopes': [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
@@ -24,7 +24,7 @@ GOOGLE_SHEETS_CONFIG = {
     'ncaa': {
         'credentials_file': os.getenv('GOOGLE_CREDENTIALS_FILE'),
         'spreadsheet_id': os.getenv('NCAA_SPREADSHEET_ID'),
-        'spreadsheet_name': os.getenv('NCAA_SPREADSHEET_NAME', 'The Glass NCAA'),
+        'spreadsheet_name': 'NCAA Data (The Glass)',
         'scopes': [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'

@@ -186,13 +186,20 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
     # Auto-populate seasons_in_query from entity_data when available.
     # Historical/postseason queries store COUNT(DISTINCT s.season) as 'season'.
     if context is None:
-        context = {}
-    if 'seasons_in_query' not in context:
+        local_context = {}
+    else:
+        local_context = context.copy()
+        
+    if 'seasons_in_query' not in local_context:
         season_val = entity_data.get('season')
-        if isinstance(season_val, int) and season_val > 0:
-            context['seasons_in_query'] = season_val
+        if isinstance(season_val, int):
+            local_context['seasons_in_query'] = season_val
+        elif isinstance(season_val, str):
+            # E.g. '2025-26'
+            local_context['seasons_in_query'] = 1
         else:
-            context['seasons_in_query'] = 1
+            # None or empty dict
+            local_context['seasons_in_query'] = 0
 
     results = {}
     games = entity_data.get('games', 0) or 0
@@ -204,7 +211,7 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
         if entity_type not in values:
             continue
 
-        raw_value = evaluate_formula(col_key, entity_data, entity_type, mode, context)
+        raw_value = evaluate_formula(col_key, entity_data, entity_type, mode, local_context)
 
         if raw_value is None:
             results[col_key] = None

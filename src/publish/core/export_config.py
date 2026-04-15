@@ -15,7 +15,7 @@ from src.publish.destinations.sheets.api_builder import _get_subsection_boundari
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path(__file__).resolve().parents[4] / 'apps_script' / 'config'
+OUTPUT_DIR = Path(__file__).resolve().parents[3] / 'apps_script' / 'config'
 
 
 def get_config_for_export(league: str,
@@ -30,7 +30,7 @@ def get_config_for_export(league: str,
     when optional args are not provided.
 
     Exports:
-      - column_ranges:            section toggle ranges (team_sheet / {league}_sheet)
+      - column_ranges:            section toggle ranges (team_tab / all_players_tab)
       - advanced_column_ranges:   toggle advanced stat columns
       - percentile_column_ranges: toggle percentile columns
       - column_indices:           edit-detection indices (player_id, team, stats_start)
@@ -44,7 +44,6 @@ def get_config_for_export(league: str,
 
     if google_sheets_config is None:
         google_sheets_config = GOOGLE_SHEETS_CONFIG.get(league, {})
-    league_sheet = f'{league}_sheet'
 
     # --- Teams dict -------------------------------------------------------
     teams_from_db = get_teams_fn()
@@ -93,7 +92,7 @@ def get_config_for_export(league: str,
             return None
         return {'start': min(indices) + 1, 'count': len(indices)}
 
-    column_ranges = {'team_sheet': {}, league_sheet: {}, 'teams_sheet': {}}
+    column_ranges = {'team_tab': {}, 'all_players_tab': {}, 'all_teams_tab': {}}
     
     supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
     
@@ -109,11 +108,11 @@ def get_config_for_export(league: str,
         league_range = _section_range(league_columns, sec)
         teams_range = _section_range(teams_columns, sec)
         if team_range:
-            column_ranges['team_sheet'][sec] = team_range
+            column_ranges['team_tab'][sec] = team_range
         if league_range:
-            column_ranges[league_sheet][sec] = league_range
+            column_ranges['all_players_tab'][sec] = league_range
         if teams_range:
-            column_ranges['teams_sheet'][sec] = teams_range
+            column_ranges['all_teams_tab'][sec] = teams_range
 
     # --- Advanced column ranges ------------------------------------------
     def _advanced_indices(cols):
@@ -123,9 +122,9 @@ def get_config_for_export(league: str,
         ])
 
     advanced_column_ranges = {
-        'team_sheet':  _contiguous_ranges(_advanced_indices(team_columns)),
-        league_sheet:  _contiguous_ranges(_advanced_indices(league_columns)),
-        'teams_sheet': _contiguous_ranges(_advanced_indices(teams_columns)),
+        'team_tab':  _contiguous_ranges(_advanced_indices(team_columns)),
+        'all_players_tab':  _contiguous_ranges(_advanced_indices(league_columns)),
+        'all_teams_tab': _contiguous_ranges(_advanced_indices(teams_columns)),
     }
 
     # --- Basic column ranges (hidden when advanced mode is on) -----------
@@ -136,9 +135,9 @@ def get_config_for_export(league: str,
         ])
 
     basic_column_ranges = {
-        'team_sheet':  _contiguous_ranges(_basic_indices(team_columns)),
-        league_sheet:  _contiguous_ranges(_basic_indices(league_columns)),
-        'teams_sheet': _contiguous_ranges(_basic_indices(teams_columns)),
+        'team_tab':  _contiguous_ranges(_basic_indices(team_columns)),
+        'all_players_tab':  _contiguous_ranges(_basic_indices(league_columns)),
+        'all_teams_tab': _contiguous_ranges(_basic_indices(teams_columns)),
     }
 
     # --- Percentile column ranges ----------------------------------------
@@ -149,9 +148,9 @@ def get_config_for_export(league: str,
         ])
 
     percentile_column_ranges = {
-        'team_sheet':  _contiguous_ranges(_percentile_indices(team_columns)),
-        league_sheet:  _contiguous_ranges(_percentile_indices(league_columns)),
-        'teams_sheet': _contiguous_ranges(_percentile_indices(teams_columns)),
+        'team_tab':  _contiguous_ranges(_percentile_indices(team_columns)),
+        'all_players_tab':  _contiguous_ranges(_percentile_indices(league_columns)),
+        'all_teams_tab': _contiguous_ranges(_percentile_indices(teams_columns)),
     }
 
     # --- Base value columns that have percentile counterparts ------------
@@ -163,9 +162,9 @@ def get_config_for_export(league: str,
         ])
 
     base_value_column_ranges = {
-        'team_sheet':  _contiguous_ranges(_base_value_with_pct_indices(team_columns)),
-        league_sheet:  _contiguous_ranges(_base_value_with_pct_indices(league_columns)),
-        'teams_sheet': _contiguous_ranges(_base_value_with_pct_indices(teams_columns)),
+        'team_tab':  _contiguous_ranges(_base_value_with_pct_indices(team_columns)),
+        'all_players_tab':  _contiguous_ranges(_base_value_with_pct_indices(league_columns)),
+        'all_teams_tab': _contiguous_ranges(_base_value_with_pct_indices(teams_columns)),
     }
 
     # --- Vertical boundaries (for border management in toggles) -----------
@@ -174,15 +173,15 @@ def get_config_for_export(league: str,
                 for b in idx_list]
 
     subsection_boundaries = {
-        'team_sheet':  _boundary_entries(team_columns,  _get_subsection_boundaries(team_columns)),
-        league_sheet:  _boundary_entries(league_columns, _get_subsection_boundaries(league_columns)),
-        'teams_sheet': _boundary_entries(teams_columns,  _get_subsection_boundaries(teams_columns)),
+        'team_tab':  _boundary_entries(team_columns,  _get_subsection_boundaries(team_columns)),
+        'all_players_tab':  _boundary_entries(league_columns, _get_subsection_boundaries(league_columns)),
+        'all_teams_tab': _boundary_entries(teams_columns,  _get_subsection_boundaries(teams_columns)),
     }
 
     section_boundaries = {
-        'team_sheet':  _boundary_entries(team_columns,  _get_section_boundaries(team_columns)),
-        league_sheet:  _boundary_entries(league_columns, _get_section_boundaries(league_columns)),
-        'teams_sheet': _boundary_entries(teams_columns,  _get_section_boundaries(teams_columns)),
+        'team_tab':  _boundary_entries(team_columns,  _get_section_boundaries(team_columns)),
+        'all_players_tab':  _boundary_entries(league_columns, _get_section_boundaries(league_columns)),
+        'all_teams_tab': _boundary_entries(teams_columns,  _get_section_boundaries(teams_columns)),
     }
 
     # --- Always-hidden columns per sheet type (1-indexed) ----------------
@@ -195,9 +194,9 @@ def get_config_for_export(league: str,
         return hidden
 
     always_hidden_columns = {
-        'team_sheet':  _always_hidden_indices(team_columns, 'player'),
-        'teams_sheet': _always_hidden_indices(teams_columns, 'team'),
-        league_sheet:  [],
+        'team_tab':  _always_hidden_indices(team_columns, 'player'),
+        'all_teams_tab': _always_hidden_indices(teams_columns, 'team'),
+        'all_players_tab':  [],
     }
 
     # --- Stats section column ranges -----------
@@ -211,9 +210,9 @@ def get_config_for_export(league: str,
         return {'start': start, 'end': end} if start else None
 
     stats_section_ranges = {
-        'team_sheet':  _stats_section_range(team_columns),
-        league_sheet:  _stats_section_range(league_columns),
-        'teams_sheet': _stats_section_range(teams_columns),
+        'team_tab':  _stats_section_range(team_columns),
+        'all_players_tab':  _stats_section_range(league_columns),
+        'all_teams_tab': _stats_section_range(teams_columns),
     }
 
     # --- Per-column metadata for JS toggle logic -------------------------
@@ -234,9 +233,9 @@ def get_config_for_export(league: str,
         return meta
 
     column_metadata = {
-        'team_sheet':  _column_metadata(team_columns),
-        league_sheet:  _column_metadata(league_columns),
-        'teams_sheet': _column_metadata(teams_columns),
+        'team_tab':  _column_metadata(team_columns),
+        'all_players_tab':  _column_metadata(league_columns),
+        'all_teams_tab': _column_metadata(teams_columns),
     }
 
     # --- Per-column widths -----------------------------------------------
@@ -251,9 +250,9 @@ def get_config_for_export(league: str,
         return widths
 
     column_widths = {
-        'team_sheet':  _column_widths(team_columns),
-        league_sheet:  _column_widths(league_columns),
-        'teams_sheet': _column_widths(teams_columns),
+        'team_tab':  _column_widths(team_columns),
+        'all_players_tab':  _column_widths(league_columns),
+        'all_teams_tab': _column_widths(teams_columns),
     }
 
     # --- Column indices for edit detection (1-indexed) ---
@@ -269,8 +268,12 @@ def get_config_for_export(league: str,
     # --- Editable columns (config-driven for Apps Script) ----------------
     editable_columns = []
     for col_key, col_def in TAB_COLUMNS.items():
-        if not col_def.get('editable', False):
+        editable_config = col_def.get('editable', False)
+        if not editable_config:
             continue
+        if isinstance(editable_config, list) and 'player' not in editable_config:
+            continue
+        
         db_field = col_def.get('values', {}).get('player')
         if not db_field or not isinstance(db_field, str):
             continue
@@ -286,11 +289,15 @@ def get_config_for_export(league: str,
             'team_row_calc': col_def.get('team_row_calc'),
         })
 
-    # --- Editable columns for teams_sheet ----
+    # --- Editable columns for all_teams_tab ----
     teams_editable = []
     for col_key, col_def in TAB_COLUMNS.items():
-        if not col_def.get('editable', False):
+        editable_config = col_def.get('editable', False)
+        if not editable_config:
             continue
+        if isinstance(editable_config, list) and 'all_teams' not in editable_config:
+            continue
+            
         tf = col_def.get('values', {}).get('team')
         if tf and isinstance(tf, str) and tf != 'TEAM':
             ti = get_column_index(col_key, teams_columns)
@@ -311,8 +318,8 @@ def get_config_for_export(league: str,
             'name': league.upper(),
             'slug': league,
             'teams_key': f'{league}_teams',
-            'players_sheet_names': [league.upper(), 'PLAYERS'],
-            'players_range_key': league_sheet,
+            'players_tab_names': [league.upper(), 'PLAYERS', 'ALL_PLAYERS'],
+            'players_range_key': 'all_players_tab',
             'edit_col_index_key': f'{league}_col_index',
         },
         f'{league}_teams': league_teams,
@@ -339,7 +346,7 @@ def get_config_for_export(league: str,
         'column_widths': column_widths,
         'default_stat_rate': DEFAULT_STAT_RATE,
         'subsection_row_index': SHEET_FORMATTING['subsection_header_row'] + 1,
-        'teams_editable_columns': teams_editable,
+        'all_teams_editable_columns': teams_editable,
         'colors': {
             'red': {'r': int(COLORS['red']['red'] * 255), 'g': int(COLORS['red']['green'] * 255), 'b': int(COLORS['red']['blue'] * 255)},
             'yellow': {'r': int(COLORS['yellow']['red'] * 255), 'g': int(COLORS['yellow']['green'] * 255), 'b': int(COLORS['yellow']['blue'] * 255)},
@@ -439,10 +446,11 @@ def _build_editable_lookup(config: dict) -> dict:
         }
         for k, v in ec.items():
             if k.endswith('_col_index') and v is not None:
-                sheet_key = k.replace('_col_index', '_sheet')
+                # {league}_col_index maps to all_players_tab
+                sheet_key = 'all_players_tab'
                 entry['indices'][sheet_key] = v
             elif k == 'team_col_index' and v is not None:
-                entry['indices']['team_sheet'] = v
+                entry['indices']['team_tab'] = v
         lookup[key] = entry
     return lookup
 
@@ -462,16 +470,47 @@ def export_config(league: str) -> Path:
     config.pop('column_metadata', None)
     config.pop('column_widths', None)
 
+    # Clean up extremely bloated keys that Apps Script doesn't actually need
+    keys_to_strip = [
+        'percentile_column_ranges', 'base_value_column_ranges', 
+        'advanced_column_ranges', 'basic_column_ranges', 
+        'stats_column_indices', 'advanced_column_indices', 
+        'basic_column_indices', 'section_column_indices',
+        'rate_column_ranges', 'column_ranges'
+    ]
+    for key in keys_to_strip:
+        config.pop(key, None)
+
     config_json = json.dumps(config, indent=2, ensure_ascii=False)
 
-    output_file = OUTPUT_DIR / f'{league.lower()}.js'
+    output_file = OUTPUT_DIR / f'{league.upper()}.js'
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+
     js_content = (
-        f'// Auto-generated by src.publish.core.export_config — do not edit.\n'
-        f'// Re-generate: python -m src.publish.runner --league {league} --export-config\n'
-        f'var CONFIG = {config_json};\n'
+        f"// Auto-generated by src.publish.core.export_config — do not edit.\n"
+        f"// Re-generate: python -m src.publish.runner --league {league} --export-config\n"
+        f"var CONFIG = {config_json};\n\n"
     )
+    
+    # Generate Menu Action Wrappers statically so V8 parses them reliably 
+    # regardless of file load order (solves "Script function not found")
+    wrappers = ["// --- Auto-generated Menu Wrappers ---"]
+    
+    for key, sec in config.get('sections', {}).items():
+        if sec.get('toggleable'):
+            display = sec.get('display_name', key)
+            wrappers.append(f"function show_{key}() {{ _setSectionVisibility('{key}', true, '{display} shown'); }}")
+            wrappers.append(f"function hide_{key}() {{ _setSectionVisibility('{key}', false, '{display} hidden'); }}")
+            
+    for rate in config.get('stat_rates', []):
+        wrappers.append(f"function switchTo_{rate}() {{ _switchStatRate('{rate}'); }}")
+        
+    for tf in config.get('supported_historical_timeframes', [1, 3, 5, 7]):
+        wrappers.append(f"function setTimeframe{tf}() {{ _setTimeframe({tf}); }}")
+        
+    js_content += "\n".join(wrappers) + "\n"
+
 
     output_file.write_text(js_content, encoding='utf-8')
     logger.info('Wrote %s (%d bytes)', output_file, len(js_content))

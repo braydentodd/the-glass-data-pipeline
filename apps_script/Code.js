@@ -309,7 +309,7 @@ function onEditInstallable(e) {
 
   // --- Identify what was edited ---
   var editableColumns = config.editable_columns || [];
-  var teamsEditable   = config.teams_editable_columns || [];
+  var teamsEditable   = config.all_teams_editable_columns || [];
   var colIndices      = config.column_indices || {};
   var matched         = null;
   var entityType      = null;
@@ -479,8 +479,8 @@ function _getSheetType(sheetName) {
   var teams  = config[league.teams_key] || {};
   var upper  = sheetName.toUpperCase();
   if (teams.hasOwnProperty(upper)) return 'team';
-  if ((league.players_sheet_names || []).indexOf(upper) !== -1) return 'players';
-  if (upper === 'TEAMS') return 'teams';
+  if ((league.players_tab_names || []).indexOf(upper) !== -1) return 'players';
+  if (upper === 'TEAMS' || upper === 'ALL_TEAMS') return 'teams';
   return null;
 }
 

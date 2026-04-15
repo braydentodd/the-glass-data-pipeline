@@ -76,18 +76,15 @@ def format_section_header(section: str, historical_config: Optional[dict] = None
     rate_suffix = f" {rate_label}" if rate_label else ''
 
     if isinstance(value, int):
-        if value == 1:
-            return f"Previous {season_label} Stats{rate_suffix}"
-        plural = 's' if not is_postseason else 's'
-        return f"Previous {value} {season_label}{plural} Stats{rate_suffix}"
+        num = value
     elif isinstance(value, list) and value:
-        n = len(value)
-        if n == 1:
-            return f"Previous {season_label} Stats{rate_suffix}"
-        plural = 's' if not is_postseason else 's'
-        return f"Previous {n} {season_label}{plural} Stats{rate_suffix}"
+        num = len(value)
     else:
         return f"{season_label} Stats{rate_suffix}"
+
+    if num == 1:
+        return f"{season_label} Stats{rate_suffix} Previous Season"
+    return f"{season_label} Stats{rate_suffix} Previous {num} Seasons"
 
 
 def format_seasons_range(historical_config: Optional[dict], current_season: int) -> str:

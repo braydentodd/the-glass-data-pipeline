@@ -18,7 +18,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------------
     # SYSTEM COLUMNS  (managed by DB / ETL engine, no provider sources)
     # ------------------------------------------------------------------
-    'id': {
+    'theid': {
         'type': 'SERIAL',
         'scope': ['entity', 'stats'],
         'nullable': False,
@@ -30,41 +30,31 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'primary_key': True,
         'sources': None,
     },
-    'nba_api_id': {
-        'type': 'VARCHAR(10)',
-        'scope': ['entity'],
-        'nullable': False,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': None,
-        'rate_group': None,
-        'comment': None,
-        'sources': {
-            'nba': {
-                'player': {
-                    'endpoint': 'leaguedashplayerstats',
-                    'field': 'PLAYER_ID',
-                    'transform': 'safe_str',
-                },
-                'team': {
-                    'endpoint': 'leaguedashteamstats',
-                    'field': 'TEAM_ID',
-                    'transform': 'safe_str',
-                },
-            },
-        },
-    },
-    'entity_id': {
-        'type': 'INTEGER',
-        'scope': ['stats'],
-        'nullable': False,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': None,
-        'rate_group': None,
-        'comment': 'FK to entity table serial id',
-        'sources': None,
-    },
+    # 'nba_api_id': {
+    #     'type': 'VARCHAR(10)',
+    #     'scope': ['entity'],
+    #     'nullable': False,
+    #     'default': None,
+    #     'entity_types': ['player', 'team'],
+    #     'update_frequency': None,
+    #     'rate_group': None,
+    #     'comment': None,
+    #     'primary_key': False,
+    #     'sources': {
+    #         'nba': {
+    #             'player': {
+    #                 'endpoint': 'leaguedashplayerstats',
+    #                 'field': 'PLAYER_ID',
+    #                 'transform': 'safe_str',
+    #             },
+    #             'team': {
+    #                 'endpoint': 'leaguedashteamstats',
+    #                 'field': 'TEAM_ID',
+    #                 'transform': 'safe_str',
+    #             },
+    #         },
+    #     },
+    # },
     'updated_at': {
         'type': 'TIMESTAMP',
         'scope': ['entity', 'stats'],
@@ -74,17 +64,19 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': None,
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': None,
     },
     'created_at': {
         'type': 'TIMESTAMP',
-        'scope': ['entity'],
+        'scope': ['entity', 'stats'],
         'nullable': True,
         'default': 'CURRENT_TIMESTAMP',
         'entity_types': ['player', 'team'],
         'update_frequency': None,
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': None,
     },
     'season': {
@@ -96,6 +88,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': None,
         'rate_group': None,
         'comment': None,
+        'primary_key': True,
         'sources': None,
     },
     'season_type': {
@@ -107,6 +100,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': None,
         'rate_group': None,
         'comment': None,
+        'primary_key': True,
         'sources': None,
     },
     'backfilled': {
@@ -118,6 +112,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': None,
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': None,
     },
     'notes': {
@@ -129,6 +124,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': None,
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': None,
     },
     # ------------------------------------------------------------------
@@ -143,6 +139,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': 'FK to teams table serial id (resolved from source during ETL)',
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -162,6 +159,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'annual',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -186,6 +184,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'annual',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -205,6 +204,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'annual',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'commonallplayers', 'field': 'WEIGHT'},
@@ -220,6 +220,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': None,
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -239,6 +240,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'commonallplayers', 'field': 'JERSEY'},
@@ -254,6 +256,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'annual',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -273,6 +276,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': None,
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': None,
     },
     'seasons_exp': {
@@ -284,6 +288,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'commonallplayers', 'field': 'SEASON_EXP'},
@@ -299,6 +304,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'annual',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -318,6 +324,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'annual',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'team': {'endpoint': 'team_metadata', 'field': 'TEAM_ABBREVIATION', 'transform': 'safe_str'},
@@ -333,6 +340,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'annual',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'team': {'endpoint': 'team_metadata', 'field': 'TEAM_CONFERENCE', 'transform': 'safe_str'},
@@ -351,6 +359,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'GP'},
@@ -367,6 +376,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'MIN', 'scale': 10},
@@ -383,6 +393,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'W'},
@@ -399,6 +410,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -423,6 +435,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -449,6 +462,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'hustle',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'G'},
@@ -465,6 +479,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'hustle',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'MIN', 'scale': 10},
@@ -481,6 +496,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'onoff',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -503,6 +519,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'onoff',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -529,6 +546,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -559,6 +577,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -592,6 +611,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'FG3M'},
@@ -613,6 +633,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'FG3A'},
@@ -637,6 +658,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'FTM'},
@@ -658,6 +680,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'FTA'},
@@ -682,6 +705,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -726,6 +750,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -770,6 +795,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -814,6 +840,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -858,6 +885,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -890,6 +918,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -922,6 +951,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -954,6 +984,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -986,6 +1017,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1018,6 +1050,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1050,6 +1083,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1082,6 +1116,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1117,6 +1152,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1168,6 +1204,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1244,6 +1281,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1274,6 +1312,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1304,6 +1343,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1337,6 +1377,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'OREB'},
@@ -1358,6 +1399,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'DREB'},
@@ -1379,6 +1421,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1405,6 +1448,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1431,6 +1475,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1472,6 +1517,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1516,6 +1562,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'AST'},
@@ -1537,6 +1584,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1561,6 +1609,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1585,6 +1634,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1612,6 +1662,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1636,6 +1687,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1660,6 +1712,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1687,6 +1740,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'TOV'},
@@ -1711,6 +1765,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1737,6 +1792,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1766,6 +1822,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'STL'},
@@ -1787,6 +1844,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'BLK'},
@@ -1808,6 +1866,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'PF'},
@@ -1832,6 +1891,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'hustle',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'DEFLECTIONS'},
@@ -1848,6 +1908,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'hustle',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'CHARGES_DRAWN'},
@@ -1864,6 +1925,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'hustle',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguehustlestatsplayer', 'field': 'CONTESTED_SHOTS'},
@@ -1883,6 +1945,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1907,6 +1970,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1931,6 +1995,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1955,6 +2020,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -1979,6 +2045,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2003,6 +2070,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2030,6 +2098,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2056,6 +2125,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2082,6 +2152,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'onoff',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2105,6 +2176,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'onoff',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2131,6 +2203,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2157,6 +2230,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2183,6 +2257,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
@@ -2209,6 +2284,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'daily',
         'rate_group': 'tracking',
         'comment': None,
+        'primary_key': False,
         'sources': {
             'nba': {
                 'player': {
