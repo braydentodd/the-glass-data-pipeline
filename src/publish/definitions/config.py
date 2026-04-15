@@ -7,6 +7,8 @@ and spreadsheet settings across all leagues.
 
 import os
 
+from src.publish.definitions.formulas import tab_subject, formatted_stats_section_name
+
 # ============================================================================
 # GOOGLE SHEETS CONFIGURATION
 # ============================================================================
@@ -33,9 +35,17 @@ GOOGLE_SHEETS_CONFIG = {
 }
 
 # ============================================================================
+# ENTITY COMPUTATIONS
+# ============================================================================
+COMPUTED_ENTITY_FIELDS = {
+    'age': "DATE_PART('year', AGE(CURRENT_DATE, p.birthdate)) + DATE_PART('month', AGE(CURRENT_DATE, p.birthdate)) / 12.0"
+}
+
+# ============================================================================
 # STAT CALCULATION CONSTANTS
 # ============================================================================
 
+DEFAULT_STAT_RATE = "per_game"
 STAT_RATES = {
     'per_possession': {
         'label': 'per Poss',
@@ -44,7 +54,7 @@ STAT_RATES = {
         },
     'per_game': {
         'label': 'per Game',
-        'rate': 1,
+        'rate': None,
         'default': False
     },
     'per_minute': {
@@ -55,10 +65,10 @@ STAT_RATES = {
 }
 
 HISTORICAL_TIMEFRAMES = {
-    1: 'Previous Season',
-    3: 'Previous 3 Seasons',
-    5: 'Previous 5 Seasons',
-    7: 'Previous 7 Seasons',
+    1: '(Previous Season)',
+    3: '(Previous 3 Seasons)',
+    5: '(Previous 5 Seasons)',
+    7: '(Previous 7 Seasons)',
 }
 
 # ============================================================================
@@ -86,40 +96,48 @@ COLOR_THRESHOLDS = {
 
 HEADER_ROWS = {
     'sections': {
-        'index': 1,
         'row_height': 25,
         'font_size': 12,
         'description_spacer_count': None,
         'divider_row_weight': 4,
+        'divider_row_direction': 'below',
         'divider_column_weight': 4,
+        'divider_column_direction': 'right',
         'column_a_font_size': 15,
+        'column_a_divider_column_weight': None,
     },
     'subsections': {
-        'index': 3,
         'row_height': 21,
         'font_size': 11,
         'description_spacer_count': None,
         'divider_row_weight': 2,
+        'divider_row_direction': 'below',
         'divider_column_weight': 2,
+        'divider_column_direction': 'right',
         'column_a_font_size': 11,
+        'column_a_divider_column_weight': None,
     },
     'columns': {
-        'index': 5,
         'row_height': 21,
         'font_size': 10,
         'description_spacer_count': 750,
         'divider_row_weight': None,
+        'divider_row_direction': None,
         'divider_column_weight': 1,
+        'divider_column_direction': 'right',
         'column_a_font_size': 10,
+        'column_a_divider_column_weight': None,
     },
     'filters': {
-        'index': 6,
         'row_height': 12,
         'font_size': 10,
         'description_spacer_count': None,
-        'divider_row_weight': 0,
-        'divider_column_weight': 0,
+        'divider_row_weight': None,
+        'divider_row_direction': None,
+        'divider_column_weight': 1,
+        'divider_column_direction': 'right',
         'column_a_font_size': 10,
+        'column_a_divider_column_weight': None,
     },
 }
 
@@ -133,23 +151,19 @@ SHEET_FORMATTING = {
     'data_row_even_bg': 'white',
     'data_row_odd_bg': 'light_gray',
     'data_fg': 'black',
-    
-    'footer_divider_height': 4,
 
-    # Alignment
-    'default_h_align': 'CENTER',
-    'default_v_align': 'MIDDLE',
-
-    # Overflow handling
+    # Default settings
+    'horizontal_align': 'CENTER',
+    'vertical_align': 'MIDDLE',
     'wrap_strategy': 'CLIP',
-
-    # Default visibility
     'hide_advanced_columns': True,
+    
+    'frozen_columns': 1,
+    'frozen_rows': 6,
 
     # percentile companion column formatting
     'percentile_companion_width': 18,      # pixels (wider to fit rank + over/under)
     'percentile_companion_font_size': 5,   # pt
-
 
     # Rate limiting
     'sync_delay_seconds': 0
@@ -159,40 +173,47 @@ SHEET_FORMATTING = {
 # SECTION AND SUBSECTION DEFINITIONS
 # ============================================================================
 
-SECTION_CONFIG = {
+SECTIONS_CONFIG = {
     'entities': {
         'display_name': tab_subject('name'),
-        'is_stats_section': False,
+        'menu_label': None,
+        'stats_timeframe': None,
         'toggleable': False
     },
     'profile': {
         'display_name': 'Profile',
-        'is_stats_section': False,
+        'menu_label': 'Profile',
+        'stats_timeframe': None,
         'toggleable': True
     },
     'evaluation': {
         'display_name': 'Evaluation',
-        'is_stats_section': False,
+        'menu_label': 'Evaluation',
+        'stats_timeframe': None,
         'toggleable': True
     },
     'current_stats': {
         'display_name': formatted_stats_section_name(),
-        'is_stats_section': True,
+        'menu_label': 'Current Stats',
+        'stats_timeframe': 'current',
         'toggleable': True
     },
     'historical_stats': {
         'display_name': formatted_stats_section_name(),
-        'is_stats_section': True,
+        'menu_label': 'Historical Stats',
+        'stats_timeframe': 'historical',
         'toggleable': True
     },
     'postseason_stats': {
         'display_name': formatted_stats_section_name(),
-        'is_stats_section': True,
+        'menu_label': 'Postseason Stats',
+        'stats_timeframe': 'historical',
         'toggleable': True
     },
     'identity': {
         'display_name': 'Identity',
-        'is_stats_section': False,
+        'menu_label': None,
+        'stats_timeframe': None,
         'toggleable': False
     }
 }
@@ -200,15 +221,18 @@ SECTION_CONFIG = {
 TABS_CONFIG = {
     'all_players': {
         'tab_name': 'Players',
-        'footer': 'percentiles'
+        'footer': 'percentiles',
+        'footer_divider_row_height': 4
     },
     'all_teams': {
         'tab_name': 'Teams',
-        'footer': 'percentiles'
+        'footer': 'percentiles',
+        'footer_divider_row_height': 4,
     },
     'team': {
         'tab_name': tab_subject('abbr'),
-        'footer': 'team/opponent'
+        'footer': 'team/opponent',
+        'footer_divider_row_height': 4
     }
 }
 
@@ -331,7 +355,7 @@ SHEET_FORMATTING_SCHEMA = {
     'sync_delay_seconds': {'required': True, 'types': (int,)},
 }
 
-SECTION_CONFIG_SCHEMA = {
+SECTIONS_CONFIG_SCHEMA = {
     'display_name': {'required': True, 'types': (str,)},
     'is_stats_section': {'required': True, 'types': (bool,)},
     'toggleable': {'required': True, 'types': (bool,)},

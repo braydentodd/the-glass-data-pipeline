@@ -1,6 +1,6 @@
 from typing import List, Optional, Any, Tuple
 from src.publish.definitions.columns import TAB_COLUMNS
-from src.publish.definitions.config import (SECTION_CONFIG, SECTIONS, SUBSECTIONS, SHEET_FORMATTING,
+from src.publish.definitions.config import (SECTIONS_CONFIG, SUBSECTIONS, SHEET_FORMATTING,
                                 STAT_RATES, DEFAULT_STAT_RATE, SUMMARY_THRESHOLDS)
 from src.publish.core.calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
 from src.publish.core.formatting import format_section_header, format_stat_value, format_height
@@ -20,7 +20,7 @@ def _base_section(ctx: str) -> str:
     ctx_prefix = ctx.split('__')[0]
     
     # Match the mapped prefix cleanly against registered config sections
-    for section in SECTIONS:
+    for section in SECTIONS_CONFIG.keys():
         if ctx_prefix.startswith(section):
             return section
             
@@ -291,11 +291,11 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
     all_columns = []
     prev_section_base = None
 
-    for section in SECTIONS:
-        section_cfg = SECTION_CONFIG.get(section, {})
+    for section in SECTIONS_CONFIG.keys():
+        section_cfg = SECTIONS_CONFIG.get(section, {})
         section_base = section
 
-        if section_cfg.get('is_stats_section'):
+        if section_cfg.get('stats_timeframe'):
             # Current stats just use the normal rate tripling
             if section == 'current_stats':
                 for stat_rate in STAT_RATES:
@@ -307,8 +307,8 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                     _append_section_columns(section, context_key, mode_visible)
             else:
                 # Historical and Postseason expand by rate AND timeframe
-                from src.publish.definitions.config import STAT_CONSTANTS
-                supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+                from src.publish.definitions.config import HISTORICAL_TIMEFRAMES
+                supported_years = list(HISTORICAL_TIMEFRAMES.keys())
                 for y in supported_years:
                     for stat_rate in STAT_RATES:
                         context_key = f'{section}_{y}yr__{stat_rate}'
@@ -353,7 +353,7 @@ def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
     opp_by_section: dict = {}  # {ctx: [(opp_key, opp_def, vis, ctx), ...]}
     for entry in columns:
         col_key, col_def, vis, ctx = entry
-        is_stats = SECTION_CONFIG.get(_base_section(ctx), {}).get('is_stats_section', False)
+        is_stats = SECTIONS_CONFIG.get(_base_section(ctx), {}).get('stats_timeframe')
         if not is_stats or col_def.get('is_generated_percentile'):
             continue
         opp_expr = col_def.get('values', {}).get('opponents')
@@ -391,7 +391,7 @@ def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
     for entry in columns:
         col_key, col_def, vis, ctx = entry
         subsection = col_def.get('subsection')
-        is_stats = SECTION_CONFIG.get(_base_section(ctx), {}).get('is_stats_section', False)
+        is_stats = SECTIONS_CONFIG.get(_base_section(ctx), {}).get('stats_timeframe')
 
         # Detect transition away from defense within same section
         if (is_stats and prev_subsection == 'defense'
@@ -474,8 +474,8 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
             return team_name
         base = _base_section(section)
         sec_mode = section.split('__')[1] if '__' in section else mode
-        base_cfg = SECTION_CONFIG.get(base, {})
-        if base_cfg.get('is_stats_section') and current_season:
+        base_cfg = SECTIONS_CONFIG.get(base, {})
+        if base_cfg.get('stats_timeframe') and current_season:
             return format_section_header(
                 base, current_season=current_season,
                 historical_config=historical_config,
@@ -658,8 +658,8 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             row.append('')
             continue
 
-        col_ctx_cfg = SECTION_CONFIG.get(_base_section(col_ctx), {})
-        is_stats_section = col_ctx_cfg.get('is_stats_section', False)
+        col_ctx_cfg = SECTIONS_CONFIG.get(_base_section(col_ctx), {})
+        is_stats_section = col_ctx_cfg.get('stats_timeframe')
 
         if section_data and is_stats_section:
             # Pick the right data for this section
@@ -699,7 +699,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
 
         # Non-percentile column
         # Non-stats section column — evaluate formula and format
-        if not col_ctx_cfg.get('is_stats_section', False):
+        if not col_ctx_cfg.get('stats_timeframe'):
             use_entity = sec_entity if section_data and is_stats_section else primary_entity
             _col_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else mode
             value = evaluate_formula(col_key, use_entity, entity_type, _col_mode, context)
@@ -817,8 +817,8 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
         if not is_pct:
             continue
 
-        col_ctx_cfg = SECTION_CONFIG.get(_base_section(col_ctx), {})
-        is_stats_section = col_ctx_cfg.get('is_stats_section', False)
+        col_ctx_cfg = SECTIONS_CONFIG.get(_base_section(col_ctx), {})
+        is_stats_section = col_ctx_cfg.get('stats_timeframe')
         base_key = col_def.get('base_stat', col_key.replace('_pct', ''))
 
         if is_stats_section:
@@ -1003,8 +1003,8 @@ def build_summary_rows(columns_list: List[Tuple],
             if col_def.get('is_generated_percentile', False):
                 base_key = col_def.get('base_stat', col_key.replace('_pct', ''))
                 base_def = TAB_COLUMNS.get(base_key, col_def)
-                col_ctx_cfg = SECTION_CONFIG.get(_base_section(col_ctx), {})
-                is_stats_section = col_ctx_cfg.get('is_stats_section', False)
+                col_ctx_cfg = SECTIONS_CONFIG.get(_base_section(col_ctx), {})
+                is_stats_section = col_ctx_cfg.get('stats_timeframe')
 
                 value = None
                 median = None
@@ -1049,8 +1049,8 @@ def build_summary_rows(columns_list: List[Tuple],
 
             # Opponent columns: use opp_percentiles populations
             if col_def.get('is_opponent_col') and opp_percentiles:
-                col_ctx_cfg = SECTION_CONFIG.get(_base_section(col_ctx), {})
-                if col_ctx_cfg.get('is_stats_section') and col_ctx:
+                col_ctx_cfg = SECTIONS_CONFIG.get(_base_section(col_ctx), {})
+                if col_ctx_cfg.get('stats_timeframe') and col_ctx:
                     opp_pop = opp_percentiles.get(col_key, {}).get(_base_section(col_ctx))
                     if opp_pop:
                         reverse = col_def.get('percentile') == 'reverse'
@@ -1069,8 +1069,8 @@ def build_summary_rows(columns_list: List[Tuple],
                 continue
 
             # Regular stat columns: look up in section-specific populations
-            col_ctx_cfg = SECTION_CONFIG.get(_base_section(col_ctx), {})
-            is_stats_section = col_ctx_cfg.get('is_stats_section', False)
+            col_ctx_cfg = SECTIONS_CONFIG.get(_base_section(col_ctx), {})
+            is_stats_section = col_ctx_cfg.get('stats_timeframe')
             pop_key = f'{col_ctx}:{col_key}'
 
             # Stats-section columns: look up via section:col_key

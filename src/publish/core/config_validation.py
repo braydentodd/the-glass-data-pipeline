@@ -29,10 +29,10 @@ def _validate_section_subsection(sheets_columns: dict) -> List[str]:
     Non-stats columns may optionally have subsections (e.g. profile
     uses 'League' and 'Player' subsections).
     """
-    from src.publish.definitions.config import SECTION_CONFIG
+    from src.publish.definitions.config import SECTIONS_CONFIG
 
     stats_sections = {
-        s for s, meta in SECTION_CONFIG.items() if meta.get('is_stats_section')
+        s for s, meta in SECTIONS_CONFIG.items() if meta.get('is_stats_section')
     }
     errors: List[str] = []
 
@@ -79,10 +79,10 @@ def validate_config() -> List[str]:
     """
     from src.publish.definitions.columns import TAB_COLUMNS, TAB_COLUMNS_SCHEMA
     from src.publish.definitions.config import (
-        GOOGLE_SHEETS_CONFIG, STAT_CONSTANTS, SHEET_FORMATTING, SECTION_CONFIG,
-        COLORS, COLOR_THRESHOLDS, MENU_CONFIG,
-        GOOGLE_SHEETS_CONFIG_SCHEMA, STAT_CONSTANTS_SCHEMA, SHEET_FORMATTING_SCHEMA,
-        SECTION_CONFIG_SCHEMA, COLORS_SCHEMA, COLOR_THRESHOLDS_SCHEMA, MENU_CONFIG_SCHEMA
+        GOOGLE_SHEETS_CONFIG, SHEET_FORMATTING, SECTIONS_CONFIG,
+        COLORS, COLOR_THRESHOLDS,
+        GOOGLE_SHEETS_CONFIG_SCHEMA, SHEET_FORMATTING_SCHEMA,
+        SECTIONS_CONFIG_SCHEMA, COLORS_SCHEMA, COLOR_THRESHOLDS_SCHEMA
     )
     from src.core.config_validation import validate_core_constants
 
@@ -93,11 +93,11 @@ def validate_config() -> List[str]:
     # Schema validations
     errors.extend(validate_dict_config(TAB_COLUMNS, TAB_COLUMNS_SCHEMA, 'TAB_COLUMNS'))
     errors.extend(validate_dict_config(GOOGLE_SHEETS_CONFIG, GOOGLE_SHEETS_CONFIG_SCHEMA, 'GOOGLE_SHEETS_CONFIG'))
-    errors.extend(validate_dict_config(SECTION_CONFIG, SECTION_CONFIG_SCHEMA, 'SECTION_CONFIG'))
+    errors.extend(validate_dict_config(SECTIONS_CONFIG, SECTIONS_CONFIG_SCHEMA, 'SECTIONS_CONFIG'))
     errors.extend(validate_dict_config(COLORS, COLORS_SCHEMA, 'COLORS'))
-    errors.extend(validate_dict_config(MENU_CONFIG, MENU_CONFIG_SCHEMA, 'MENU_CONFIG'))
     
-    errors.extend(validate_flat_config(STAT_CONSTANTS, STAT_CONSTANTS_SCHEMA, 'STAT_CONSTANTS'))
+    
+    
     errors.extend(validate_flat_config(SHEET_FORMATTING, SHEET_FORMATTING_SCHEMA, 'SHEET_FORMATTING'))
     errors.extend(validate_flat_config(COLOR_THRESHOLDS, COLOR_THRESHOLDS_SCHEMA, 'COLOR_THRESHOLDS'))
 

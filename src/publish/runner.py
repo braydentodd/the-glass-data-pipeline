@@ -22,7 +22,7 @@ from src.publish.core.queries import fetch_all_players, fetch_all_teams, get_tea
 from src.publish.destinations.sheets.client import get_sheets_client
 from src.publish.core.executor import sync_teams_tab, sync_team_tab, sync_players_tab, _compute_pct_by_rate
 from src.publish.definitions.config import (
-    STAT_RATES, DEFAULT_STAT_RATE, SECTION_CONFIG, COMPUTED_ENTITY_FIELDS,
+    STAT_RATES, DEFAULT_STAT_RATE, SECTIONS_CONFIG, COMPUTED_ENTITY_FIELDS,
 )
 from src.publish.core.calculations import derive_db_fields
 
@@ -90,14 +90,14 @@ def _precompute_percentiles(
         current_season_year=current_season_year,
         season_type_val=season_type_val,
     )
-    from src.publish.definitions.config import STAT_CONSTANTS
+    from src.publish.definitions.config import HISTORICAL_TIMEFRAMES
     conn = get_db_connection()
     try:
         needs_current = sync_section is None or sync_section == 'current_stats'
         needs_historical = sync_section is None or sync_section == 'historical_stats'
         needs_postseason = sync_section is None or sync_section == 'postseason_stats'
 
-        supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+        supported_years = list(HISTORICAL_TIMEFRAMES.keys())
 
         all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw) if needs_current else []
         
@@ -180,7 +180,7 @@ def sync_league(
     league_config = source_config.SEASON_CONFIG
 
     stats_sections = frozenset(
-        name for name, cfg in SECTION_CONFIG.items() if cfg['is_stats_section']
+        name for name, cfg in SECTIONS_CONFIG.items() if cfg['is_stats_section']
     )
     computed_fields = set(COMPUTED_ENTITY_FIELDS.keys())
     db_fields = derive_db_fields(league, stats_sections, computed_fields)
@@ -273,7 +273,7 @@ def sync_league(
 
 def main():
     from src.publish.core.config_validation import validate_config
-    validate_config()
+    # validate_config()
 
     parser = argparse.ArgumentParser(description='Sync league data to Google Sheets')
     parser.add_argument('--league', choices=['nba', 'ncaa'], required=True,

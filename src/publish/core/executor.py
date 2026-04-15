@@ -2,7 +2,7 @@ import logging
 from collections import defaultdict
 
 from src.core.db import get_db_connection
-from src.publish.definitions.config import STAT_RATES, SECTION_CONFIG
+from src.publish.definitions.config import STAT_RATES, SECTIONS_CONFIG
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats, get_teams_from_db
 from src.publish.core.table_builder import build_headers, build_tab_columns, build_merged_entity_row, build_summary_rows
 from src.publish.destinations.sheets.api_builder import build_formatting_requests
@@ -113,8 +113,8 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
 
     conn = get_db_connection()
     try:
-        from src.publish.definitions.config import STAT_CONSTANTS
-        supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+        from src.publish.definitions.config import HISTORICAL_TIMEFRAMES
+        supported_years = list(HISTORICAL_TIMEFRAMES.keys())
         
         # ---- Fetch raw data ----
         current_players = fetch_players_for_team(conn, team_abbr, 'current_stats', **query_kw)
@@ -341,8 +341,8 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
 
     conn = get_db_connection()
     try:
-        from src.publish.definitions.config import STAT_CONSTANTS
-        supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+        from src.publish.definitions.config import HISTORICAL_TIMEFRAMES
+        supported_years = list(HISTORICAL_TIMEFRAMES.keys())
 
         # ---- Fetch all teams for 3 sections ----
         all_teams_curr = fetch_all_teams(conn, 'current_stats', **query_kw)
@@ -541,8 +541,8 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
 
     conn = get_db_connection()
     try:
-        from src.publish.definitions.config import STAT_CONSTANTS
-        supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
+        from src.publish.definitions.config import HISTORICAL_TIMEFRAMES
+        supported_years = list(HISTORICAL_TIMEFRAMES.keys())
 
         # ---- Fetch all players league-wide ----
         all_players_curr = fetch_all_players(conn, 'current_stats', **query_kw)

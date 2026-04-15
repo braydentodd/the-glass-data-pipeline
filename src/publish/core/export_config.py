@@ -4,21 +4,18 @@ import re
 from pathlib import Path
 
 from src.publish.definitions.columns import TAB_COLUMNS
-from src.publish.definitions.config import (
-    SECTION_CONFIG,
+from src.publish.definitions.config import (HEADER_ROWS, HISTORICAL_TIMEFRAMES, 
+    SECTIONS_CONFIG,
     GOOGLE_SHEETS_CONFIG,
     STAT_RATES,
-    STAT_CONSTANTS,
-    STAT_RATE_LABELS,
     DEFAULT_STAT_RATE,
-    SHEET_FORMATTING,
-    MENU_CONFIG,
+    
 )
 from src.publish.core.table_builder import build_tab_columns, get_column_index
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path(__file__).resolve().parents[3] / 'apps_script' / 'config'
+OUTPUT_DIR = Path(__file__).resolve().parents[3] / 'apps_script' / 'apps_config'
 
 
 def get_config_for_export(
@@ -55,12 +52,11 @@ def get_config_for_export(
     teams_from_db = get_teams_fn()
     team_name_to_abbr = {name: abbr for _, (abbr, name) in teams_from_db.items()}
 
-    supported_years = STAT_CONSTANTS.get('supported_historical_timeframes', [1, 3, 5, 7])
-    default_timeframe = 3 if 3 in supported_years else (supported_years[0] if supported_years else 3)
+    supported_years = list(HISTORICAL_TIMEFRAMES.keys())
 
     # --- Stat columns list -----------------------------------------------
     stat_columns = [k for k, v in TAB_COLUMNS.items()
-                    if any(SECTION_CONFIG.get(s, {}).get('is_stats_section') for s in v.get('sections', []))]
+                    if any(SECTIONS_CONFIG.get(s, {}).get('stats_timeframe') for s in v.get('sections', []))]
 
     # --- Build full column lists for all sheet types --------------------
     team_columns = build_tab_columns(
@@ -93,7 +89,7 @@ def get_config_for_export(
                 base_section = 'current_stats'
 
             sm = col_def.get('stats_mode', 'both')
-            is_stats = SECTION_CONFIG.get(base_section, {}).get('is_stats_section', False)
+            is_stats = SECTIONS_CONFIG.get(base_section, {}).get('stats_timeframe')
             
             # Compress contiguous columns that share the exact same visibility rules
             # into a single block to drastically shrink the config size.
@@ -103,7 +99,7 @@ def get_config_for_export(
                 'timeframe': timeframe,
                 'advanced': sm == 'advanced',
                 'basic': sm == 'basic',
-                'is_stats_section': is_stats,
+                'is_stats_section': bool(is_stats),
                 'is_separator': bool(col_def.get('is_separator')),
             }
 
@@ -121,11 +117,22 @@ def get_config_for_export(
         if current_block:
             blocks.append(current_block)
 
-        # Flatten blocks
+        # Flatten blocks into dense arrays: [start, count, base_section, rate, timeframe, advanced, basic, is_stats_section, is_separator]
         flattened = []
         for b in blocks:
-            flat = {'start': b['start'], 'count': b['count']}
-            flat.update(b['props'])
+            p = b['props']
+            # Using 1/0 for booleans to save space
+            flat = [
+                b['start'],
+                b['count'],
+                p['base_section'] or "",
+                p['rate'] or "",
+                p['timeframe'] if p['timeframe'] is not None else "",
+                1 if p['advanced'] else 0,
+                1 if p['basic'] else 0,
+                1 if p['is_stats_section'] else 0,
+                1 if p['is_separator'] else 0
+            ]
             flattened.append(flat)
 
         return flattened
@@ -142,7 +149,7 @@ def get_config_for_export(
     stats_start = None
     for i, entry in enumerate(team_columns):
         section_ctx = entry[3] if len(entry) > 3 else None
-        if SECTION_CONFIG.get(section_ctx, {}).get('is_stats_section', False):
+        if SECTIONS_CONFIG.get(section_ctx, {}).get('stats_timeframe'):
             stats_start = i + 1
             break
 
@@ -158,9 +165,8 @@ def get_config_for_export(
             allowed_tabs = set(editable_config) if isinstance(editable_config, list) else {'player', 'all_teams'}
             values = col_def.get('values', {})
             entry = {
-                'display_name': col_def.get('description', col_key),
                 'format': col_def.get('format', 'text'),
-                'indices': {},
+                'indices': {}
             }
 
             if 'player' in allowed_tabs and isinstance(values.get('player'), str):
@@ -187,6 +193,14 @@ def get_config_for_export(
         'all_teams_tab': teams_columns,
     })
 
+    sections_export = {}
+    for k, v in SECTIONS_CONFIG.items():
+        sections_export[k] = {
+            'display_name': v.get('menu_label') or k.replace('_', ' ').title(),
+            'toggleable': v.get('toggleable', False),
+            'stats_timeframe': v.get('stats_timeframe')
+        }
+
     return {
         'sheet_id': google_sheets_config.get('spreadsheet_id', ''),
         'sheet_names': {
@@ -207,22 +221,15 @@ def get_config_for_export(
         },
         'column_metadata': column_metadata,
         'default_stat_rate': DEFAULT_STAT_RATE,
-        'layout': {
-            'header_row_count': SHEET_FORMATTING['header_row_count'],
-            'data_start_row': SHEET_FORMATTING['data_start_row'],
-            'frozen_rows': SHEET_FORMATTING['frozen_rows'],
-            'frozen_cols': SHEET_FORMATTING['frozen_cols'],
-        },
-        'sections': {k: v for k, v in SECTION_CONFIG.items()},
+        'header_row_count': len(HEADER_ROWS),
+        'sections': sections_export,
         'stat_rates': STAT_RATES,
-        'stat_rate_labels': STAT_RATE_LABELS,
-        'menu': MENU_CONFIG,
         'supported_historical_timeframes': supported_years,
     }
 
 
 # ============================================================================
-# CONFIG EXPORT — generate apps_script/config/<LEAGUE>_generated.js
+# CONFIG EXPORT — generate apps_script/_config/<LEAGUE>.js
 # ============================================================================
 
 

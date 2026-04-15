@@ -2,7 +2,7 @@ import logging
 from datetime import date, datetime
 from typing import Dict, Any, List, Optional
 from src.publish.definitions.columns import TAB_COLUMNS
-from src.publish.definitions.config import SECTION_CONFIG, STAT_CONSTANTS
+from src.publish.definitions.config import SECTIONS_CONFIG, STAT_RATES
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,7 @@ def _apply_scaling(raw_value: Any, mode: str, games: float, minutes: float,
                    possessions: float) -> Any:
     """Apply mode-based scaling to a raw stat value.
 
-    Scaling factors are driven by STAT_CONSTANTS so changing the base
+    Scaling factors are driven by STAT_RATES so changing the base
     (e.g. 40 mins -> 48 mins) only requires a config update.
     """
     if raw_value is None or raw_value == 0:
@@ -166,10 +166,10 @@ def _apply_scaling(raw_value: Any, mode: str, games: float, minutes: float,
     if mode == 'per_game':
         return raw_value / max(games, 1)
     elif mode == 'per_minute':
-        per_min_base = STAT_CONSTANTS['default_per_minute']
+        per_min_base = STAT_RATES['per_minute']['rate']
         return raw_value * per_min_base / max(minutes, 0.1)
     elif mode == 'per_possession':
-        per_poss_base = STAT_CONSTANTS['default_per_possessions']
+        per_poss_base = STAT_RATES['per_possession']['rate']
         return raw_value * per_poss_base / max(possessions, 1)
 
     return raw_value
@@ -265,7 +265,7 @@ def calculate_all_percentiles(all_entities: List[dict], entity_type: str,
             continue
 
         is_stats = any(
-            SECTION_CONFIG.get(s, {}).get('is_stats_section', False)
+            SECTIONS_CONFIG.get(s, {}).get('stats_timeframe')
             for s in col_def.get('sections', [])
         )
 

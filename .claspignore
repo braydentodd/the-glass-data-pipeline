@@ -4,4 +4,4 @@
 **/**
 !appsscript.json
 !Code.js
-!config/*.js
+apps_config/*.js

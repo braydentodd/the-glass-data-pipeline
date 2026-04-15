@@ -50,3 +50,13 @@ def team_average(field):
 def calculate_age(field):
     """Calculate age (years, 1 decimal) from a birthdate field."""
     return ('calculate_age', field)
+
+
+def tab_subject(attr: str):
+    """Template for resolving tab subject at runtime (e.g. 'name', 'abbr')."""
+    return ('tab_subject', attr)
+
+
+def formatted_stats_section_name():
+    """Template for resolving the formatted stats section string based on context."""
+    return ('formatted_stats_section_name',)

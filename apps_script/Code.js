@@ -17,55 +17,39 @@ function _getRootScope() {
   return typeof globalThis !== 'undefined' ? globalThis : this;
 }
 
-function _ensureMenuActions() {
-  if (typeof CONFIG === 'undefined') {
-    return;
-  }
 
-  var root = _getRootScope();
-  var config = _getConfig();
-  var actionMap = {};
 
-  actionMap.showAdvancedStats = function() { _setAdvancedStats(true); };
-  actionMap.hideAdvancedStats = function() { _setAdvancedStats(false); };
+// ============================================================
+// DYNAMIC FUNCTION BUILDER
+// ============================================================
+// We dynamically build the callbacks on globalThis. Because the config file is placed
+// in the `_config` directory, it evaluates chronologically before `Code.js`, meaning 
+// `CONFIG` is fully defined and available at script load time.
 
-  (config.supported_historical_timeframes || []).forEach(function(years) {
-    actionMap['setTimeframe' + years] = function() {
-      _setTimeframe(years);
-    };
+(function() {
+  if (typeof CONFIG === 'undefined') return;
+
+  var root = typeof globalThis !== 'undefined' ? globalThis : this;
+
+  root.showAdvancedStats = function() { _setAdvancedStats(true); };
+  root.hideAdvancedStats = function() { _setAdvancedStats(false); };
+
+  (CONFIG.supported_historical_timeframes || []).forEach(function(years) {
+    root['setTimeframe' + years] = function() { _setTimeframe(years); };
   });
 
-  (config.stat_rates || []).forEach(function(rate) {
-    actionMap['switchTo_' + rate] = function() {
-      _switchStatRate(rate);
-    };
+  Object.keys(CONFIG.stat_rates || {}).forEach(function(rate) {
+    root['switchTo_' + rate] = function() { _switchStatRate(rate); };
   });
 
-  Object.keys(config.sections || {}).forEach(function(sectionKey) {
-    var section = config.sections[sectionKey];
-    if (!section || !section.toggleable) {
-      return;
-    }
-
-    actionMap['show_' + sectionKey] = function() {
-      _setSectionVisibility(sectionKey, true);
-    };
-    actionMap['hide_' + sectionKey] = function() {
-      _setSectionVisibility(sectionKey, false);
-    };
+  Object.keys(CONFIG.sections || {}).forEach(function(secKey) {
+    root['show_' + secKey] = function() { _setSectionVisibility(secKey, true); };
+    root['hide_' + secKey] = function() { _setSectionVisibility(secKey, false); };
   });
-
-  Object.keys(actionMap).forEach(function(name) {
-    if (typeof root[name] !== 'function') {
-      root[name] = actionMap[name];
-    }
-  });
-}
-
-_ensureMenuActions();
+})();
 
 function onOpen() {
-  _ensureMenuActions();
+  var ui = SpreadsheetApp.getUi();
 
   var ui = SpreadsheetApp.getUi();
   var config = _getConfig();
@@ -95,12 +79,12 @@ function _buildDisplayMenu(ui, config) {
   }
 
   var rateConfig = menuConfig.stats_rate || {};
-  var rates = config.stat_rates || [];
-  if (rates.length) {
+  var ratesKeys = Object.keys(config.stat_rates || {});
+  if (ratesKeys.length) {
     var rateMenu = ui.createMenu(rateConfig.display_name || 'Stats Rate');
-    var rateLabels = config.stat_rate_labels || {};
-    rates.forEach(function(rate) {
-      rateMenu.addItem(rateLabels[rate] || rate, 'switchTo_' + rate);
+    ratesKeys.forEach(function(rate) {
+      var label = config.stat_rates[rate].label || rate;
+      rateMenu.addItem(label, 'switchTo_' + rate);
     });
     menu.addSubMenu(rateMenu);
   }
@@ -141,15 +125,16 @@ function _switchStatRate(newRate) {
   var props = PropertiesService.getDocumentProperties();
   var currentRate = props.getProperty('STATS_RATE') || config.default_stat_rate;
 
+  var rateLabel = (config.stat_rates[newRate] && config.stat_rates[newRate].label) ? config.stat_rates[newRate].label : newRate;
   if (newRate === currentRate) {
-    ss.toast('Already in ' + (config.stat_rate_labels[newRate] || newRate) + ' mode', 'Rate', 2);
+    ss.toast('Already in ' + rateLabel + ' mode', 'Rate', 2);
     return;
   }
 
   props.setProperty('STATS_RATE', newRate);
   _applyToAllSheets(function(sheet, sheetType) {
     _reapplyToggles(sheet, sheetType);
-  }, (config.stat_rate_labels[newRate] || newRate) + ' mode');
+  }, rateLabel + ' mode');
 }
 
 function _setAdvancedStats(newAdvancedVisible) {
@@ -186,9 +171,8 @@ function onEditInstallable(e) {
     return;
   }
 
-  var layout = config.layout || {};
-  var editedRow = e.range.getRow();
-  if (editedRow <= (layout.header_row_count || 4)) {
+    var editedRow = e.range.getRow();
+  if (editedRow <= (config.header_row_count || 5)) {
     return;
   }
 
@@ -293,8 +277,7 @@ function _getTeamAbbrForRow(sheet, sheetType, editedRow, rowLabel, colIndices, c
 }
 
 function _propagateValue(sheet, sheetType, entityType, entityId, teamAbbr, targetCol, value, config) {
-  var layout = config.layout || {};
-  var dataStart = layout.data_start_row || 5;
+    var dataStart = (config.header_row_count || 5) + 1;
   var lastRow = sheet.getLastRow();
   if (lastRow < dataStart) {
     return;
@@ -433,7 +416,7 @@ function _applyToAllSheets(fn, toastMsg) {
 
 function _reapplyToggles(sheet, sheetType) {
   var config = _getConfig();
-  var props = PropertiesService.getDocumentProperties();
+  var props = PropertiesService.getDocumentProperties().getProperties();
   var rangeKey = _getRangeKey(sheetType);
   var metadata = (config.column_metadata || {})[rangeKey] || [];
   var ranges = _buildVisibilityRanges(metadata, props, config);
@@ -445,9 +428,9 @@ function _reapplyToggles(sheet, sheetType) {
 function _buildVisibilityRanges(metadata, props, config) {
   var visible = [];
   var hidden = [];
-  var currentRate = props.getProperty('STATS_RATE') || config.default_stat_rate;
-  var showAdvanced = props.getProperty('SHOW_ADVANCED') === 'true';
-  var timeframe = parseInt(props.getProperty('HISTORICAL_TIMEFRAME'), 10);
+  var currentRate = props['STATS_RATE'] || config.default_stat_rate;
+  var showAdvanced = props['SHOW_ADVANCED'] === 'true';
+  var timeframe = parseInt(props['HISTORICAL_TIMEFRAME'], 10);
   if (isNaN(timeframe) || timeframe <= 0) {
     timeframe = config.default_historical_timeframe || 1;
   }
@@ -456,7 +439,12 @@ function _buildVisibilityRanges(metadata, props, config) {
   var currentState = null;
 
   for (var i = 0; i < metadata.length; i++) {
-    var block = metadata[i];
+    var b = metadata[i];
+    var block = {
+      start: b[0], count: b[1], base_section: b[2], rate: b[3],
+      timeframe: b[4], advanced: !!b[5], basic: !!b[6],
+      is_stats_section: !!b[7], is_separator: !!b[8]
+    };
     var isVisible = _isColumnVisible(block, props, currentRate, showAdvanced, timeframe);
 
     if (currentRun === null) {
@@ -489,7 +477,7 @@ function _isColumnVisible(meta, props, currentRate, showAdvanced, timeframe) {
     return true;
   }
 
-  var sectionVisible = props.getProperty(_getSectionVisibilityKey(meta.base_section)) !== 'false';
+  var sectionVisible = props[_getSectionVisibilityKey(meta.base_section)] !== 'false';
   if (!sectionVisible) {
     return false;
   }
