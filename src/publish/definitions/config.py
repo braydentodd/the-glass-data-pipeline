@@ -148,17 +148,44 @@ SHEET_FORMATTING = {
 
     'header_bg': 'black',
     'header_fg': 'white',
+    'row_even_bg': 'white',
+    'row_odd_bg': 'white',
     'data_row_even_bg': 'white',
     'data_row_odd_bg': 'light_gray',
     'data_fg': 'black',
 
+    'section_header_size': 14,
+    'team_name_size': 16,
+    'subsection_header_size': 12,
+    'column_header_size': 10,
+    'data_size': 10,
+    'border_weight': 1,
+    'subsection_border_weight': 2,
+    'data_border_color': 'black',
+    'column_border_weight': 1,
+    'column_border_color_header': 'white',
+    'column_border_color_data': 'light_gray',
+    'section_separator_width': 4,
+    'subsection_separator_width': 2,
+    'header_separator_bg': 'black',
+    'data_separator_bg': 'light_gray',
+    'header_divider_height': 4,
+    'header_divider_bg': 'black',
+    'footer_divider_height': 4,
+    'footer_divider_bg': 'black',
+    'row_height_section_header': 25,
+    'row_height_filter': 12,
+    'row_height_default': 21,
+
     # Default settings
     'horizontal_align': 'CENTER',
     'vertical_align': 'MIDDLE',
+    'default_h_align': 'CENTER',
+    'default_v_align': 'MIDDLE',
     'wrap_strategy': 'CLIP',
     'hide_advanced_columns': True,
     
-    'frozen_columns': 1,
+    'frozen_cols': 1,
     'frozen_rows': 6,
 
     # percentile companion column formatting
@@ -168,6 +195,33 @@ SHEET_FORMATTING = {
     # Rate limiting
     'sync_delay_seconds': 0
 }
+
+# Dynamically calculate header row logic to keep everything DRY
+_current_row = 0
+for row_key, rules in HEADER_ROWS.items():
+    if row_key == 'sections':
+        SHEET_FORMATTING['section_header_row'] = _current_row
+    elif row_key == 'subsections':
+        SHEET_FORMATTING['subsection_header_row'] = _current_row
+    elif row_key == 'columns':
+        SHEET_FORMATTING['column_header_row'] = _current_row
+    elif row_key == 'filters':
+        SHEET_FORMATTING['filter_row'] = _current_row
+        
+    _current_row += 1
+    
+    # If the row requires a physical divider row, increment current_row and track its index
+    if rules.get('divider_row_weight') and rules.get('divider_row_direction') == 'below':
+        if row_key == 'sections':
+            SHEET_FORMATTING['section_divider_row'] = _current_row
+        elif row_key == 'subsections':
+            SHEET_FORMATTING['subsection_divider_row'] = _current_row
+        _current_row += 1
+
+SHEET_FORMATTING['header_row_count'] = _current_row
+SHEET_FORMATTING['data_start_row'] = _current_row
+SHEET_FORMATTING['row_sections'] = list(HEADER_ROWS.keys())
+SHEET_FORMATTING['hide_identity_section'] = True
 
 # ============================================================================
 # SECTION AND SUBSECTION DEFINITIONS

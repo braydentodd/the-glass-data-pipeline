@@ -141,6 +141,7 @@ var CONFIG = {
     "stats_start": 9
   },
   "default_stat_rate": "per_game",
+  "default_historical_timeframe": 3,
   "header_row_count": 4,
   "sections": {
     "entities": {

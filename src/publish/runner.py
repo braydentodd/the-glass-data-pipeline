@@ -180,7 +180,7 @@ def sync_league(
     league_config = source_config.SEASON_CONFIG
 
     stats_sections = frozenset(
-        name for name, cfg in SECTIONS_CONFIG.items() if cfg['is_stats_section']
+        name for name, cfg in SECTIONS_CONFIG.items() if cfg.get('stats_timeframe')
     )
     computed_fields = set(COMPUTED_ENTITY_FIELDS.keys())
     db_fields = derive_db_fields(league, stats_sections, computed_fields)

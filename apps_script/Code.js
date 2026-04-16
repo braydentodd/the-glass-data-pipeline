@@ -132,29 +132,33 @@ function _switchStatRate(newRate) {
   }
 
   props.setProperty('STATS_RATE', newRate);
+  var predicate = function(b) { return b.is_stats_section && b.rate !== ""; };
   _applyToAllSheets(function(sheet, sheetType) {
-    _reapplyToggles(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType, predicate);
   }, rateLabel + ' mode');
 }
 
 function _setAdvancedStats(newAdvancedVisible) {
   PropertiesService.getDocumentProperties().setProperty('SHOW_ADVANCED', newAdvancedVisible ? 'true' : 'false');
+  var predicate = function(b) { return b.advanced || b.basic; };
   _applyToAllSheets(function(sheet, sheetType) {
-    _reapplyToggles(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType, predicate);
   }, newAdvancedVisible ? 'Advanced stats shown' : 'Basic stats shown');
 }
 
 function _setTimeframe(years) {
   PropertiesService.getDocumentProperties().setProperty('HISTORICAL_TIMEFRAME', String(years));
+  var predicate = function(b) { return b.is_stats_section && b.timeframe !== ""; };
   _applyToAllSheets(function(sheet, sheetType) {
-    _reapplyToggles(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType, predicate);
   }, 'Timeframe swapped to ' + years + ' season' + (years === 1 ? '' : 's'));
 }
 
 function _setSectionVisibility(sectionKey, makeVisible) {
   PropertiesService.getDocumentProperties().setProperty(_getSectionVisibilityKey(sectionKey), makeVisible ? 'true' : 'false');
+  var predicate = function(b) { return b.base_section === sectionKey; };
   _applyToAllSheets(function(sheet, sheetType) {
-    _reapplyToggles(sheet, sheetType);
+    _reapplyToggles(sheet, sheetType, predicate);
   }, sectionKey + (makeVisible ? ' shown' : ' hidden'));
 }
 
@@ -401,11 +405,22 @@ function _getSectionVisibilityKey(sectionKey) {
 function _applyToAllSheets(fn, toastMsg) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheets = ss.getSheets();
+  var activeSheet = ss.getActiveSheet();
+
+  // Apply to active sheet first for immediate visual feedback
+  var activeType = _getSheetType(activeSheet.getName());
+  if (activeType) {
+    fn(activeSheet, activeType);
+  }
 
   for (var i = 0; i < sheets.length; i++) {
-    var type = _getSheetType(sheets[i].getName());
+    var sheet = sheets[i];
+    if (sheet.getSheetId() === activeSheet.getSheetId()) {
+      continue;
+    }
+    var type = _getSheetType(sheet.getName());
     if (type) {
-      fn(sheets[i], type);
+      fn(sheet, type);
     }
   }
 
@@ -414,18 +429,18 @@ function _applyToAllSheets(fn, toastMsg) {
   }
 }
 
-function _reapplyToggles(sheet, sheetType) {
+function _reapplyToggles(sheet, sheetType, predicate) {
   var config = _getConfig();
   var props = PropertiesService.getDocumentProperties().getProperties();
   var rangeKey = _getRangeKey(sheetType);
   var metadata = (config.column_metadata || {})[rangeKey] || [];
-  var ranges = _buildVisibilityRanges(metadata, props, config);
+  var ranges = _buildVisibilityRanges(metadata, props, config, predicate);
 
   _applyColumnRanges(sheet, ranges.visible, true);
   _applyColumnRanges(sheet, ranges.hidden, false);
 }
 
-function _buildVisibilityRanges(metadata, props, config) {
+function _buildVisibilityRanges(metadata, props, config, predicate) {
   var visible = [];
   var hidden = [];
   var currentRate = props['STATS_RATE'] || config.default_stat_rate;
@@ -445,6 +460,15 @@ function _buildVisibilityRanges(metadata, props, config) {
       timeframe: b[4], advanced: !!b[5], basic: !!b[6],
       is_stats_section: !!b[7], is_separator: !!b[8]
     };
+
+    if (predicate && !predicate(block)) {
+      if (currentRun !== null) {
+        (currentState ? visible : hidden).push(currentRun);
+        currentRun = null;
+      }
+      continue;
+    }
+
     var isVisible = _isColumnVisible(block, props, currentRate, showAdvanced, timeframe);
 
     if (currentRun === null) {

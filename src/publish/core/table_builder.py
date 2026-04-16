@@ -474,11 +474,20 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
             return team_name
         base = _base_section(section)
         sec_mode = section.split('__')[1] if '__' in section else mode
+        
+        # Override historical_config based on the timeframe in the section key
+        import re
+        sec_hist_cfg = dict(historical_config) if historical_config else {}
+        match = re.match(r'^(historical_stats|postseason_stats)_(\d+)yr', section.split('__')[0])
+        if match:
+            sec_hist_cfg['mode'] = 'seasons'
+            sec_hist_cfg['value'] = int(match.group(2))
+            
         base_cfg = SECTIONS_CONFIG.get(base, {})
         if base_cfg.get('stats_timeframe') and current_season:
             return format_section_header(
                 base, current_season=current_season,
-                historical_config=historical_config,
+                historical_config=sec_hist_cfg if 'value' in sec_hist_cfg else historical_config,
                 is_postseason=(base == 'postseason_stats'),
                 mode=sec_mode)
         return base_cfg.get('display_name', section)

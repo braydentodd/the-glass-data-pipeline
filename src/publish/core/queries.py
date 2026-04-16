@@ -63,9 +63,17 @@ def _build_entity_fields(entity_fields, table_alias='p'):
         group_f.append(f'{table_alias}.{_quote_col(f)}')
 
     for field_name, sql_expr in COMPUTED_ENTITY_FIELDS.items():
-        select_f.append(f'{sql_expr} AS {_quote_col(field_name)}')
+        # Only inject computed fields if they match the table alias being queried
+        # E.g. skip `p.birthdate` (age) if we are querying teams (`table_alias == 't'`)
+        if 'p.' in sql_expr and table_alias != 'p':
+            continue
+        elif 't.' in sql_expr and table_alias != 't':
+            continue
+
+        expr = sql_expr.replace('p.', f'{table_alias}.').replace('t.', f'{table_alias}.')
+        select_f.append(f'{expr} AS {_quote_col(field_name)}')
         # birthdate is the raw column needed for age computation
-        if 'birthdate' in sql_expr:
+        if 'birthdate' in expr:
             group_raw.append(f'{table_alias}.birthdate')
 
     return select_f, group_f + group_raw

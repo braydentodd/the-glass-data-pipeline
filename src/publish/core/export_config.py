@@ -221,6 +221,7 @@ def get_config_for_export(
         },
         'column_metadata': column_metadata,
         'default_stat_rate': DEFAULT_STAT_RATE,
+        'default_historical_timeframe': 3,
         'header_row_count': len(HEADER_ROWS),
         'sections': sections_export,
         'stat_rates': STAT_RATES,
