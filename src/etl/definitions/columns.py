@@ -1818,7 +1818,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'scope': ['stats'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team', 'opponent'],
+        'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
@@ -1826,12 +1826,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'STL'},
-                'team': {'endpoint': 'leaguedashteamstats', 'field': 'STL'},
-                'opponent': {
-                    'endpoint': 'leaguedashteamstats',
-                    'field': 'OPP_STL',
-                    'params': {'measure_type_detailed_defense': 'Opponent'},
-                },
+                'team': {'endpoint': 'leaguedashteamstats', 'field': 'STL'}
             },
         },
     },
@@ -1840,7 +1835,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'scope': ['stats'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team', 'opponent'],
+        'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
@@ -1849,11 +1844,6 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'BLK'},
                 'team': {'endpoint': 'leaguedashteamstats', 'field': 'BLK'},
-                'opponent': {
-                    'endpoint': 'leaguedashteamstats',
-                    'field': 'OPP_BLK',
-                    'params': {'measure_type_detailed_defense': 'Opponent'},
-                },
             },
         },
     },
@@ -1862,7 +1852,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'scope': ['stats'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team', 'opponent'],
+        'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
         'rate_group': None,
         'comment': None,
@@ -1870,12 +1860,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'sources': {
             'nba': {
                 'player': {'endpoint': 'leaguedashplayerstats', 'field': 'PF'},
-                'team': {'endpoint': 'leaguedashteamstats', 'field': 'PF'},
-                'opponent': {
-                    'endpoint': 'leaguedashteamstats',
-                    'field': 'OPP_PF',
-                    'params': {'measure_type_detailed_defense': 'Opponent'},
-                },
+                'team': {'endpoint': 'leaguedashteamstats', 'field': 'PF'}
             },
         },
     },

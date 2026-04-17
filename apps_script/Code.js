@@ -240,15 +240,6 @@ function onEditInstallable(e) {
 
   var entityType = sheetType === 'teams' || rowLabel === 'TEAM' ? 'team' : 'player';
   var newValue = e.range.getValue();
-  if (matched.format === 'measurement') {
-    var parsed = parseMeasurementInput(newValue);
-    if (parsed === null) {
-      ss.toast("Invalid measurement. Use feet'inches (e.g. 6'8).", 'Error', 5);
-      return;
-    }
-    newValue = parsed;
-    e.range.setValue(parsed);
-  }
 
   var colIndices = config.column_indices || {};
   var entityId = entityType === 'player' ? sheet.getRange(editedRow, colIndices.player_id || 1).getValue() : null;
@@ -379,25 +370,6 @@ function _findRowByLabel(sheet, startRow, label) {
       return startRow + i;
     }
   }
-  return null;
-}
-
-function parseMeasurementInput(value) {
-  if (value === null || value === undefined || value === '') {
-    return null;
-  }
-
-  var str = String(value).trim();
-  var feetInches = str.match(/^(\d+)'(\d+)"?$/);
-  if (feetInches) {
-    return parseInt(feetInches[1], 10) * 12 + parseInt(feetInches[2], 10);
-  }
-
-  var inches = parseInt(str, 10);
-  if (!isNaN(inches) && inches > 0 && inches < 120) {
-    return inches;
-  }
-
   return null;
 }
 

@@ -1476,7 +1476,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'tabs': ['all_teams', 'all_players', 'individual_team'],
-        'stats_mode': 'both',
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': None,
         'scale_with_rate': True,
@@ -1499,7 +1499,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
         'subsection': 'defense',
         'tabs': ['all_teams', 'all_players', 'individual_team'],
-        'stats_mode': 'both',
+        'stats_mode': 'basic',
         'percentile': 'standard',
         'editable': None,
         'scale_with_rate': True,
@@ -1514,8 +1514,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{blocks}',
             'team': '{blocks}',
-            'all_teams': '{blocks}',
-            'opponents': '{opp_blocks}'
+            'all_teams': '{blocks}'
         }
     },
     'defl': {
@@ -1561,8 +1560,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{steals}',
             'team': '{steals}',
-            'all_teams': '{steals}',
-            'opponents': '{opp_steals}'
+            'all_teams': '{steals}'
         }
     },
     'st+c': {
