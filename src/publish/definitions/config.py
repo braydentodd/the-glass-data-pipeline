@@ -9,6 +9,25 @@ import os
 
 from src.publish.definitions.formulas import tab_subject, formatted_stats_section_name
 
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass(frozen=True)
+class ColumnContext:
+    """Strongly typed grouping for mode-specific column mappings."""
+    base_section: str
+    rate: Optional[str] = None
+    timeframe: Optional[int] = None
+    
+    def __str__(self) -> str:
+        parts = [self.base_section]
+        if self.timeframe is not None:
+            parts.append(f"{self.timeframe}yr")
+        base = "_".join(parts)
+        if self.rate:
+            return f"{base}__{self.rate}"
+        return base
+
 # ============================================================================
 # GOOGLE SHEETS CONFIGURATION
 # ============================================================================

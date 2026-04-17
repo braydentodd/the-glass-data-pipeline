@@ -38,6 +38,10 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     fmt = SHEET_FORMATTING
     n_cols = len(columns_list)
     data_start = ROW_INDEXES['data_start_row']
+    if percentile_cells:
+        for cell in percentile_cells:
+            cell['row'] += data_start
+
     total_rows = data_start + n_data_rows
     header_end = ROW_INDEXES['data_start_row']  # Row after last header row
     frozen_columns = fmt.get('frozen_columns', fmt.get('frozen_columns', 0))
@@ -868,30 +872,3 @@ def _build_percentile_shading_requests(ws_id: int,
             }
         })
     return requests
-
-
-def create_text_format(font_family=None, font_size=None, bold=False,
-                       foreground_color='white') -> dict:
-    """Create a text format dict for Google Sheets API."""
-    fmt = {'foregroundColor': get_color_dict(foreground_color), 'bold': bold}
-    if font_family:
-        fmt['fontFamily'] = font_family
-    if font_size:
-        fmt['fontSize'] = font_size
-    return fmt
-
-
-def create_cell_format(background_color='white', text_format=None,
-                       h_align='CENTER', v_align='MIDDLE', wrap='CLIP') -> dict:
-    """Create a complete cell format dict for Google Sheets API."""
-    cf = {
-        'backgroundColor': get_color_dict(background_color),
-        'horizontalAlignment': h_align,
-        'verticalAlignment': v_align,
-        'wrapStrategy': wrap
-    }
-    if text_format:
-        cf['textFormat'] = text_format
-    return cf
-
-

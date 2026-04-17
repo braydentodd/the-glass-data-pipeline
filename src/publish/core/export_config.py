@@ -78,16 +78,21 @@ def get_config_for_export(
         current_block = None
 
         for i, (col_key, col_def, visible, context_key) in enumerate(cols):
-            context = context_key or ''
-            section_part, rate = (context.split('__', 1) + [None])[:2] if '__' in context else (context, None)
-            timeframe = None
-            base_section = section_part
-            match = re.match(r'^(historical_stats|postseason_stats)_(\d+)yr$', section_part)
-            if match:
-                base_section = match.group(1)
-                timeframe = int(match.group(2))
-            if base_section.startswith('current_stats'):
-                base_section = 'current_stats'
+            if hasattr(context_key, 'base_section'):
+                base_section = context_key.base_section
+                rate = context_key.rate
+                timeframe = context_key.timeframe
+            else:
+                context = str(context_key) if context_key else ''
+                section_part, rate = (context.split('__', 1) + [None])[:2] if '__' in context else (context, None)
+                timeframe = None
+                base_section = section_part
+                match = re.match(r'^(historical_stats|postseason_stats)_(\d+)yr$', section_part)
+                if match:
+                    base_section = match.group(1)
+                    timeframe = int(match.group(2))
+                if base_section.startswith('current_stats'):
+                    base_section = 'current_stats'
 
             sm = col_def.get('stats_mode', 'both')
             is_stats = SECTIONS_CONFIG.get(base_section, {}).get('stats_timeframe')

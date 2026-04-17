@@ -1,4 +1,3 @@
-from src.publish.core.formatting import ROW_INDEXES
 import logging
 from collections import defaultdict
 import time
@@ -462,7 +461,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
                 context={'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
-                cell['row'] = ROW_INDEXES['data_start_row'] + len(data_rows)
+                cell['row'] = len(data_rows)
             all_percentile_cells.extend(pct_cells)
             data_rows.append(row)
 
@@ -496,7 +495,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
 
         # Set row indices for team/opp percentile cells
         # +1 accounts for the separator row
-        team_row_idx = ROW_INDEXES['data_start_row'] + n_player_rows + 1
+        team_row_idx = n_player_rows + 1
         opp_row_idx = team_row_idx + 1
         for cell in team_pct_cells:
             cell['row'] = team_row_idx
@@ -645,7 +644,10 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
             col_key, col_def, _, section_ctx = entry
             if not col_def.get('is_opponent_col'):
                 continue
-            base_section = section_ctx.split('__')[0] if '__' in section_ctx else section_ctx
+            if hasattr(section_ctx, 'base_section'):
+                base_section = section_ctx.base_section
+            else:
+                base_section = section_ctx.split('__')[0] if isinstance(section_ctx, str) and '__' in section_ctx else section_ctx
             dedup_key = (col_key, base_section)
             if dedup_key in seen_opp:
                 continue
@@ -709,7 +711,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                 context={'team_players': player_groups.get(abbr, []), 'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
-                cell['row'] = ROW_INDEXES['data_start_row'] + len(data_rows)
+                cell['row'] = len(data_rows)
             all_percentile_cells.extend(pct_cells)
             data_rows.append(row)
 
@@ -721,7 +723,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
             columns, merged_pops, mode, opp_percentiles=opp_percentiles)
         divider_row = [''] * len(columns)
         data_rows.append(divider_row)
-        summary_start = ROW_INDEXES['data_start_row'] + n_team_rows + 1
+        summary_start = n_team_rows + 1
         for cell in summary_pct:
             cell['row'] = summary_start + cell.pop('row_offset')
         all_percentile_cells.extend(summary_pct)
@@ -856,7 +858,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
                 context={'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
-                cell['row'] = ROW_INDEXES['data_start_row'] + len(data_rows)
+                cell['row'] = len(data_rows)
             all_percentile_cells.extend(pct_cells)
             data_rows.append(row)
 
@@ -867,7 +869,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         summary_rows, summary_pct = build_summary_rows(columns, merged_pops, mode)
         divider_row = [''] * len(columns)
         data_rows.append(divider_row)
-        summary_start = ROW_INDEXES['data_start_row'] + n_player_rows + 1
+        summary_start = n_player_rows + 1
         for cell in summary_pct:
             cell['row'] = summary_start + cell.pop('row_offset')
         all_percentile_cells.extend(summary_pct)

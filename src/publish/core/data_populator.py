@@ -1,7 +1,7 @@
 from typing import List, Optional, Any, Tuple
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.core.formatting import ROW_INDEXES, format_section_header, format_stat_value, format_height
-from src.publish.definitions.config import (SECTIONS_CONFIG, SUBSECTIONS, SHEET_FORMATTING, STAT_RATES, DEFAULT_STAT_RATE, SUMMARY_THRESHOLDS)
+from src.publish.definitions.config import (SECTIONS_CONFIG, SUBSECTIONS, SHEET_FORMATTING, STAT_RATES, DEFAULT_STAT_RATE, SUMMARY_THRESHOLDS, ColumnContext)
 from src.publish.core.calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
 from src.publish.core.layout import _base_section, _format_companion
 
@@ -30,12 +30,11 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
        Non-stats columns use the first available entity_data.
     """
     if section_data:
-        # Merged mode — pre-calculate stats per section (supports composite keys like 'current_stats__per_100')
+        # Merged mode — pre-calculate stats per section (supports ColumnContext keys)
         calculated_by_section = {}
         for sec_name, (sec_entity, sec_pcts, sec_seasons) in section_data.items():
-            # Extract mode from composite key: 'current_stats__per_100' → 'per_100'
-            if '__' in sec_name:
-                sec_mode = sec_name.split('__')[1]
+            if hasattr(sec_name, 'rate') and getattr(sec_name, 'rate'):
+                sec_mode = sec_name.rate
             else:
                 sec_mode = mode
             sec_ctx = dict(context or {})
@@ -110,7 +109,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         # Non-stats section column — evaluate formula and format
         if not col_ctx_cfg.get('stats_timeframe'):
             use_entity = sec_entity if section_data and is_stats_section else primary_entity
-            _col_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else mode
+            _col_mode = col_ctx.rate if isinstance(col_ctx, ColumnContext) and col_ctx.rate else mode
             value = evaluate_formula(col_key, use_entity, entity_type, _col_mode, context)
             if value is None:
                 row.append('')
@@ -127,7 +126,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         if col_def.get('is_opponent_col'):
             opp_expr = col_def.get('values', {}).get('team')
             value = evaluate_expression(opp_expr, sec_entity)
-            _col_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else mode
+            _col_mode = col_ctx.rate if isinstance(col_ctx, ColumnContext) and col_ctx.rate else mode
             override = col_def.get('mode_overrides', {}).get(_col_mode)
             active_def = override if override else col_def
             formatted = format_stat_value(value, active_def)
@@ -136,7 +135,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
 
         # Stat column — use pre-calculated value
         value = calculated.get(col_key)
-        _col_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else mode
+        _col_mode = col_ctx.rate if isinstance(col_ctx, ColumnContext) and col_ctx.rate else mode
         override = col_def.get('mode_overrides', {}).get(_col_mode)
         active_def = override if override else col_def
         formatted = format_stat_value(value, active_def)
@@ -172,18 +171,18 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
         
         # Handle current stats
         if current_data:
-            section_data[f'current_stats__{rate_name}'] = (current_data, rate_pcts.get('current_stats', {}), '')
+            section_data[ColumnContext(base_section='current_stats', rate=rate_name)] = (current_data, rate_pcts.get('current_stats', {}), '')
             
         # Handle historical stats (dict mapped by supported years)
         if historical_data:
             if isinstance(historical_data, dict):
                 for y, h_data in historical_data.items():
                     if h_data:
-                        section_data[f'historical_stats_{y}yr__{rate_name}'] = (
+                        section_data[ColumnContext(base_section='historical_stats', timeframe=int(y), rate=rate_name)] = (
                             h_data, rate_pcts.get(f'historical_stats_{y}yr', {}), str(y)
                         )
             else:
-                section_data[f'historical_stats__{rate_name}'] = (
+                section_data[ColumnContext(base_section='historical_stats', rate=rate_name)] = (
                     historical_data, rate_pcts.get('historical_stats', {}), historical_timeframe
                 )
                 
@@ -192,11 +191,11 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             if isinstance(postseason_data, dict):
                 for y, p_data in postseason_data.items():
                     if p_data:
-                        section_data[f'postseason_stats_{y}yr__{rate_name}'] = (
+                        section_data[ColumnContext(base_section='postseason_stats', timeframe=int(y), rate=rate_name)] = (
                             p_data, rate_pcts.get(f'postseason_stats_{y}yr', {}), str(y)
                         )
             else:
-                section_data[f'postseason_stats__{rate_name}'] = (
+                section_data[ColumnContext(base_section='postseason_stats', rate=rate_name)] = (
                     postseason_data, rate_pcts.get('postseason_stats', {}), post_seasons
                 )
 
@@ -234,7 +233,10 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             if col_ctx not in section_data:
                 continue
             sec_entity, sec_pcts, _ = section_data[col_ctx]
-            sec_mode = col_ctx.split('__')[1] if col_ctx and '__' in col_ctx else DEFAULT_STAT_RATE
+            if isinstance(col_ctx, ColumnContext):
+                sec_mode = col_ctx.rate if col_ctx.rate else DEFAULT_STAT_RATE
+            else:
+                sec_mode = col_ctx.split('__')[1] if col_ctx and '__' in str(col_ctx) else DEFAULT_STAT_RATE
 
             # Opponent companion: compute value from base opponent formula
             if col_def.get('is_opponent_col') and opp_percentiles:
@@ -293,7 +295,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                     })
         else:
             # Non-stats section — use default mode's current_stats percentiles
-            default_current_key = f'current_stats__{DEFAULT_STAT_RATE}'
+            default_current_key = ColumnContext(base_section='current_stats', rate=DEFAULT_STAT_RATE)
             if default_current_key in section_data:
                 sec_entity, sec_pcts, _ = section_data[default_current_key]
             elif section_data:

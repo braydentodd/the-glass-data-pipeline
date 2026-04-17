@@ -2,23 +2,22 @@ from typing import List, Optional, Any, Tuple
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.core.formatting import ROW_INDEXES
 from src.publish.definitions.config import (SECTIONS_CONFIG, SUBSECTIONS, SHEET_FORMATTING,
-                                STAT_RATES, DEFAULT_STAT_RATE, SUMMARY_THRESHOLDS)
+                                STAT_RATES, DEFAULT_STAT_RATE, SUMMARY_THRESHOLDS, ColumnContext)
 from src.publish.core.calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
 from src.publish.core.formatting import format_section_header, format_stat_value, format_height
 
 
 import re
-def _base_section(ctx: str) -> str:
-    """Extract the base section name from a potentially composite context key.
-
-    'current_stats__per_possession' -> 'current_stats'
-    'historical_stats_3yr__per_possession' -> 'historical_stats'
-    'entities' -> 'entities'
-    """
+def _base_section(ctx: Any) -> str:
+    """Extract the base section name from a context."""
     if not ctx:
         return ctx
 
-    ctx_prefix = ctx.split('__')[0]
+    if isinstance(ctx, ColumnContext):
+        return ctx.base_section
+    
+    ctx_str = str(ctx)
+    ctx_prefix = ctx_str.split('__')[0]
     
     # Match the mapped prefix cleanly against registered config sections
     for section in SECTIONS_CONFIG.keys():
@@ -381,7 +380,7 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
             # Current stats just use the normal rate tripling
             if section == 'current_stats':
                 for stat_rate in STAT_RATES:
-                    context_key = f'{section}__{stat_rate}'
+                    context_key = ColumnContext(base_section=section, rate=stat_rate)
                     mode_visible = (stat_rate == default_mode)
 
                     _append_section_columns(section, context_key, mode_visible)
@@ -393,7 +392,7 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
                 supported_years = list(HISTORICAL_TIMEFRAMES.keys())
                 for y in supported_years:
                     for stat_rate in STAT_RATES:
-                        context_key = f'{section}_{y}yr__{stat_rate}'
+                        context_key = ColumnContext(base_section=section, timeframe=int(y), rate=stat_rate)
                         mode_visible = (stat_rate == default_mode and y == default_timeframe)
                         
                         _append_section_columns(section, context_key, mode_visible)
@@ -402,29 +401,43 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
 
         else:
             # Non-stats sections: single copy, always visible
-            _append_section_columns(section, section, True)
+            context_key = ColumnContext(base_section=section)
+            _append_section_columns(section, context_key, True)
             if not is_last_section and section != 'entities':
-                all_columns.append(_make_separator(section, True, 'section'))
+                all_columns.append(_make_separator(context_key, True, 'section'))
 
     return all_columns
 
 
+def build_column_index_map(columns_list: List[Tuple]) -> dict:
+    """
+    Build an O(1) lookup dictionary for column indices.
+    Keys are either just the column_key, or a tuple of (column_key, context_section).
+    """
+    idx_map = {}
+    for idx, entry in enumerate(columns_list):
+        col_key = entry[0]
+        col_ctx = entry[3] if len(entry) > 3 else None
+        
+        # Save both exact context matches and "first seen" contextless matches
+        # Allows mapped lookup by map.get((col_key, ctx)) or map.get(col_key)
+        if (col_key, col_ctx) not in idx_map:
+            idx_map[(col_key, col_ctx)] = idx
+        if col_key not in idx_map:
+            idx_map[col_key] = idx
+            
+    return idx_map
+
 def get_column_index(column_key: str, columns_list: List[Tuple],
                      context_section: Optional[str] = None) -> Optional[int]:
     """
-    Get 0-based index of a column in the columns list.
-    If context_section given, finds the instance in that section block.
-    Otherwise returns the first match.
+    Legacy wrapper. In high-frequency loops, prefer building the index map directly
+    via build_column_index_map() instead.
     """
-    for idx, entry in enumerate(columns_list):
-        col_key = entry[0]
-        if col_key == column_key:
-            if context_section is None:
-                return idx
-            col_ctx = entry[3] if len(entry) > 3 else None
-            if col_ctx == context_section:
-                return idx
-    return None
+    idx_map = build_column_index_map(columns_list)
+    if context_section is not None:
+        return idx_map.get((column_key, context_section))
+    return idx_map.get(column_key)
 
 
 # ============================================================================
@@ -460,13 +473,18 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
     def _get_display(section):
         if section == 'entities':
             return team_name
-        base = _base_section(section)
-        sec_mode = section.split('__')[1] if '__' in section else mode
         
-        local_hist_config = historical_config
-        m = re.search(r'_(?:[a-zA-Z]+_)?(\d+)yr(?:__|$)', section) or re.search(r'_(\d+)yr(?:__|$)', section)
-        if m:
-            local_hist_config = {'mode': 'seasons', 'value': int(m.group(1))}
+        base = _base_section(section)
+        
+        if isinstance(section, ColumnContext):
+            sec_mode = section.rate if section.rate else mode
+            local_hist_config = {'mode': 'seasons', 'value': section.timeframe} if section.timeframe else historical_config
+        else:
+            sec_mode = section.split('__')[1] if isinstance(section, str) and '__' in section else mode
+            local_hist_config = historical_config
+            m = re.search(r'_(?:[a-zA-Z]+_)?(\d+)yr(?:__|$)', str(section)) or re.search(r'_(\d+)yr(?:__|$)', str(section))
+            if m:
+                local_hist_config = {'mode': 'seasons', 'value': int(m.group(1))}
             
         base_cfg = SECTIONS_CONFIG.get(base, {})
         if base_cfg.get('stats_timeframe') and current_season:
@@ -475,7 +493,10 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
                 historical_config=local_hist_config,
                 is_postseason=(base == 'postseason_stats'),
                 mode=sec_mode)
-        return base_cfg.get('display_name', section)
+        
+        if isinstance(section, ColumnContext):
+             return base_cfg.get('display_name', section.base_section)
+        return base_cfg.get('display_name', str(section))
 
     for idx, entry in enumerate(columns_list):
         col_key, col_def = entry[0], entry[1]
@@ -545,7 +566,10 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
         # Format: "{description}{spacer}{col_key}{spacer}{description}"
         # The spacer creates a wide string. CLIP truncation shows just the key;
         # clicking the cell reveals the full description in the formula bar.
-        col_mode = section.split('__')[1] if '__' in section else mode
+        if isinstance(section, ColumnContext):
+            col_mode = section.rate if section.rate else mode
+        else:
+            col_mode = section.split('__')[1] if isinstance(section, str) and '__' in section else mode
         override = col_def.get('mode_overrides', {}).get(col_mode)
         active_def = override if override else col_def
         description = active_def.get('description', col_def.get('description', ''))
