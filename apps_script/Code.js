@@ -33,6 +33,7 @@ function _getRootScope() {
 
   root.showAdvancedStats = function() { _setAdvancedStats(true); };
   root.hideAdvancedStats = function() { _setAdvancedStats(false); };
+  root.resetDisplayToDefaults = function() { _resetToDefaults(); };
 
   (CONFIG.supported_historical_timeframes || []).forEach(function(years) {
     root['setTimeframe' + years] = function() { _setTimeframe(years); };
@@ -53,12 +54,33 @@ function onOpen() {
 
   try {
     var config = _getConfig();
+    var props = PropertiesService.getDocumentProperties();
+    _checkEpochReset(config, props);
     var menu = _buildDisplayMenu(ui, config);
     menu.addToUi();
   } catch (err) {
     ui.createMenu('Display Settings')
       .addItem('Config not loaded', 'onOpen')
       .addToUi();
+  }
+}
+
+function _checkEpochReset(config, props) {
+  if (config.publish_epoch) {
+    var currentEpoch = props.getProperty('PUBLISH_EPOCH');
+    var publishEpochStr = String(config.publish_epoch);
+    if (currentEpoch !== publishEpochStr) {
+      props.deleteProperty('STATS_RATE');
+      props.deleteProperty('SHOW_ADVANCED');
+      props.deleteProperty('HISTORICAL_TIMEFRAME');
+      
+      var sections = config.sections || {};
+      Object.keys(sections).forEach(function(secKey) {
+        props.deleteProperty(_getSectionVisibilityKey(secKey));
+      });
+      
+      props.setProperty('PUBLISH_EPOCH', publishEpochStr);
+    }
   }
 }
 
@@ -81,7 +103,11 @@ function _buildDisplayMenu(ui, config) {
   if (ratesKeys.length) {
     var rateMenu = ui.createMenu(rateConfig.display_name || 'Stats Rate');
     ratesKeys.forEach(function(rate) {
-      var label = config.stat_rates[rate].label || rate;
+      var rObj = config.stat_rates[rate];
+      var label = rate;
+      if (rObj && rObj.short_label) {
+        label = 'per ' + (rObj.rate ? rObj.rate + ' ' : '') + rObj.short_label;
+      }
       rateMenu.addItem(label, 'switchTo_' + rate);
     });
     menu.addSubMenu(rateMenu);
@@ -121,11 +147,16 @@ function _switchStatRate(newRate) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var config = _getConfig();
   var props = PropertiesService.getDocumentProperties();
+  _checkEpochReset(config, props);
   var currentRate = props.getProperty('STATS_RATE') || config.default_stat_rate;
 
-  var rateLabel = (config.stat_rates[newRate] && config.stat_rates[newRate].label) ? config.stat_rates[newRate].label : newRate;
+  var rObj = config.stat_rates[newRate];
+  var rateLabel = newRate;
+  if (rObj && rObj.short_label) {
+    rateLabel = 'per ' + (rObj.rate ? rObj.rate + ' ' : '') + rObj.short_label;
+  }
+
   if (newRate === currentRate) {
-    ss.toast('Already in ' + rateLabel + ' mode', 'Rate', 2);
     return;
   }
 
@@ -137,7 +168,11 @@ function _switchStatRate(newRate) {
 }
 
 function _setAdvancedStats(newAdvancedVisible) {
-  PropertiesService.getDocumentProperties().setProperty('SHOW_ADVANCED', newAdvancedVisible ? 'true' : 'false');
+  var config = _getConfig();
+  var props = PropertiesService.getDocumentProperties();
+  _checkEpochReset(config, props);
+  
+  props.setProperty('SHOW_ADVANCED', newAdvancedVisible ? 'true' : 'false');
   var predicate = function(b) { return b.advanced || b.basic; };
   _applyToAllSheets(function(sheet, sheetType) {
     _reapplyToggles(sheet, sheetType, predicate);
@@ -145,7 +180,11 @@ function _setAdvancedStats(newAdvancedVisible) {
 }
 
 function _setTimeframe(years) {
-  PropertiesService.getDocumentProperties().setProperty('HISTORICAL_TIMEFRAME', String(years));
+  var config = _getConfig();
+  var props = PropertiesService.getDocumentProperties();
+  _checkEpochReset(config, props);
+  
+  props.setProperty('HISTORICAL_TIMEFRAME', String(years));
   var predicate = function(b) { return b.is_stats_section && b.timeframe !== ""; };
   _applyToAllSheets(function(sheet, sheetType) {
     _reapplyToggles(sheet, sheetType, predicate);
@@ -153,7 +192,11 @@ function _setTimeframe(years) {
 }
 
 function _setSectionVisibility(sectionKey, makeVisible) {
-  PropertiesService.getDocumentProperties().setProperty(_getSectionVisibilityKey(sectionKey), makeVisible ? 'true' : 'false');
+  var config = _getConfig();
+  var props = PropertiesService.getDocumentProperties();
+  _checkEpochReset(config, props);
+  
+  props.setProperty(_getSectionVisibilityKey(sectionKey), makeVisible ? 'true' : 'false');
   var predicate = function(b) { return b.base_section === sectionKey; };
   _applyToAllSheets(function(sheet, sheetType) {
     _reapplyToggles(sheet, sheetType, predicate);
@@ -192,7 +235,6 @@ function onEditInstallable(e) {
     return;
   }
   if (sheetType === 'players' && rowLabel === 'OPPONENTS') {
-    ss.toast('Opponent rows cannot be edited', 'Info', 3);
     return;
   }
 
@@ -201,7 +243,7 @@ function onEditInstallable(e) {
   if (matched.format === 'measurement') {
     var parsed = parseMeasurementInput(newValue);
     if (parsed === null) {
-      ss.toast("Invalid measurement. Use feet'inches (e.g. 6'8) or total inches.", 'Error', 5);
+      ss.toast("Invalid measurement. Use feet'inches (e.g. 6'8).", 'Error', 5);
       return;
     }
     newValue = parsed;
@@ -233,8 +275,6 @@ function onEditInstallable(e) {
 
     _propagateValue(targetSheet, targetType, entityType, entityId, teamAbbr, targetCol, newValue, config);
   }
-
-  ss.toast((matched.display_name || matched.col_key || 'Field') + ' updated for ' + rowLabel, 'Saved', 3);
 }
 
 function _findEditableMatch(lookup, rangeKey, editedCol) {
@@ -400,7 +440,7 @@ function _getSectionVisibilityKey(sectionKey) {
   return 'SECTION_VIS_' + String(sectionKey || '').toUpperCase();
 }
 
-function _applyToAllSheets(fn, toastMsg) {
+function _applyToAllSheets(fn) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheets = ss.getSheets();
   var activeSheet = ss.getActiveSheet();
@@ -409,6 +449,7 @@ function _applyToAllSheets(fn, toastMsg) {
   var activeType = _getSheetType(activeSheet.getName());
   if (activeType) {
     fn(activeSheet, activeType);
+    SpreadsheetApp.flush(); // Force UI to redraw immediately before pausing for the rest
   }
 
   for (var i = 0; i < sheets.length; i++) {
@@ -420,10 +461,6 @@ function _applyToAllSheets(fn, toastMsg) {
     if (type) {
       fn(sheet, type);
     }
-  }
-
-  if (toastMsg) {
-    ss.toast(toastMsg, 'Updated', 2);
   }
 }
 
@@ -495,21 +532,9 @@ function _buildVisibilityRanges(metadata, props, config, predicate) {
 }
 
 function _isColumnVisible(meta, props, currentRate, showAdvanced, timeframe) {
-  if (meta.is_separator) {
-    return true;
-  }
-
   var sectionVisible = props[_getSectionVisibilityKey(meta.base_section)] !== 'false';
   if (!sectionVisible) {
     return false;
-  }
-
-  if (meta.advanced) {
-    return showAdvanced;
-  }
-
-  if (meta.basic) {
-    return !showAdvanced;
   }
 
   if (meta.is_stats_section) {
@@ -519,6 +544,18 @@ function _isColumnVisible(meta, props, currentRate, showAdvanced, timeframe) {
     if (meta.timeframe && meta.timeframe !== timeframe) {
       return false;
     }
+  }
+
+  if (meta.is_separator) {
+    return true;
+  }
+
+  if (meta.advanced) {
+    return showAdvanced;
+  }
+
+  if (meta.basic) {
+    return !showAdvanced;
   }
 
   return true;

@@ -49,8 +49,8 @@ def format_section_header(section: str, historical_config: Optional[dict] = None
     Build the full section header display string.
 
     Current stats:   "2025-26 Regular Season Stats per 100 Poss"
-    Historical/Post: "Previous 3 Regular Seasons Stats per 100 Poss"
-                     "Previous Regular Season Stats per 100 Poss"  (1 season)
+    Historical/Post: "Regular Season Stats per 100 Poss (Previous 3 Seasons)"
+                     "Regular Season Stats per 100 Poss (Previous Season)"  (1 season)
 
     Args:
         section: 'current_stats', 'historical_stats', or 'postseason_stats'
@@ -61,30 +61,39 @@ def format_section_header(section: str, historical_config: Optional[dict] = None
     """
     season_label = 'Postseason' if is_postseason else 'Regular Season'
 
-    # Current stats: just "YYYY-YY Regular Season Stats (rate)"
+    # Build the rate string ("per 100 Poss", "per Game")
+    rate_str = ""
+    if mode and mode in STAT_RATES:
+        rate_info = STAT_RATES[mode]
+        rate_val = rate_info.get('rate')
+        short_label = rate_info.get('short_label', '')
+        if rate_val is not None:
+            rate_str = f" per {rate_val} {short_label}"
+        else:
+            rate_str = f" per {short_label}"
+
+    # Current stats: "YYYY-YY Regular Season Stats per 100 Poss"
     if section == 'current_stats':
         season_str = format_season_label(current_season)
-        header = f"{season_str} {season_label} Stats"
-        rate_label = STAT_RATES.get(mode, {}).get('label', '')
-        return f"{header} {rate_label}" if rate_label else header
+        return f"{season_str} {season_label} Stats{rate_str}"
 
-    # Historical / Postseason sections — never include current season
+    # Historical / Postseason sections
     mode_cfg = (historical_config or {}).get('mode', 'seasons')
     value = (historical_config or {}).get('value', 3)
-
-    rate_label = STAT_RATES.get(mode, {}).get('label', '')
-    rate_suffix = f" {rate_label}" if rate_label else ''
 
     if isinstance(value, int):
         num = value
     elif isinstance(value, list) and value:
         num = len(value)
     else:
-        return f"{season_label} Stats{rate_suffix}"
+        return f"{season_label} Stats{rate_str}"
 
     if num == 1:
-        return f"{season_label} Stats{rate_suffix} Previous Season"
-    return f"{season_label} Stats{rate_suffix} Previous {num} Seasons"
+        timeframe_str = "(Previous Season)"
+    else:
+        timeframe_str = f"(Previous {num} Seasons)"
+
+    return f"{season_label} Stats{rate_str} {timeframe_str}"
 
 
 def format_seasons_range(historical_config: Optional[dict], current_season: int) -> str:

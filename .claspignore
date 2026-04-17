@@ -1,7 +1,0 @@
-# Ignore everything outside apps_script folder
-# (Since rootDir is set to "apps_script" in .clasp.json, this isn't strictly necessary,
-# but it's good practice to be explicit)
-**/**
-!appsscript.json
-!Code.js
-apps_config/*.js

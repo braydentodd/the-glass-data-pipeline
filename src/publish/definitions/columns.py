@@ -899,7 +899,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'editable': None,
         'scale_with_rate': False,
         'format': 'percentage',
-        'decimal_places': 2,
+        'decimal_places': 1,
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,

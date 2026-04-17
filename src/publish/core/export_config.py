@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 from pathlib import Path
 
 from src.publish.definitions.columns import TAB_COLUMNS
@@ -11,7 +12,7 @@ from src.publish.definitions.config import (HEADER_ROWS, HISTORICAL_TIMEFRAMES,
     DEFAULT_STAT_RATE,
     
 )
-from src.publish.core.table_builder import build_tab_columns, get_column_index
+from src.publish.core.layout import build_tab_columns, get_column_index
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +203,7 @@ def get_config_for_export(
         }
 
     return {
+        'publish_epoch': int(time.time()),
         'sheet_id': google_sheets_config.get('spreadsheet_id', ''),
         'sheet_names': {
             'players': ['ALL_PLAYERS', 'PLAYERS'],

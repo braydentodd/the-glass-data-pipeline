@@ -35,24 +35,22 @@ GOOGLE_SHEETS_CONFIG = {
 }
 
 # ============================================================================
-
-# ============================================================================
 # STAT CALCULATION CONSTANTS
 # ============================================================================
 
 STAT_RATES = {
     'per_possession': {
-        'label': 'per Poss',
+        'short_label': 'Poss',
         'rate': 100,
         'default': True
         },
     'per_game': {
-        'label': 'per Game',
+        'short_label': 'Game',
         'rate': None,
         'default': False
     },
     'per_minute': {
-        'label': 'per Min',
+        'short_label': 'Min',
         'rate': 40,
         'default': False
     }
