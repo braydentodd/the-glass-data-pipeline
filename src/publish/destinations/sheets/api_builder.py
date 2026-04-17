@@ -1,7 +1,8 @@
 import logging
 from typing import Dict, List, Optional, Tuple
+from src.publish.core.formatting import ROW_INDEXES
 from src.publish.definitions.columns import TAB_COLUMNS
-from src.publish.definitions.config import (SECTIONS_CONFIG, SUBSECTIONS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES)
+from src.publish.definitions.config import (SECTIONS_CONFIG, SUBSECTIONS, COLORS, COLOR_THRESHOLDS, SHEET_FORMATTING, WIDTH_CLASSES, HEADER_ROWS)
 from src.publish.destinations.sheets.styles import get_color_for_percentile, get_color_for_raw, get_color_dict, get_border_style, create_cell_format, create_text_format
 from src.publish.core.table_builder import get_column_index
 
@@ -22,7 +23,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
 
     Args:
         ws_id: Worksheet ID
-        columns_list: The column structure from build_tab_columns
+        columns_list: The column structure from build_columns
         header_merges: Merge info from build_headers
         n_data_rows: Number of data rows (players + team/opp)
         team_name: Full team name for display
@@ -36,9 +37,10 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     """
     fmt = SHEET_FORMATTING
     n_cols = len(columns_list)
-    data_start = fmt['data_start_row']
+    data_start = ROW_INDEXES['data_start_row']
     total_rows = data_start + n_data_rows
-    header_end = fmt['data_start_row']  # Row after last header row
+    header_end = ROW_INDEXES['data_start_row']  # Row after last header row
+    frozen_columns = fmt.get('frozen_columns', fmt.get('frozen_columns', 0))
     column_border_weight = fmt.get('column_border_weight', 1)
     column_header_color = get_color_for_raw(COLORS[fmt.get('column_border_color_header', 'white')])
     column_data_color = get_color_for_raw(COLORS[fmt.get('column_border_color_data', 'black')])
@@ -55,8 +57,8 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     'bandedRange': {
                         'range': _range(ws_id, data_start, data_start + n_data_rows, 0, n_cols),
                         'rowProperties': {
-                            'firstBandColor': get_color_for_raw(COLORS[fmt['row_even_bg']]),
-                            'secondBandColor': get_color_for_raw(COLORS[fmt['row_odd_bg']]),
+                            'firstBandColor': get_color_for_raw(COLORS[fmt['data_row_even_bg']]),
+                            'secondBandColor': get_color_for_raw(COLORS[fmt['data_row_odd_bg']]),
                         },
                     },
                 }
@@ -66,7 +68,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         fast.append({
             'setBasicFilter': {
                 'filter': {
-                    'range': _range(ws_id, fmt['filter_row'], filter_end, 0, n_cols),
+                    'range': _range(ws_id, ROW_INDEXES['filter_row'], filter_end, 0, n_cols),
                 }
             }
         })
@@ -89,7 +91,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 'sheetId': ws_id,
                 'gridProperties': {
                     'frozenRowCount': fmt['frozen_rows'],
-                    'frozenColumnCount': fmt['frozen_cols'],
+                    'frozenColumnCount': frozen_columns,
                     'hideGridlines': True,
                 },
             },
@@ -101,21 +103,44 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     requests.append({
         'updateDimensionProperties': {
             'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': 0, 'endIndex': total_rows },
-            'properties': {'pixelSize': fmt.get('row_height_default', 21)},
+            'properties': {'pixelSize': HEADER_ROWS['columns']['row_height']},
             'fields': 'pixelSize',
         }
     })
     requests.append({
         'updateDimensionProperties': {
-            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': fmt['section_header_row'], 'endIndex': fmt['section_header_row'] + 1 },
-            'properties': {'pixelSize': fmt.get('row_height_section_header', 25)},
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': ROW_INDEXES['section_header_row'], 'endIndex': ROW_INDEXES['section_header_row'] + 1 },
+            'properties': {'pixelSize': HEADER_ROWS['sections']['row_height']},
             'fields': 'pixelSize',
         }
     })
+    if 'section_divider_row' in ROW_INDEXES:
+        requests.append({
+            'updateDimensionProperties': {
+                'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': ROW_INDEXES['section_divider_row'], 'endIndex': ROW_INDEXES['section_divider_row'] + 1 },
+                'properties': {'pixelSize': HEADER_ROWS['sections']['divider_row_weight']},
+                'fields': 'pixelSize',
+            }
+        })
     requests.append({
         'updateDimensionProperties': {
-            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': fmt['filter_row'], 'endIndex': fmt['filter_row'] + 1 },
-            'properties': {'pixelSize': fmt.get('row_height_filter', 12)},
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': ROW_INDEXES['subsection_header_row'], 'endIndex': ROW_INDEXES['subsection_header_row'] + 1 },
+            'properties': {'pixelSize': HEADER_ROWS['subsections']['row_height']},
+            'fields': 'pixelSize',
+        }
+    })
+    if 'subsection_divider_row' in ROW_INDEXES:
+        requests.append({
+            'updateDimensionProperties': {
+                'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': ROW_INDEXES['subsection_divider_row'], 'endIndex': ROW_INDEXES['subsection_divider_row'] + 1 },
+                'properties': {'pixelSize': HEADER_ROWS['subsections']['divider_row_weight']},
+                'fields': 'pixelSize',
+            }
+        })
+    requests.append({
+        'updateDimensionProperties': {
+            'range': { 'sheetId': ws_id, 'dimension': 'ROWS', 'startIndex': ROW_INDEXES['filter_row'], 'endIndex': ROW_INDEXES['filter_row'] + 1 },
+            'properties': {'pixelSize': HEADER_ROWS['filters']['row_height']},
             'fields': 'pixelSize',
         }
     })
@@ -123,13 +148,13 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 2. Section header row (row 0) — includes team name in entities section ----
     requests.append({
         'repeatCell': {
-            'range': _range(ws_id, fmt['section_header_row'], fmt['section_header_row'] + 1, 0, n_cols),
+            'range': _range(ws_id, ROW_INDEXES['section_header_row'], ROW_INDEXES['section_header_row'] + 1, 0, n_cols),
             'cell': {
                 'userEnteredFormat': {
                     'backgroundColor': get_color_for_raw(COLORS[fmt['header_bg']]),
                     'textFormat': {
                         'fontFamily': fmt['header_font'],
-                        'fontSize': fmt['section_header_size'],
+                        'fontSize': HEADER_ROWS['sections']['font_size'],
                         'bold': True,
                         'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
                     },
@@ -154,12 +179,12 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     if entities_end > 0:
         requests.append({
             'repeatCell': {
-                'range': _range(ws_id, fmt['section_header_row'], fmt['section_header_row'] + 1, 0, entities_end),
+                'range': _range(ws_id, ROW_INDEXES['section_header_row'], ROW_INDEXES['section_header_row'] + 1, 0, entities_end),
                 'cell': {
                     'userEnteredFormat': {
                         'textFormat': {
                             'fontFamily': fmt['header_font'],
-                            'fontSize': fmt['team_name_size'],
+                            'fontSize': HEADER_ROWS['sections']['column_a_font_size'],
                             'bold': True,
                             'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
                         },
@@ -173,13 +198,13 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 3. Subsection header row (row 1) ----
     requests.append({
         'repeatCell': {
-            'range': _range(ws_id, fmt['subsection_header_row'], fmt['subsection_header_row'] + 1, 0, n_cols),
+            'range': _range(ws_id, ROW_INDEXES['subsection_header_row'], ROW_INDEXES['subsection_header_row'] + 1, 0, n_cols),
             'cell': {
                 'userEnteredFormat': {
                     'backgroundColor': get_color_for_raw(COLORS[fmt['header_bg']]),
                     'textFormat': {
                         'fontFamily': fmt['header_font'],
-                        'fontSize': fmt['subsection_header_size'],
+                        'fontSize': HEADER_ROWS['subsections']['font_size'],
                         'bold': True,
                         'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
                     },
@@ -195,13 +220,13 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 4. Column header row (row 2) ----
     requests.append({
         'repeatCell': {
-            'range': _range(ws_id, fmt['column_header_row'], fmt['column_header_row'] + 1, 0, n_cols),
+            'range': _range(ws_id, ROW_INDEXES['column_header_row'], ROW_INDEXES['column_header_row'] + 1, 0, n_cols),
             'cell': {
                 'userEnteredFormat': {
                     'backgroundColor': get_color_for_raw(COLORS[fmt['header_bg']]),
                     'textFormat': {
                         'fontFamily': fmt['header_font'],
-                        'fontSize': fmt['column_header_size'],
+                        'fontSize': HEADER_ROWS['columns']['font_size'],
                         'bold': True,
                         'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
                     },
@@ -217,13 +242,13 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 5. Filter row — same header styling ----
     requests.append({
         'repeatCell': {
-            'range': _range(ws_id, fmt['filter_row'], fmt['filter_row'] + 1, 0, n_cols),
+            'range': _range(ws_id, ROW_INDEXES['filter_row'], ROW_INDEXES['filter_row'] + 1, 0, n_cols),
             'cell': {
                 'userEnteredFormat': {
                     'backgroundColor': get_color_for_raw(COLORS[fmt['header_bg']]),
                     'textFormat': {
                         'fontFamily': fmt['header_font'],
-                        'fontSize': fmt['column_header_size'],
+                        'fontSize': HEADER_ROWS['filters']['font_size'],
                         'foregroundColor': get_color_for_raw(COLORS[fmt['header_fg']]),
                     },
                     'horizontalAlignment': 'CENTER',
@@ -244,10 +269,10 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                     'userEnteredFormat': {
                         'textFormat': {
                             'fontFamily': fmt['data_font'],
-                            'fontSize': fmt['data_size'],
+                            'fontSize': HEADER_ROWS['columns']['font_size'],
                         },
-                        'horizontalAlignment': fmt['default_h_align'],
-                        'verticalAlignment': fmt['default_v_align'],
+                        'horizontalAlignment': fmt['horizontal_align'],
+                        'verticalAlignment': fmt['vertical_align'],
                         'wrapStrategy': wrap_strategy,
                     },
                 },
@@ -275,7 +300,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     divider_bg = get_color_for_raw(COLORS[fmt.get('header_divider_bg', 'white')])
     divider_height = fmt.get('header_divider_height', 2)
     for row_key in ('section_divider_row', 'subsection_divider_row'):
-        row_idx = fmt.get(row_key)
+        row_idx = ROW_INDEXES.get(row_key)
         if row_idx is None:
             continue
         requests.append({
@@ -311,8 +336,8 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 'bandedRange': {
                     'range': _range(ws_id, data_start, data_start + n_data_rows, 0, n_cols),
                     'rowProperties': {
-                        'firstBandColor': get_color_for_raw(COLORS[fmt['row_even_bg']]),
-                        'secondBandColor': get_color_for_raw(COLORS[fmt['row_odd_bg']]),
+                        'firstBandColor': get_color_for_raw(COLORS[fmt['data_row_even_bg']]),
+                        'secondBandColor': get_color_for_raw(COLORS[fmt['data_row_odd_bg']]),
                     },
                 },
             }
@@ -326,7 +351,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             col_emphasis = col_def.get('emphasis')
             col_font_size = col_def.get('font_size')
 
-            if col_align != fmt['default_h_align']:
+            if col_align != fmt['horizontal_align']:
                 requests.append({
                     'repeatCell': {
                         'range': _range(ws_id, data_start, total_rows, idx, idx + 1),
@@ -360,25 +385,25 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 })
 
     # ---- 9. Header merge cells ----
-    frozen_cols = fmt.get('frozen_cols', 0)
+    frozen_columns = fmt.get('frozen_columns', fmt.get('frozen_columns', 0))
     for merge in header_merges:
         row = merge['row']  # Already 0-based (section=0, subsection=1)
         s, e = merge['start_col'], merge['end_col']
         if e - s <= 1:
             continue
         # Split merges that cross the frozen/non-frozen column boundary
-        if s < frozen_cols < e:
-            if frozen_cols - s > 1:
+        if s < frozen_columns < e:
+            if frozen_columns - s > 1:
                 requests.append({
                     'mergeCells': {
-                        'range': _range(ws_id, row, row + 1, s, frozen_cols),
+                        'range': _range(ws_id, row, row + 1, s, frozen_columns),
                         'mergeType': 'MERGE_ALL',
                     }
                 })
-            if e - frozen_cols > 1:
+            if e - frozen_columns > 1:
                 requests.append({
                     'mergeCells': {
-                        'range': _range(ws_id, row, row + 1, frozen_cols, e),
+                        'range': _range(ws_id, row, row + 1, frozen_columns, e),
                         'mergeType': 'MERGE_ALL',
                     }
                 })
@@ -442,12 +467,12 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
             })
 
     # ---- 11. Column borders (skip frozen divider + stat/companion) ----
-    frozen_cols = fmt.get('frozen_cols', 0)
-    header_border_end = fmt['filter_row'] + 1
+    frozen_columns = fmt.get('frozen_columns', fmt.get('frozen_columns', 0))
+    header_border_end = ROW_INDEXES['filter_row'] + 1
     for col_idx in range(1, n_cols):
         left_def = columns_list[col_idx - 1][1]
         right_def = columns_list[col_idx][1]
-        if col_idx == frozen_cols:
+        if col_idx == frozen_columns:
             continue
         if right_def.get('is_generated_percentile'):
             continue
@@ -472,7 +497,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 11b. Clear all borders across horizontal divider rows ----
     # Ensures cleanly rendered separators without vertical border cut-throughs
     for row_key in ('section_divider_row', 'subsection_divider_row'):
-        row_idx = fmt.get(row_key)
+        row_idx = ROW_INDEXES.get(row_key)
         if row_idx is not None:
             requests.append({
                 'updateBorders': {
@@ -606,7 +631,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 16. Hide columns based on visibility flag from build_tab_columns ----
+    # ---- 16. Hide columns based on visibility flag from build_columns ----
     # The visible flag (entry[2]) encodes: non-default rate → hidden,
     # advanced/basic mode toggle → hidden. This single loop replaces all
     # per-column hiding logic.
@@ -649,7 +674,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     requests.append({
         'setBasicFilter': {
             'filter': {
-                'range': _range(ws_id, fmt['filter_row'], filter_end, 0, n_cols),
+                'range': _range(ws_id, ROW_INDEXES['filter_row'], filter_end, 0, n_cols),
             }
         }
     })

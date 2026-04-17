@@ -35,17 +35,11 @@ GOOGLE_SHEETS_CONFIG = {
 }
 
 # ============================================================================
-# ENTITY COMPUTATIONS
-# ============================================================================
-COMPUTED_ENTITY_FIELDS = {
-    'age': "DATE_PART('year', AGE(CURRENT_DATE, p.birthdate)) + DATE_PART('month', AGE(CURRENT_DATE, p.birthdate)) / 12.0"
-}
 
 # ============================================================================
 # STAT CALCULATION CONSTANTS
 # ============================================================================
 
-DEFAULT_STAT_RATE = "per_game"
 STAT_RATES = {
     'per_possession': {
         'label': 'per Poss',
@@ -148,45 +142,19 @@ SHEET_FORMATTING = {
 
     'header_bg': 'black',
     'header_fg': 'white',
-    'row_even_bg': 'white',
-    'row_odd_bg': 'white',
     'data_row_even_bg': 'white',
     'data_row_odd_bg': 'light_gray',
     'data_fg': 'black',
 
-    'section_header_size': 14,
-    'team_name_size': 16,
-    'subsection_header_size': 12,
-    'column_header_size': 10,
-    'data_size': 10,
-    'border_weight': 1,
-    'subsection_border_weight': 2,
-    'data_border_color': 'black',
-    'column_border_weight': 1,
-    'column_border_color_header': 'white',
-    'column_border_color_data': 'light_gray',
-    'section_separator_width': 4,
-    'subsection_separator_width': 2,
-    'header_separator_bg': 'black',
-    'data_separator_bg': 'light_gray',
-    'header_divider_height': 4,
-    'header_divider_bg': 'black',
-    'footer_divider_height': 4,
-    'footer_divider_bg': 'black',
-    'row_height_section_header': 25,
-    'row_height_filter': 12,
-    'row_height_default': 21,
-
     # Default settings
     'horizontal_align': 'CENTER',
     'vertical_align': 'MIDDLE',
-    'default_h_align': 'CENTER',
-    'default_v_align': 'MIDDLE',
     'wrap_strategy': 'CLIP',
     'hide_advanced_columns': True,
     
-    'frozen_cols': 1,
+    'frozen_columns': 1,
     'frozen_rows': 6,
+    'header_rows': 6,
 
     # percentile companion column formatting
     'percentile_companion_width': 18,      # pixels (wider to fit rank + over/under)
@@ -196,36 +164,30 @@ SHEET_FORMATTING = {
     'sync_delay_seconds': 0
 }
 
-# Dynamically calculate header row logic to keep everything DRY
-_current_row = 0
-for row_key, rules in HEADER_ROWS.items():
-    if row_key == 'sections':
-        SHEET_FORMATTING['section_header_row'] = _current_row
-    elif row_key == 'subsections':
-        SHEET_FORMATTING['subsection_header_row'] = _current_row
-    elif row_key == 'columns':
-        SHEET_FORMATTING['column_header_row'] = _current_row
-    elif row_key == 'filters':
-        SHEET_FORMATTING['filter_row'] = _current_row
-        
-    _current_row += 1
-    
-    # If the row requires a physical divider row, increment current_row and track its index
-    if rules.get('divider_row_weight') and rules.get('divider_row_direction') == 'below':
-        if row_key == 'sections':
-            SHEET_FORMATTING['section_divider_row'] = _current_row
-        elif row_key == 'subsections':
-            SHEET_FORMATTING['subsection_divider_row'] = _current_row
-        _current_row += 1
-
-SHEET_FORMATTING['header_row_count'] = _current_row
-SHEET_FORMATTING['data_start_row'] = _current_row
-SHEET_FORMATTING['row_sections'] = list(HEADER_ROWS.keys())
-SHEET_FORMATTING['hide_identity_section'] = True
-
 # ============================================================================
 # SECTION AND SUBSECTION DEFINITIONS
 # ============================================================================
+
+TABS_CONFIG = {
+    'all_players': {
+        'tab_name': 'Players',
+        'move_to_front': True,
+        'footer': 'percentiles',
+        'footer_divider_row_height': 4
+    },
+    'all_teams': {
+        'tab_name': 'Teams',
+        'move_to_front': True,
+        'footer': 'percentiles',
+        'footer_divider_row_height': 4,
+    },
+    'team': {
+        'tab_name': tab_subject('abbr'),
+        'move_to_front': False,
+        'footer': 'team/opponent',
+        'footer_divider_row_height': 4
+    }
+}
 
 SECTIONS_CONFIG = {
     'entities': {
@@ -272,38 +234,58 @@ SECTIONS_CONFIG = {
     }
 }
 
-TABS_CONFIG = {
-    'all_players': {
-        'tab_name': 'Players',
-        'footer': 'percentiles',
-        'footer_divider_row_height': 4
-    },
-    'all_teams': {
-        'tab_name': 'Teams',
-        'footer': 'percentiles',
-        'footer_divider_row_height': 4,
-    },
-    'team': {
-        'tab_name': tab_subject('abbr'),
-        'footer': 'team/opponent',
-        'footer_divider_row_height': 4
-    }
-}
-
 # Subsections and their display names (used in Row 2 subsection headers)
 SUBSECTIONS = {
-    # Profile subsections
-    'League': 'League',                     # Team, Conference, Jersey, Experience
-    'Player': 'Player',                     # Age, Height, Weight, Wingspan, Handedness
-    # Stats subsections
-    'rates': 'Rates',                       # Games, Minutes, Possessions
-    'scoring': 'Scoring',                   # Pts, TS%, fg2/3, Rim/Mid/3PT tracking, FT
-    'ball_management': 'Ball Management',   # Touches, Assists, Potential Assists, Turnovers
-    'rebounding': 'Rebounding',             # OREB%, DREB%, Contested OREB/DREB%, Putbacks
-    'distance': 'Distance',                 # Offensive/Defensive distance traveled
-    'defense': 'Defense',                   # Defended shots, Steals, Deflections, Blocks, Contests, Charges, Fouls
-    'opponent': 'Opponent',                 # All opponent stats (Teams sheet only, between defense and on/off)
-    'team_ratings': 'Team Ratings'         # Offensive/Defensive Rating, Off-court ratings
+    'league': {
+        'display_name': 'League',
+        'sections': ['profile'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    },
+    'player': {
+        'display_name': 'Player',
+        'sections': ['profile'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    },
+    'rates': {
+        'display_name': 'Rates',
+        'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    },
+    'scoring': {
+        'display_name': 'Scoring',
+        'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    },
+    'ball_management': {
+        'display_name': 'Ball Management',
+        'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    },
+    'rebounding': {
+        'display_name': 'Rebounding',
+        'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    },
+    'distance': {
+        'display_name': 'Distance',
+        'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    },
+    'defense': {
+        'display_name': 'Defense',
+        'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    },
+    'opponent': {
+        'display_name': 'Opponent',
+        'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'tabs': ['all_teams']
+    },
+    'team_ratings': {
+        'display_name': 'Team Ratings',
+        'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
+        'tabs': ['all_players', 'all_teams', 'team']
+    }
 }
 
 # ============================================================================
@@ -362,54 +344,19 @@ STAT_CONSTANTS_SCHEMA = {
 SHEET_FORMATTING_SCHEMA = {
     'header_font': {'required': True, 'types': (str,)},
     'data_font': {'required': True, 'types': (str,)},
-    'section_header_size': {'required': True, 'types': (int,)},
-    'team_name_size': {'required': True, 'types': (int,)},
-    'subsection_header_size': {'required': True, 'types': (int,)},
-    'column_header_size': {'required': True, 'types': (int,)},
-    'data_size': {'required': True, 'types': (int,)},
     'header_bg': {'required': True, 'types': (str,)},
     'header_fg': {'required': True, 'types': (str,)},
-    'row_even_bg': {'required': True, 'types': (str,)},
-    'row_odd_bg': {'required': True, 'types': (str,)},
-    'border_weight': {'required': True, 'types': (int,)},
-    'subsection_border_weight': {'required': True, 'types': (int,)},
-    'data_border_color': {'required': True, 'types': (str,)},
-    'column_border_weight': {'required': True, 'types': (int,)},
-    'column_border_color_header': {'required': True, 'types': (str,)},
-    'column_border_color_data': {'required': True, 'types': (str,)},
-    'section_separator_width': {'required': True, 'types': (int,)},
-    'subsection_separator_width': {'required': True, 'types': (int,)},
-    'header_separator_bg': {'required': True, 'types': (str,)},
-    'data_separator_bg': {'required': True, 'types': (str,)},
-    'header_divider_height': {'required': True, 'types': (int,)},
-    'header_divider_bg': {'required': True, 'types': (str,)},
-    'footer_divider_height': {'required': True, 'types': (int,)},
-    'footer_divider_bg': {'required': True, 'types': (str,)},
-    'row_height_section_header': {'required': True, 'types': (int,)},
-    'row_height_filter': {'required': True, 'types': (int,)},
-    'row_height_default': {'required': True, 'types': (int,)},
-    'default_h_align': {'required': True, 'types': (str,)},
-    'default_v_align': {'required': True, 'types': (str,)},
     'wrap_strategy': {'required': True, 'types': (str,)},
     'hide_advanced_columns': {'required': True, 'types': (bool,)},
     'hide_identity_section': {'required': True, 'types': (bool,)},
     'percentile_companion_width': {'required': True, 'types': (int,)},
     'percentile_companion_font_size': {'required': True, 'types': (int,)},
-    'section_header_row': {'required': True, 'types': (int,)},
-    'section_divider_row': {'required': True, 'types': (int,)},
-    'subsection_header_row': {'required': True, 'types': (int,)},
-    'subsection_divider_row': {'required': True, 'types': (int,)},
-    'column_header_row': {'required': True, 'types': (int,)},
-    'filter_row': {'required': True, 'types': (int,)},
-    'data_start_row': {'required': True, 'types': (int,)},
-    'header_row_count': {'required': True, 'types': (int,)},
     'frozen_rows': {'required': True, 'types': (int,)},
-    'frozen_cols': {'required': True, 'types': (int,)},
-    'row_sections': {'required': True, 'types': (list,)},
+    'frozen_columns': {'required': True, 'types': (int,)},
     'sync_delay_seconds': {'required': True, 'types': (int,)},
 }
 
-SECTIONS_CONFIG_SCHEMA = {
+SECTIONS_SCHEMA = {
     'display_name': {'required': True, 'types': (str,)},
     'is_stats_section': {'required': True, 'types': (bool,)},
     'toggleable': {'required': True, 'types': (bool,)},
@@ -432,3 +379,4 @@ MENU_CONFIG_SCHEMA = {
     'show_label': {'required': False, 'types': (str,)},
     'hide_label': {'required': False, 'types': (str,)},
 }
+DEFAULT_STAT_RATE = next((k for k, v in STAT_RATES.items() if v.get('default', False)), 'per_game')

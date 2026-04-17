@@ -51,11 +51,9 @@ function _getRootScope() {
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
 
-  var ui = SpreadsheetApp.getUi();
-  var config = _getConfig();
-  var menu = _buildDisplayMenu(ui, config);
-
   try {
+    var config = _getConfig();
+    var menu = _buildDisplayMenu(ui, config);
     menu.addToUi();
   } catch (err) {
     ui.createMenu('Display Settings')

@@ -22,7 +22,7 @@ from src.publish.core.queries import fetch_all_players, fetch_all_teams, get_tea
 from src.publish.destinations.sheets.client import get_sheets_client
 from src.publish.core.executor import sync_teams_tab, sync_team_tab, sync_players_tab, _compute_pct_by_rate
 from src.publish.definitions.config import (
-    STAT_RATES, DEFAULT_STAT_RATE, SECTIONS_CONFIG, COMPUTED_ENTITY_FIELDS,
+    STAT_RATES, DEFAULT_STAT_RATE, SECTIONS_CONFIG,
 )
 from src.publish.core.calculations import derive_db_fields
 
@@ -182,7 +182,7 @@ def sync_league(
     stats_sections = frozenset(
         name for name, cfg in SECTIONS_CONFIG.items() if cfg.get('stats_timeframe')
     )
-    computed_fields = set(COMPUTED_ENTITY_FIELDS.keys())
+    computed_fields = set()
     db_fields = derive_db_fields(league, stats_sections, computed_fields)
 
     ctx = SyncContext(
@@ -230,6 +230,7 @@ def sync_league(
             abbrs = [pt] + [a for a in abbrs if a != pt]
 
     # ---- Sync individual team tabs ----
+    failed_tabs = []
     for abbr in abbrs:
         try:
             sync_team_tab(
@@ -240,6 +241,7 @@ def sync_league(
             )
         except Exception as exc:
             logger.error(f'  {abbr} failed: {exc}', exc_info=True)
+            failed_tabs.append(abbr)
 
         logger.info(f'  Rate limit pause ({delay}s)...')
         time.sleep(delay)
@@ -259,9 +261,15 @@ def sync_league(
                 sync_teams_tab(ctx, client, spreadsheet, precomputed=precomputed, **sync_kwargs)
         except Exception as exc:
             logger.error(f'  {tab_name.title()} tab failed: {exc}', exc_info=True)
+            failed_tabs.append(tab_name)
 
         logger.info(f'  Rate limit pause ({delay}s)...')
         time.sleep(delay)
+
+    if failed_tabs:
+        failed_list = ', '.join(failed_tabs)
+        logger.error('Sync finished with failures: %s', failed_list)
+        raise RuntimeError(f'Sync failed for tab(s): {failed_list}')
 
     logger.info('Sync complete.')
 

@@ -899,7 +899,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'editable': None,
         'scale_with_rate': False,
         'format': 'percentage',
-        'decimal_places': 1,
+        'decimal_places': 2,
         'width_class': 'three_char_dec',
         'leagues': ['nba', 'ncaa'],
         'default': None,
@@ -907,10 +907,10 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': divide(multiply(0.44, 'fta'), add('fg2a', 'fg3a', multiply(0.44, 'fta') )),
-            'team': divide(multiply(0.44, 'fta'), add('fg2a', 'fg3a', multiply(0.44, 'fta') )),
-            'all_teams': divide(multiply(0.44, 'fta'), add('fg2a', 'fg3a', multiply(0.44, 'fta') )),
-            'opponents': divide(multiply(0.44, 'opp_fta'), add('opp_fg2a', 'opp_fg3a', multiply(0.44, 'opp_fta') ))
+            'player': multiply(divide(multiply(0.44, 'fta'), add('fg2a', 'fg3a', multiply(0.44, 'fta') )), 100),
+            'team': multiply(divide(multiply(0.44, 'fta'), add('fg2a', 'fg3a', multiply(0.44, 'fta') )), 100),
+            'all_teams': multiply(divide(multiply(0.44, 'fta'), add('fg2a', 'fg3a', multiply(0.44, 'fta') )), 100),
+            'opponents': multiply(divide(multiply(0.44, 'opp_fta'), add('opp_fg2a', 'opp_fg3a', multiply(0.44, 'opp_fta') )), 100)
         }
     },
     'p/ft': {
@@ -1167,6 +1167,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'values': {
             'player': '{turnovers}',
             'team': '{turnovers}',
+            'all_teams': '{turnovers}',
             'opponents': '{opp_turnovers}'
         }
     },

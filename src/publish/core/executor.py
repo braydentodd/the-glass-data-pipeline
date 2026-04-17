@@ -1,8 +1,9 @@
+from src.publish.core.formatting import ROW_INDEXES
 import logging
 from collections import defaultdict
 
 from src.core.db import get_db_connection
-from src.publish.definitions.config import STAT_RATES, SECTIONS_CONFIG
+from src.publish.definitions.config import STAT_RATES, SECTIONS_CONFIG, TABS_CONFIG
 from src.publish.core.queries import fetch_all_players, fetch_all_teams, fetch_players_for_team, fetch_team_stats, get_teams_from_db
 from src.publish.core.table_builder import build_headers, build_tab_columns, build_merged_entity_row, build_summary_rows
 from src.publish.destinations.sheets.api_builder import build_formatting_requests
@@ -232,7 +233,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
                 context={'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
-                cell['row'] = fmt['data_start_row'] + len(data_rows)
+                cell['row'] = ROW_INDEXES['data_start_row'] + len(data_rows)
             all_percentile_cells.extend(pct_cells)
             data_rows.append(row)
 
@@ -266,7 +267,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
 
         # Set row indices for team/opp percentile cells
         # +1 accounts for the separator row
-        team_row_idx = fmt['data_start_row'] + n_player_rows + 1
+        team_row_idx = ROW_INDEXES['data_start_row'] + n_player_rows + 1
         opp_row_idx = team_row_idx + 1
         for cell in team_pct_cells:
             cell['row'] = team_row_idx
@@ -479,7 +480,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                 context={'team_players': player_groups.get(abbr, []), 'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
-                cell['row'] = fmt['data_start_row'] + len(data_rows)
+                cell['row'] = ROW_INDEXES['data_start_row'] + len(data_rows)
             all_percentile_cells.extend(pct_cells)
             data_rows.append(row)
 
@@ -491,7 +492,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
             columns, merged_pops, mode, opp_percentiles=opp_percentiles)
         divider_row = [''] * len(columns)
         data_rows.append(divider_row)
-        summary_start = fmt['data_start_row'] + n_team_rows + 1
+        summary_start = ROW_INDEXES['data_start_row'] + n_team_rows + 1
         for cell in summary_pct:
             cell['row'] = summary_start + cell.pop('row_offset')
         all_percentile_cells.extend(summary_pct)
@@ -505,7 +506,8 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
             partial_update, build_fn=build_formatting_requests,
         )
 
-        move_sheet_to_position(worksheet, 1)
+        if TABS_CONFIG['all_teams'].get('move_to_front'):
+            move_sheet_to_position(worksheet, 1)
 
         logger.info(
             f'  Teams tab done: {n_team_rows} teams, '
@@ -625,7 +627,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
                 context={'lookup_tables': lookup_tables},
             )
             for cell in pct_cells:
-                cell['row'] = fmt['data_start_row'] + len(data_rows)
+                cell['row'] = ROW_INDEXES['data_start_row'] + len(data_rows)
             all_percentile_cells.extend(pct_cells)
             data_rows.append(row)
 
@@ -636,7 +638,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         summary_rows, summary_pct = build_summary_rows(columns, merged_pops, mode)
         divider_row = [''] * len(columns)
         data_rows.append(divider_row)
-        summary_start = fmt['data_start_row'] + n_player_rows + 1
+        summary_start = ROW_INDEXES['data_start_row'] + n_player_rows + 1
         for cell in summary_pct:
             cell['row'] = summary_start + cell.pop('row_offset')
         all_percentile_cells.extend(summary_pct)
@@ -650,7 +652,8 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
             partial_update, build_fn=build_formatting_requests,
         )
 
-        move_sheet_to_position(worksheet, 0)
+        if TABS_CONFIG['all_players'].get('move_to_front'):
+            move_sheet_to_position(worksheet, 0)
 
         logger.info(
             f'  Players tab done: {n_player_rows} players, '

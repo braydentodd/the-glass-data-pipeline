@@ -1,5 +1,6 @@
 from typing import List, Optional, Any, Tuple
 from src.publish.definitions.columns import TAB_COLUMNS
+from src.publish.core.formatting import ROW_INDEXES
 from src.publish.definitions.config import (SECTIONS_CONFIG, SUBSECTIONS, SHEET_FORMATTING,
                                 STAT_RATES, DEFAULT_STAT_RATE, SUMMARY_THRESHOLDS)
 from src.publish.core.calculations import get_percentile_rank, evaluate_formula, calculate_entity_stats, evaluate_expression
@@ -25,6 +26,35 @@ def _base_section(ctx: str) -> str:
             return section
             
     return ctx_prefix
+
+
+def _normalize_subsection_key(subsection: Optional[str]) -> Optional[str]:
+    """Map subsection keys to canonical SUBSECTIONS keys (case-insensitive)."""
+    if subsection is None:
+        return None
+
+    raw = str(subsection).strip()
+    if not raw:
+        return None
+
+    raw_lower = raw.lower()
+    for key in SUBSECTIONS.keys():
+        if key.lower() == raw_lower:
+            return key
+
+    return raw
+
+
+def _subsection_display_name(subsection: Optional[str]) -> str:
+    """Resolve display name for a subsection key with sensible fallback."""
+    key = _normalize_subsection_key(subsection)
+    if key is None:
+        return ''
+
+    cfg = SUBSECTIONS.get(key, {})
+    if 'display_name' in cfg:
+        return cfg['display_name']
+    return str(key).replace('_', ' ').title()
 
 
 def _format_companion(rank: float, diff: Optional[float], base_def: dict) -> str:
@@ -157,11 +187,13 @@ def get_columns_by_filters(section=None, subsection=None, entity=None,
     """
     columns = get_all_columns_with_percentiles() if include_percentiles else TAB_COLUMNS
     filtered = {}
+    subsection_filter = _normalize_subsection_key(subsection) if subsection else None
 
     for col_key, col_def in columns.items():
         if section and section not in col_def.get('sections', []):
             continue
-        if subsection and col_def.get('subsection') != subsection:
+        col_subsection = _normalize_subsection_key(col_def.get('subsection'))
+        if subsection_filter and col_subsection != subsection_filter:
             continue
         if entity:
             if entity not in col_def.get('values', {}):
@@ -177,7 +209,8 @@ def get_columns_by_filters(section=None, subsection=None, entity=None,
 
 def get_columns_for_section_and_entity(section: str, entity: str,
                                        stats_mode: str = 'both',
-                                       include_percentiles: bool = False) -> List[Tuple]:
+                                       include_percentiles: bool = False,
+                                       tab_type: str = None) -> List[Tuple]:
     """
     Get ordered columns for a section and entity.
     All sections with subsection-assigned columns are ordered by SUBSECTIONS;
@@ -188,11 +221,35 @@ def get_columns_for_section_and_entity(section: str, entity: str,
         stats_mode=stats_mode, include_percentiles=include_percentiles
     )
 
+    # Convert values object for opponent columns (only in stats sections)
+    is_stats_section = SECTIONS_CONFIG.get(section, {}).get('stats_timeframe') is not None
+    if tab_type in ['all_teams', 'teams'] and is_stats_section:
+        opp_columns = {}
+        for col_key, col_def in columns.items():
+            opp_expr = col_def.get('values', {}).get('opponents')
+            if opp_expr:
+                opp_def = dict(col_def)
+                opp_def['display_name'] = f"{col_key}"
+                opp_def['values'] = {'team': opp_expr}
+                opp_def['is_opponent_col'] = True
+                opp_def['percentile'] = 'standard'
+                opp_def['subsection'] = 'opponent'
+                
+                opp_key = f'opp_{col_key}'
+                opp_columns[opp_key] = opp_def
+                
+                # Companion if needed
+                if include_percentiles and 'percentile' in opp_def:
+                    opp_pct_key = f"{opp_key}_pct"
+                    opp_columns[opp_pct_key] = _make_companion_def(opp_def, opp_key, opp_pct_key)
+
+        columns.update(opp_columns)
+
     # Separate columns with and without subsections
     no_subsec = []
     subsec_groups = {}
     for col_key, col_def in columns.items():
-        subsec = col_def.get('subsection')
+        subsec = _normalize_subsection_key(col_def.get('subsection'))
         if subsec is None:
             no_subsec.append((col_key, col_def))
         else:
@@ -202,9 +259,30 @@ def get_columns_for_section_and_entity(section: str, entity: str,
 
     # Columns without subsection first, then ordered by SUBSECTIONS
     ordered = list(no_subsec)
-    for subsec in SUBSECTIONS:
+    ordered_subsections = set()
+    for subsec, cfg in SUBSECTIONS.items():
+        # Check if the subsection is applicable for this section and tab
+        cfg_tabs = cfg.get('tabs', [])
+        tab_match = True
+        if tab_type:
+            if tab_type == 'individual_team' and 'team' in cfg_tabs:
+                tab_match = True
+            elif tab_type in cfg_tabs:
+                tab_match = True
+            else:
+                tab_match = False
+
+        if section not in cfg.get('sections', []) or not tab_match:
+            continue
+        
         if subsec in subsec_groups:
             ordered.extend(subsec_groups[subsec])
+            ordered_subsections.add(subsec)
+
+    # Keep any unmapped subsection columns instead of dropping them.
+    for subsec, subsec_cols in subsec_groups.items():
+        if subsec not in ordered_subsections:
+            ordered.extend(subsec_cols)
     return ordered
 
 
@@ -262,14 +340,15 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
         """Append columns for a section with given context key and base visibility."""
         section_cols = get_columns_for_section_and_entity(
             section=section, entity=None,
-            stats_mode='both', include_percentiles=False
+            stats_mode='both', include_percentiles=False,
+            tab_type=tab_key
         )
         prev_subsection_key = None
         for col_key, col_def in section_cols:
             if _skip_column(col_def):
                 continue
 
-            subsection_key = col_def.get('subsection') or '__none__'
+            subsection_key = _normalize_subsection_key(col_def.get('subsection')) or '__none__'
             if prev_subsection_key is not None and subsection_key != prev_subsection_key:
                 all_columns.append(_make_separator(context_key, mode_visible, 'subsection'))
             prev_subsection_key = subsection_key
@@ -284,8 +363,10 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
             all_columns.append((col_key, col_def, visible, context_key))
 
             pct_key = f"{col_key}_pct"
-            if col_def.get('percentile') and pct_key in pct_columns:
-                pct_def = pct_columns[pct_key]
+            if col_def.get('percentile'):
+                pct_def = pct_columns.get(pct_key)
+                if not pct_def:
+                    pct_def = _make_companion_def(col_def, col_key, pct_key)
                 all_columns.append((pct_key, pct_def, visible, context_key))
 
     all_columns = []
@@ -333,92 +414,7 @@ def build_tab_columns(entity: str = 'player', stats_mode: str = 'both',
             _append_section_columns(section, section, True)
 
         prev_section_base = section_base
-
-    # --- Teams sheet: insert opponent columns ---
-    if tab_key == 'all_teams':
-        all_columns = _insert_opponent_columns(
-            all_columns, pct_columns, hide_advanced
-        )
-
     return all_columns
-
-
-def _insert_opponent_columns(columns: List[Tuple], pct_columns: dict,
-                             hide_advanced: bool) -> List[Tuple]:
-    """Insert opponent stat columns as a single 'opponent' subsection on the Teams sheet.
-
-    Collects opponent columns per section and inserts them between defense and onoff.
-    """
-    # First pass: collect opponent columns grouped by section
-    opp_by_section: dict = {}  # {ctx: [(opp_key, opp_def, vis, ctx), ...]}
-    for entry in columns:
-        col_key, col_def, vis, ctx = entry
-        is_stats = SECTIONS_CONFIG.get(_base_section(ctx), {}).get('stats_timeframe')
-        if not is_stats or col_def.get('is_generated_percentile'):
-            continue
-        opp_expr = col_def.get('values', {}).get('opponents')
-        if not opp_expr:
-            continue
-
-        col_mode = col_def.get('stats_mode', 'both')
-        opp_def = dict(col_def)
-        opp_def['display_name'] = f"O{col_key}"
-        opp_values = {'team': opp_expr}
-        opp_def['values'] = opp_values
-        opp_def['is_opponent_col'] = True
-        opp_def['percentile'] = 'standard'
-        opp_def['subsection'] = 'opponent'
-        opp_key = f'opp_{col_key}'
-
-        # Opponent inherits full visibility from the base stat column.
-        # `vis` already encodes rate toggle + advanced/basic mode.
-        opp_vis = vis
-
-        if ctx not in opp_by_section:
-            opp_by_section[ctx] = []
-        opp_by_section[ctx].append((opp_key, opp_def, opp_vis, ctx))
-
-        # Generate percentile companion for opponent column
-        opp_pct_key = f"{opp_key}_pct"
-        opp_pct_def = _make_companion_def(opp_def, opp_key, opp_pct_key)
-        opp_by_section[ctx].append((opp_pct_key, opp_pct_def, opp_vis, ctx))
-
-    # Second pass: rebuild columns, inserting opponent block between defense and onoff
-    result: List[Tuple] = []
-    prev_subsection = None
-    prev_ctx = None
-
-    for entry in columns:
-        col_key, col_def, vis, ctx = entry
-        subsection = col_def.get('subsection')
-        is_stats = SECTIONS_CONFIG.get(_base_section(ctx), {}).get('stats_timeframe')
-
-        # Detect transition away from defense within same section
-        if (is_stats and prev_subsection == 'defense'
-                and subsection not in ('defense', None)
-                and prev_ctx == ctx):
-            opp_entries = opp_by_section.get(ctx, [])
-            if opp_entries:
-                result.extend(opp_entries)
-
-        # When switching sections, flush if defense was the last subsection
-        if ctx != prev_ctx and prev_ctx is not None:
-            if prev_subsection == 'defense':
-                opp_entries = opp_by_section.get(prev_ctx, [])
-                if opp_entries:
-                    result.extend(opp_entries)
-
-        result.append(entry)
-        prev_subsection = subsection
-        prev_ctx = ctx
-
-    # Flush remaining if the last subsection was defense
-    if prev_subsection == 'defense' and prev_ctx:
-        opp_entries = opp_by_section.get(prev_ctx, [])
-        if opp_entries and opp_entries[0] not in result:
-            result.extend(opp_entries)
-
-    return result
 
 
 def get_column_index(column_key: str, columns_list: List[Tuple],
@@ -460,7 +456,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
     Composite context keys like 'current_stats__per_possession' produce
     mode-specific section headers (e.g. "2024-25 Stats (per 100 Poss)").
     """
-    row1, row2, row3 = [], [], []
+    row1, row2, row3, row3_clean = [], [], [], []
     merges = []
     fmt = SHEET_FORMATTING
 
@@ -474,20 +470,11 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
             return team_name
         base = _base_section(section)
         sec_mode = section.split('__')[1] if '__' in section else mode
-        
-        # Override historical_config based on the timeframe in the section key
-        import re
-        sec_hist_cfg = dict(historical_config) if historical_config else {}
-        match = re.match(r'^(historical_stats|postseason_stats)_(\d+)yr', section.split('__')[0])
-        if match:
-            sec_hist_cfg['mode'] = 'seasons'
-            sec_hist_cfg['value'] = int(match.group(2))
-            
         base_cfg = SECTIONS_CONFIG.get(base, {})
         if base_cfg.get('stats_timeframe') and current_season:
             return format_section_header(
                 base, current_season=current_season,
-                historical_config=sec_hist_cfg if 'value' in sec_hist_cfg else historical_config,
+                historical_config=historical_config,
                 is_postseason=(base == 'postseason_stats'),
                 mode=sec_mode)
         return base_cfg.get('display_name', section)
@@ -495,18 +482,18 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
     for idx, entry in enumerate(columns_list):
         col_key, col_def = entry[0], entry[1]
         section = entry[3] if len(entry) > 3 else (col_def.get('sections', ['unknown'])[0])
-        subsection = col_def.get('subsection')
+        subsection = _normalize_subsection_key(col_def.get('subsection'))
 
         # Separator columns break merges and emit empty cells
         if col_def.get('is_separator'):
             sep_type = col_def.get('separator_type', 'section')
             if sep_type == 'section':
                 if cur_section is not None and sec_start < idx:
-                    merges.append({'row': fmt['section_header_row'], 'start_col': sec_start, 'end_col': idx, 'value': _get_display(cur_section)})
+                    merges.append({'row': ROW_INDEXES['section_header_row'], 'start_col': sec_start, 'end_col': idx, 'value': _get_display(cur_section)})
                 cur_section = None
                 sec_start = idx + 1
             if cur_subsection is not None and sub_start < idx:
-                merges.append({'row': fmt['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': SUBSECTIONS.get(cur_subsection, cur_subsection.title())})
+                merges.append({'row': ROW_INDEXES['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': _subsection_display_name(cur_subsection)})
             cur_subsection = None
             sub_start = idx + 1
             if sep_type == 'section':
@@ -523,11 +510,11 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
         if section != cur_section:
             if cur_section is not None and sec_start < idx:
                 display = _get_display(cur_section)
-                merges.append({'row': fmt['section_header_row'], 'start_col': sec_start, 'end_col': idx, 'value': display})
+                merges.append({'row': ROW_INDEXES['section_header_row'], 'start_col': sec_start, 'end_col': idx, 'value': display})
             # Close pending subsection merge before switching sections
             if cur_subsection is not None and sub_start < idx:
-                sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
-                merges.append({'row': fmt['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
+                sub_display = _subsection_display_name(cur_subsection)
+                merges.append({'row': ROW_INDEXES['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
             cur_section = section
             sec_start = idx
             row1.append(_get_display(section))
@@ -541,18 +528,18 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
         if subsection:
             if subsection != cur_subsection:
                 if cur_subsection is not None and sub_start < idx:
-                    sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
-                    merges.append({'row': fmt['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
+                    sub_display = _subsection_display_name(cur_subsection)
+                    merges.append({'row': ROW_INDEXES['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
                 cur_subsection = subsection
                 sub_start = idx
-                row2.append(SUBSECTIONS.get(subsection, subsection.title()))
+                row2.append(_subsection_display_name(subsection))
             else:
                 row2.append('')
         else:
             # Close pending subsection merge when entering a column with no subsection
             if cur_subsection is not None and sub_start < idx:
-                sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
-                merges.append({'row': fmt['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
+                sub_display = _subsection_display_name(cur_subsection)
+                merges.append({'row': ROW_INDEXES['subsection_header_row'], 'start_col': sub_start, 'end_col': idx, 'value': sub_display})
             cur_subsection = None
             row2.append('')
 
@@ -567,26 +554,29 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
         header_key = active_def.get('display_name', col_key)
         if col_def.get('is_generated_percentile', False):
             row3.append('')
+            row3_clean.append('')
         elif description:
             spacer = ' ' * fmt.get('header_description_spacer_count', 750)
             row3.append(f"{description}{spacer}{header_key}{spacer}{description}")
+            row3_clean.append(header_key)
         else:
             row3.append(header_key)
+            row3_clean.append(header_key)
 
     # Close final merges
     n = len(columns_list)
     if cur_section:
         display = _get_display(cur_section)
-        merges.append({'row': fmt['section_header_row'], 'start_col': sec_start, 'end_col': n, 'value': display})
+        merges.append({'row': ROW_INDEXES['section_header_row'], 'start_col': sec_start, 'end_col': n, 'value': display})
     if cur_subsection:
-        sub_display = SUBSECTIONS.get(cur_subsection, cur_subsection.title())
-        merges.append({'row': fmt['subsection_header_row'], 'start_col': sub_start, 'end_col': n, 'value': sub_display})
+        sub_display = _subsection_display_name(cur_subsection)
+        merges.append({'row': ROW_INDEXES['subsection_header_row'], 'start_col': sub_start, 'end_col': n, 'value': sub_display})
 
     # ---- Merge column header (row 2) across stat + companion pairs ----
     # Each companion column is immediately after its base stat column.
     # Merge them so the stat name spans both columns.
-    col_header_row = SHEET_FORMATTING.get('column_header_row', 2)
-    filter_row_idx = SHEET_FORMATTING.get('filter_row', 3)
+    col_header_row = ROW_INDEXES['column_header_row']
+    filter_row_idx = ROW_INDEXES['filter_row']
     for idx, entry in enumerate(columns_list):
         col_def = entry[1]
         if col_def.get('is_generated_percentile', False) and idx > 0:
@@ -606,7 +596,7 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
             })
 
     return {
-        'row1': row1, 'row2': row2, 'row3': row3,
+        'row1': row1, 'row2': row2, 'row3': row3, 'row3_clean': row3_clean,
         'merges': merges
     }
 
@@ -644,8 +634,11 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
                 sec_mode = sec_name.split('__')[1]
             else:
                 sec_mode = mode
+            sec_ctx = dict(context or {})
+            if sec_name.startswith('current_stats'):
+                sec_ctx['seasons_in_query'] = 1
             calculated_by_section[sec_name] = calculate_entity_stats(
-                sec_entity, entity_type, sec_mode, context
+                sec_entity, entity_type, sec_mode, sec_ctx
             )
         # For non-stats columns, use the first section's entity data
         first_section = next(iter(section_data))
@@ -654,7 +647,10 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
     else:
         # Legacy single-section mode
         primary_entity = entity_data
-        primary_calculated = calculate_entity_stats(entity_data, entity_type, mode, context)
+        sec_ctx = dict(context or {})
+        if row_section and row_section.startswith('current_stats'):
+            sec_ctx['seasons_in_query'] = 1
+        primary_calculated = calculate_entity_stats(entity_data, entity_type, mode, sec_ctx)
 
     row = []
 
@@ -870,7 +866,10 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
 
             # Regular companion
             base_def = TAB_COLUMNS.get(base_key, col_def)
-            calculated = calculate_entity_stats(sec_entity, entity_type, sec_mode, context)
+            sec_ctx_pct = dict(context or {})
+            if col_ctx.startswith('current_stats'):
+                sec_ctx_pct['seasons_in_query'] = 1
+            calculated = calculate_entity_stats(sec_entity, entity_type, sec_mode, sec_ctx_pct)
             value = calculated.get(base_key)
 
             if value is not None and base_key in sec_pcts:
@@ -1126,5 +1125,3 @@ def build_summary_rows(columns_list: List[Tuple],
         rows.append(row)
 
     return rows, pct_cells
-
-

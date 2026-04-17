@@ -1,3 +1,4 @@
+from src.publish.core.formatting import ROW_INDEXES
 """
 The Glass - Shared Sheets Sync Utilities
 
@@ -201,10 +202,10 @@ def write_and_format(worksheet, columns, headers, data_rows,
             auto_col_indices.append(idx)
 
     saved_headers = {}
-    header_row_idx = fmt['column_header_row']
+    header_row_idx = ROW_INDEXES['column_header_row']
     for idx in auto_col_indices:
         saved_headers[idx] = all_rows[header_row_idx][idx]
-        all_rows[header_row_idx][idx] = ''
+        all_rows[header_row_idx][idx] = headers.get('row3_clean', [])[idx] if idx < len(headers.get('row3_clean', [])) else ''
 
     total_rows = len(all_rows)
     worksheet.resize(rows=total_rows, cols=n_cols)

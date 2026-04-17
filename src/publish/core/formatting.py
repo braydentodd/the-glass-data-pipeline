@@ -124,3 +124,32 @@ def get_editable_fields() -> List[str]:
                 fields.append(formula)
 
 
+
+from src.publish.definitions.config import HEADER_ROWS, SHEET_FORMATTING
+
+def _get_row_indexes():
+    indexes = {}
+    current_row = 0
+    for row_key, rules in HEADER_ROWS.items():
+        if row_key == 'sections':
+            indexes['section_header_row'] = current_row
+        elif row_key == 'subsections':
+            indexes['subsection_header_row'] = current_row
+        elif row_key == 'columns':
+            indexes['column_header_row'] = current_row
+        elif row_key == 'filters':
+            indexes['filter_row'] = current_row
+            
+        current_row += 1
+        
+        if rules.get('divider_row_weight') and rules.get('divider_row_direction') == 'below':
+            if row_key == 'sections':
+                indexes['section_divider_row'] = current_row
+            elif row_key == 'subsections':
+                indexes['subsection_divider_row'] = current_row
+            current_row += 1
+            
+    indexes['data_start_row'] = SHEET_FORMATTING.get('header_rows', current_row)
+    return indexes
+
+ROW_INDEXES = _get_row_indexes()

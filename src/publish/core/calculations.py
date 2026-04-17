@@ -199,7 +199,7 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
             local_context['seasons_in_query'] = 1
         else:
             # None or empty dict
-            local_context['seasons_in_query'] = 0
+            local_context['seasons_in_query'] = 1
 
     results = {}
     games = entity_data.get('games', 0) or 0
