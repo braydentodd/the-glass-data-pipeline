@@ -56,7 +56,7 @@ def get_or_create_worksheet(spreadsheet, title: str, rows: int = 200,
 
 def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
                            n_data_rows: int, team_name: str,
-                           percentile_cells: list, n_player_rows: int,
+                           percentile_cells: list, n_player_rows: int, link_cells: list = None,
                            tab_type: str = 'team',
                            show_advanced: bool = False,
                            partial_update: bool = False,
@@ -159,7 +159,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
 def write_and_format(worksheet, columns, headers, data_rows,
                       percentile_cells, n_entity_rows,
                       team_name, tab_type, show_advanced,
-                      partial_update, build_fn):
+                      partial_update, build_fn, link_cells=None):
     """Resize worksheet, write values, and apply formatting.
 
     For auto-width columns, header cells are initially blanked so that
@@ -219,6 +219,7 @@ def write_and_format(worksheet, columns, headers, data_rows,
         team_name=team_name,
         percentile_cells=percentile_cells,
         n_player_rows=n_entity_rows,
+        link_cells=link_cells,
         tab_type=tab_type,
         show_advanced=show_advanced,
         partial_update=partial_update,

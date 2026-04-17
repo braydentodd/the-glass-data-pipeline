@@ -19,14 +19,6 @@ class ColumnContext:
     rate: Optional[str] = None
     timeframe: Optional[int] = None
     
-    def __str__(self) -> str:
-        parts = [self.base_section]
-        if self.timeframe is not None:
-            parts.append(f"{self.timeframe}yr")
-        base = "_".join(parts)
-        if self.rate:
-            return f"{base}__{self.rate}"
-        return base
 
 # ============================================================================
 # GOOGLE SHEETS CONFIGURATION
@@ -211,43 +203,50 @@ SECTIONS_CONFIG = {
         'display_name': tab_subject('name'),
         'menu_label': None,
         'stats_timeframe': None,
-        'toggleable': False
+        'toggleable': False,
+        'visible_by_default': True
     },
     'profile': {
         'display_name': 'Profile',
         'menu_label': 'Profile',
         'stats_timeframe': None,
-        'toggleable': True
+        'toggleable': True,
+        'visible_by_default': True
     },
     'evaluation': {
         'display_name': 'Evaluation',
         'menu_label': 'Evaluation',
         'stats_timeframe': None,
-        'toggleable': True
+        'toggleable': True,
+        'visible_by_default': True
     },
     'current_stats': {
         'display_name': formatted_stats_section_name(),
         'menu_label': 'Current Stats',
         'stats_timeframe': 'current',
-        'toggleable': True
+        'toggleable': True,
+        'visible_by_default': True
     },
     'historical_stats': {
         'display_name': formatted_stats_section_name(),
         'menu_label': 'Historical Stats',
         'stats_timeframe': 'historical',
-        'toggleable': True
+        'toggleable': True,
+        'visible_by_default': True
     },
     'postseason_stats': {
         'display_name': formatted_stats_section_name(),
         'menu_label': 'Postseason Stats',
         'stats_timeframe': 'historical',
-        'toggleable': True
+        'toggleable': True,
+        'visible_by_default': True
     },
     'identity': {
         'display_name': 'Identity',
         'menu_label': None,
         'stats_timeframe': None,
-        'toggleable': False
+        'toggleable': False,
+        'visible_by_default': False
     }
 }
 

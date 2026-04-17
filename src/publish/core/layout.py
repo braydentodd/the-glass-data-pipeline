@@ -471,10 +471,9 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
     sub_start = 0
 
     def _get_display(section):
-        if section == 'entities':
-            return team_name
-        
         base = _base_section(section)
+        if base == 'entities':
+            return team_name
         
         if isinstance(section, ColumnContext):
             sec_mode = section.rate if section.rate else mode

@@ -64,6 +64,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'sections': ['entities'],
         'subsection': None,
         'tabs': ['all_teams', 'all_players', 'individual_team'],
+        'link_destination': 'team_sheet',
         'stats_mode': 'both',
         'percentile': None,
         'editable': None,

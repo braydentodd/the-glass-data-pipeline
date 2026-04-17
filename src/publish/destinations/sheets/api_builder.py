@@ -10,7 +10,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               header_merges: list, n_data_rows: int,
                               team_name: str,
                               percentile_cells: Optional[List[dict]] = None,
-                              n_player_rows: int = 0,
+                              n_player_rows: int = 0, link_cells: Optional[List[dict]] = None,
                               tab_type: str = 'team',
                               show_advanced: bool = False,
                               partial_update: bool = False) -> list:
@@ -79,6 +79,9 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         # Percentile shading
         if percentile_cells:
             fast.extend(_build_percentile_shading_requests(ws_id, percentile_cells))
+        # Hyperlinks
+        if link_cells:
+            fast.extend(_build_link_requests(ws_id, link_cells))
         # Null-formula backgrounds for team/opp rows
         if tab_type == 'individual_team' and n_data_rows > n_player_rows:
             fast.extend(_build_null_formula_bg_requests(
@@ -655,24 +658,24 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                 }
             })
 
-    # ---- 19. Hide identity section columns ----
-    if fmt.get('hide_identity_section', True):
-        for idx, entry in enumerate(columns_list):
-            col_ctx = entry[3] if len(entry) > 3 else None
-            if col_ctx == 'identity':
-                requests.append({
-                    'updateDimensionProperties': {
-                        'range': {
-                            'sheetId': ws_id,
-                            'dimension': 'COLUMNS',
-                            'startIndex': idx,
-                            'endIndex': idx + 1,
-                        },
-                        'properties': {'hiddenByUser': True},
-                        'fields': 'hiddenByUser',
-                    }
-                })
-
+    # ---- 19. Hide sections not visible by default ----
+    for idx, entry in enumerate(columns_list):
+        col_ctx = entry[3] if len(entry) > 3 else None
+        base_sec = getattr(col_ctx, 'base_section', str(col_ctx))
+        sec_cfg = SECTIONS_CONFIG.get(base_sec, {})
+        if not sec_cfg.get('visible_by_default', True):
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {
+                        'sheetId': ws_id,
+                        'dimension': 'COLUMNS',
+                        'startIndex': idx,
+                        'endIndex': idx + 1,
+                    },
+                    'properties': {'hiddenByUser': True},
+                    'fields': 'hiddenByUser',
+                }
+            })
     # ---- 19. Auto-filter on filter row — excludes team/opp rows from sort ----
     filter_end = data_start + n_player_rows if n_player_rows > 0 else total_rows
     requests.append({
@@ -686,6 +689,10 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
     # ---- 21. Percentile color shading ----
     if percentile_cells:
         requests.extend(_build_percentile_shading_requests(ws_id, percentile_cells))
+
+    # ---- 21a. Hyperlinks ----
+    if link_cells:
+        requests.extend(_build_link_requests(ws_id, link_cells))
 
 
 
@@ -869,6 +876,32 @@ def _build_percentile_shading_requests(ws_id: int,
                     },
                 },
                 'fields': 'userEnteredFormat.backgroundColor',
+            }
+        })
+    return requests
+def _build_link_requests(ws_id: int, link_cells: list) -> list:
+    """Build cell text format requests for hyperlinks to mask the default styling."""
+    from src.publish.definitions.config import COLORS, SHEET_FORMATTING
+    from src.publish.destinations.sheets.styles import get_color_for_raw
+    fmt = SHEET_FORMATTING
+    default_fg = get_color_for_raw(COLORS[fmt.get('data_fg', 'black')])
+
+    requests = []
+    for cell in link_cells:
+        requests.append({
+            'repeatCell': {
+                'range': _range(ws_id, cell['row'], cell['row'] + 1,
+                                cell['col'], cell['col'] + 1),
+                'cell': {
+                    'userEnteredFormat': {
+                        'textFormat': {
+                            'link': {'uri': cell['uri']},
+                            'underline': False,
+                            'foregroundColor': default_fg,
+                        }
+                    }
+                },
+                'fields': 'userEnteredFormat.textFormat(link,underline,foregroundColor)',
             }
         })
     return requests

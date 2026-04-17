@@ -123,7 +123,7 @@ def _precompute_percentiles(
             'team': _compute_pct_by_rate(team_dict, 'team', context_fn=_team_context_fn),
             'opponents': _compute_pct_by_rate(opp_dict, 'opponents'),
         }
-        logger.info('  Percentile populations ready (%d rates)', len(STAT_RATES))
+        logger.info('  Percentile populations ready')
         return precomputed
     finally:
         conn.close()
@@ -221,6 +221,9 @@ def sync_league(
     if priority_tab and priority_tab.lower() in aggregate_order:
         first = priority_tab.lower()
         aggregate_order = [first] + [s for s in aggregate_order if s != first]
+
+    team_gids = {ws.title: ws.id for ws in spreadsheet.worksheets()}
+    sync_kwargs['team_gids'] = team_gids
 
     for tab_name in aggregate_order:
         try:
@@ -450,7 +453,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
             hist_data_dict = {y: hist_by_id[y].get(pid) for y in supported_years}
             post_data_dict = {y: post_by_id[y].get(pid) for y in supported_years}
             
-            row, pct_cells = build_merged_entity_row(
+            row, pct_cells, _ = build_merged_entity_row(
                 player_id=pid,
                 columns_list=columns,
                 current_data=curr_by_id.get(pid),
@@ -473,7 +476,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
 
         # ---- Team + Opponents rows ----
         team_ctx = {'team_players': current_players, 'lookup_tables': lookup_tables}
-        team_row, team_pct_cells = build_merged_entity_row(
+        team_row, team_pct_cells, _ = build_merged_entity_row(
             player_id=None,
             columns_list=columns,
             current_data=team_data_curr.get('team') or None,
@@ -483,7 +486,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
             entity_type='team',
             context=team_ctx,
         )
-        opp_row, opp_pct_cells = build_merged_entity_row(
+        opp_row, opp_pct_cells, _ = build_merged_entity_row(
             player_id=None,
             columns_list=columns,
             current_data=team_data_curr.get('opponent') or None,
@@ -551,7 +554,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                      historical_config=None,
                      partial_update=False,
                      sync_section=None,
-                     precomputed=None):
+                     precomputed=None, team_gids=None):
     """Sync the league-wide Teams tab with all stat modes."""
     logger.info('  Syncing Teams tab...')
     fmt = ctx.sheet_formatting
@@ -685,6 +688,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
         # ---- Build team rows (all modes at once) ----
         data_rows = []
         all_percentile_cells = []
+        all_link_cells = []
 
         for abbr in abbrs:
             curr_data = curr_by_abbr.get(abbr)
@@ -699,7 +703,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                 if post_data_dict[y]:
                     post_data_dict[y]['name'] = team_names_map.get(abbr, abbr)
 
-            row, pct_cells = build_merged_entity_row(
+            row, pct_cells, link_cells = build_merged_entity_row(
                 player_id=None,
                 columns_list=columns,
                 current_data=curr_data,
@@ -708,11 +712,14 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                 pct_by_rate=team_pct_by_rate,
                 entity_type='all_teams',
                 opp_percentiles=opp_percentiles,
-                context={'team_players': player_groups.get(abbr, []), 'lookup_tables': lookup_tables},
+                context={'team_players': player_groups.get(abbr, []), 'lookup_tables': lookup_tables, 'team_gids': team_gids, 'team_abbr': abbr},
             )
             for cell in pct_cells:
                 cell['row'] = len(data_rows)
+            for cell in link_cells:
+                cell['row'] = len(data_rows)
             all_percentile_cells.extend(pct_cells)
+            all_link_cells.extend(link_cells)
             data_rows.append(row)
 
         n_team_rows = len(data_rows)
@@ -735,6 +742,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
             all_percentile_cells, n_team_rows,
             'Teams', 'all_teams', show_advanced,
             partial_update, build_fn=build_formatting_requests,
+            link_cells=all_link_cells,
         )
 
         if TABS_CONFIG['all_teams'].get('move_to_front'):
@@ -755,7 +763,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
                        show_advanced=False,
                        historical_config=None,
                        partial_update=False,
-                       sync_section=None, precomputed=None):
+                       sync_section=None, precomputed=None, team_gids=None):
     """Sync the league-wide Players tab with all stat modes."""
     logger.info('  Syncing Players tab...')
     fmt = ctx.sheet_formatting
@@ -836,6 +844,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
         # ---- Build player rows (all modes at once) ----
         data_rows = []
         all_percentile_cells = []
+        all_link_cells = []
 
         # Build lookup tables for profile column resolution (e.g. team abbr)
         teams_db = get_teams_from_db(ctx.db_schema)
@@ -847,7 +856,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
             hist_data_dict = {y: hist_by_id[y].get(pid) for y in supported_years}
             post_data_dict = {y: post_by_id[y].get(pid) for y in supported_years}
             
-            row, pct_cells = build_merged_entity_row(
+            row, pct_cells, link_cells = build_merged_entity_row(
                 player_id=pid,
                 columns_list=columns,
                 current_data=curr_by_id.get(pid),
@@ -855,11 +864,14 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
                 postseason_data=post_data_dict,
                 pct_by_rate=player_pct_by_rate,
                 entity_type='player',
-                context={'lookup_tables': lookup_tables},
+                context={'lookup_tables': lookup_tables, 'team_gids': team_gids},
             )
             for cell in pct_cells:
                 cell['row'] = len(data_rows)
+            for cell in link_cells:
+                cell['row'] = len(data_rows)
             all_percentile_cells.extend(pct_cells)
+            all_link_cells.extend(link_cells)
             data_rows.append(row)
 
         n_player_rows = len(data_rows)
@@ -881,6 +893,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
             all_percentile_cells, n_player_rows,
             'Players', 'all_players', show_advanced,
             partial_update, build_fn=build_formatting_requests,
+            link_cells=all_link_cells,
         )
 
         if TABS_CONFIG['all_players'].get('move_to_front'):

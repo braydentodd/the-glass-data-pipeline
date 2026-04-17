@@ -38,7 +38,11 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             else:
                 sec_mode = mode
             sec_ctx = dict(context or {})
-            if sec_name.startswith('current_stats'):
+            if hasattr(sec_name, 'base_section'):
+                is_current = sec_name.base_section == 'current_stats'
+            else:
+                is_current = str(sec_name).startswith('current_stats')
+            if is_current:
                 sec_ctx['seasons_in_query'] = 1
             calculated_by_section[sec_name] = calculate_entity_stats(
                 sec_entity, entity_type, sec_mode, sec_ctx
@@ -51,7 +55,13 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         # Legacy single-section mode
         primary_entity = entity_data
         sec_ctx = dict(context or {})
-        if row_section and row_section.startswith('current_stats'):
+        
+        if hasattr(row_section, 'base_section'):
+            is_current = row_section.base_section == 'current_stats'
+        else:
+            is_current = row_section and str(row_section).startswith('current_stats')
+
+        if is_current:
             sec_ctx['seasons_in_query'] = 1
         primary_calculated = calculate_entity_stats(entity_data, entity_type, mode, sec_ctx)
 
@@ -154,7 +164,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                             entity_type: str = 'player',
                             historical_timeframe: str = '', post_seasons: str = '',
                             opp_percentiles: Optional[dict] = None,
-                            context: Optional[dict] = None) -> Tuple[list, List[dict]]:
+                            context: Optional[dict] = None) -> Tuple[list, List[dict], List[dict]]:
     """
     Build a single merged data row with current + historical + postseason stats.
 
@@ -217,8 +227,26 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
 
     # Collect percentile info for companion column shading.
     percentile_cells = []
+    link_cells = []
     for col_idx, entry in enumerate(columns_list):
         col_key, col_def = entry[0], entry[1]
+        
+        # Link routing
+        link_dest = col_def.get('link_destination')
+        if link_dest == 'team_sheet' and context and 'team_gids' in context:
+            team_gids = context['team_gids']
+            if entity_type == 'player':
+                abbr = primary_entity.get('team_abbr') or primary_entity.get('abbr')
+            else:
+                # all_teams
+                abbr = primary_entity.get('abbr')
+                
+            if abbr and abbr in team_gids:
+                link_cells.append({
+                    'col': col_idx,
+                    'uri': f"#gid={team_gids[abbr]}"
+                })
+        
         col_ctx = entry[3] if len(entry) > 3 else None
         is_pct = col_def.get('is_generated_percentile', False)
 
@@ -273,7 +301,12 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
             # Regular companion
             base_def = TAB_COLUMNS.get(base_key, col_def)
             sec_ctx_pct = dict(context or {})
-            if col_ctx.startswith('current_stats'):
+            if hasattr(col_ctx, 'base_section'):
+                is_current = col_ctx.base_section == 'current_stats'
+            else:
+                is_current = str(col_ctx).startswith('current_stats')
+
+            if is_current:
                 sec_ctx_pct['seasons_in_query'] = 1
             calculated = calculate_entity_stats(sec_entity, entity_type, sec_mode, sec_ctx_pct)
             value = calculated.get(base_key)
@@ -323,7 +356,7 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                         'reverse': reverse,
                     })
 
-    return row, percentile_cells
+    return row, percentile_cells, link_cells
 
 
 def _get_value_at_percentile(sorted_values: List, percentile: float,
