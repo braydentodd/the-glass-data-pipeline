@@ -29,7 +29,7 @@ load_dotenv()
 from src.core.db import db_connection, quote_col
 from src.etl.definitions import ETL_CONFIG
 from src.etl.core.db import ensure_tables
-from src.etl.core.maintenance import cleanup_stat_domains, prune_stale
+from src.etl.core.cleanup import cleanup_stat_domains, prune_stale
 from src.etl.core.config_validation import validate_config
 from src.etl.core.executor import ExecutionContext, execute_group
 from src.etl.core.load import seed_empty_stats
