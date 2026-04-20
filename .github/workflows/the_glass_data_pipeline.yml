@@ -39,11 +39,7 @@ jobs:
     - name: Run daily ETL with auto-restart
       continue-on-error: true  # Always run Sync step even if ETL hits max restarts
       env:
-        DB_HOST: ${{ secrets.DB_HOST }}
-        DB_PORT: ${{ secrets.DB_PORT }}
-        DB_NAME: ${{ secrets.DB_NAME }}
-        DB_USER: ${{ secrets.DB_USER }}
-        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
         BACKFILL_START_YEAR: ${{ github.event.inputs.backfill_start_year }}
         BACKFILL_END_YEAR: ${{ github.event.inputs.backfill_end_year }}
         PYTHONUNBUFFERED: "1"
@@ -54,12 +50,7 @@ jobs:
     
     - name: Publish to Google Sheets
       env:
-        DB_HOST: ${{ secrets.DB_HOST }}
-        DB_PORT: ${{ secrets.DB_PORT }}
-        DB_NAME: ${{ secrets.DB_NAME }}
-        DB_USER: ${{ secrets.DB_USER }}
-        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_FILE }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
         GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
         PYTHONUNBUFFERED: "1"
       run: |

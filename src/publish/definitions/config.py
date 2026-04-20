@@ -26,7 +26,7 @@ class ColumnContext:
 
 GOOGLE_SHEETS_CONFIG = {
     'nba': {
-        'credentials_file': os.getenv('GOOGLE_CREDENTIALS_FILE'),
+        'credentials_file': 'google-credentials.json',
         'spreadsheet_id': os.getenv('NBA_SPREADSHEET_ID'),
         'scopes': [
             'https://www.googleapis.com/auth/spreadsheets',
@@ -34,7 +34,7 @@ GOOGLE_SHEETS_CONFIG = {
         ],
     },
     'ncaa': {
-        'credentials_file': os.getenv('GOOGLE_CREDENTIALS_FILE'),
+        'credentials_file': 'google-credentials.json',
         'spreadsheet_id': os.getenv('NCAA_SPREADSHEET_ID'),
         'scopes': [
             'https://www.googleapis.com/auth/spreadsheets',

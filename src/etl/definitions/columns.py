@@ -25,7 +25,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': True,
         'sources': None,
@@ -37,7 +37,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     #     'default': None,
     #     'entity_types': ['player', 'team'],
     #     'update_frequency': None,
-    #     'rate_group': None,
+    #     'domain': None,
     #     'comment': None,
     #     'primary_key': False,
     #     'sources': {
@@ -62,7 +62,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 'CURRENT_TIMESTAMP',
         'entity_types': ['player', 'team'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': None,
@@ -74,7 +74,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 'CURRENT_TIMESTAMP',
         'entity_types': ['player', 'team'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': None,
@@ -86,7 +86,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': True,
         'sources': None,
@@ -98,7 +98,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': True,
         'sources': None,
@@ -110,7 +110,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 'FALSE',
         'entity_types': ['player', 'team'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': None,
@@ -122,7 +122,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': None,
@@ -137,7 +137,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': 'FK to teams table serial id (resolved from source during ETL)',
         'primary_key': False,
         'sources': {
@@ -157,7 +157,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'annual',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -182,7 +182,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -202,7 +202,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -218,7 +218,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -238,7 +238,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -254,7 +254,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -274,7 +274,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': None,
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': None,
@@ -286,7 +286,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -302,7 +302,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -322,7 +322,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['team'],
         'update_frequency': 'annual',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -338,7 +338,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['team'],
         'update_frequency': 'annual',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -357,7 +357,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 0,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -374,7 +374,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 0,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -391,7 +391,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -408,7 +408,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 0,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -433,7 +433,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 0,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -460,7 +460,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 0,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'hustle',
+        'domain': 'hustle',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -477,7 +477,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 0,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'hustle',
+        'domain': 'hustle',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -494,7 +494,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 0,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': 'onoff',
+        'domain': 'onoff',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -517,7 +517,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 0,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'onoff',
+        'domain': 'onoff',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -544,7 +544,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -575,7 +575,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -609,7 +609,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -631,7 +631,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -656,7 +656,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -678,7 +678,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -703,7 +703,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -748,7 +748,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -793,7 +793,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -838,7 +838,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -883,7 +883,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -916,7 +916,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -949,7 +949,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -982,7 +982,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1015,7 +1015,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1048,7 +1048,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1081,7 +1081,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1114,7 +1114,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1150,7 +1150,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1202,7 +1202,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1279,7 +1279,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1310,7 +1310,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1341,7 +1341,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1375,7 +1375,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1397,7 +1397,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1419,7 +1419,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1446,7 +1446,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1473,7 +1473,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1515,7 +1515,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1560,7 +1560,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1582,7 +1582,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1607,7 +1607,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1632,7 +1632,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1660,7 +1660,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1685,7 +1685,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1710,7 +1710,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1738,7 +1738,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1763,7 +1763,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1790,7 +1790,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1820,7 +1820,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1837,7 +1837,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1854,7 +1854,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1874,7 +1874,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'hustle',
+        'domain': 'hustle',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1891,7 +1891,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'hustle',
+        'domain': 'hustle',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1908,7 +1908,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'hustle',
+        'domain': 'hustle',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1928,7 +1928,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1953,7 +1953,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -1978,7 +1978,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2003,7 +2003,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2028,7 +2028,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2053,7 +2053,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2081,7 +2081,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2108,7 +2108,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': None,
+        'domain': None,
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2135,7 +2135,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': 'onoff',
+        'domain': 'onoff',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2159,7 +2159,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'daily',
-        'rate_group': 'onoff',
+        'domain': 'onoff',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2186,7 +2186,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2213,7 +2213,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2240,7 +2240,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {
@@ -2267,7 +2267,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'daily',
-        'rate_group': 'tracking',
+        'domain': 'tracking',
         'comment': None,
         'primary_key': False,
         'sources': {

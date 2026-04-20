@@ -3,6 +3,7 @@ from datetime import date, datetime
 from typing import Dict, Any, List, Optional
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import SECTIONS_CONFIG, STAT_RATES
+from src.core.config import STAT_DOMAINS
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,8 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
 
     results = {}
     games = entity_data.get('games', 0) or 0
-    minutes = (entity_data.get('minutes_x10', 0) or 0) / 10.0
+    base_minutes_x10 = entity_data.get('minutes_x10', 0) or 0
+    base_minutes = base_minutes_x10 / 10.0
     possessions = entity_data.get('possessions', 0) or 0
 
     for col_key, col_def in TAB_COLUMNS.items():
@@ -217,14 +219,35 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
             results[col_key] = None
             continue
 
-        scale = col_def.get('scale_with_rate', False)
+        rate_domain = col_def.get('rate_domain')
 
-        if scale is True:
-            results[col_key] = _apply_scaling(raw_value, mode, games, minutes, possessions)
-        elif scale == 'per_game_only':
-            results[col_key] = raw_value / max(games, 1)
+        if rate_domain is not None:
+            if rate_domain == 'per_game_only':
+                results[col_key] = raw_value / max(games, 1)
+            else:
+                domain_cfg = STAT_DOMAINS.get(rate_domain)
+                
+                if domain_cfg and rate_domain != 'base':
+                    # Use domain-specific minutes
+                    domain_minutes_col = domain_cfg['minutes_col']
+                    domain_minutes = (entity_data.get(domain_minutes_col, 0) or 0) / 10.0
+                    
+                    # Scale possessions proportionally when using specialized minutes
+                    if base_minutes > 0:
+                        minute_ratio = domain_minutes / base_minutes
+                        stat_possessions = possessions * minute_ratio
+                    else:
+                        stat_possessions = possessions
+                    
+                    results[col_key] = _apply_scaling(raw_value, mode, games, domain_minutes, stat_possessions)
+                else:
+                    results[col_key] = _apply_scaling(raw_value, mode, games, base_minutes, possessions)
         else:
             results[col_key] = raw_value
+            
+        # Format percentage handling
+        if col_def.get('format') == 'percentage' and isinstance(results[col_key], (int, float)):
+            results[col_key] = results[col_key] * 100
 
     return results
 

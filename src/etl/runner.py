@@ -28,7 +28,8 @@ load_dotenv()
 
 from src.core.db import db_connection, quote_col
 from src.etl.definitions import ETL_CONFIG
-from src.etl.core.db import ensure_tables, prune_stale
+from src.etl.core.db import ensure_tables
+from src.etl.core.maintenance import cleanup_stat_domains, prune_stale
 from src.etl.core.config_validation import validate_config
 from src.etl.core.executor import ExecutionContext, execute_group
 from src.etl.core.load import seed_empty_stats
@@ -353,6 +354,14 @@ def run_etl(
             team_ids, endpoint_filter, failed,
             **source_kw,
         )
+
+
+    # Run ELT cleaning rules (domain coherency: nullifying/zeroing missing stats)
+    if phase in ('full', 'backfill', 'update') and not endpoint_filter:
+        seasons_to_clean = season_range if phase in ('full', 'backfill') else [season]
+        for s in seasons_to_clean:
+            for ent in entities:
+                total_rows += cleanup_stat_domains(db_schema, ent, s, season_type)
 
     if phase in ('full', 'prune'):
         total_rows += prune_stale(entities, oldest_season, db_schema)

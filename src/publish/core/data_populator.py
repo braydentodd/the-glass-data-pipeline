@@ -232,8 +232,8 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
         col_key, col_def = entry[0], entry[1]
         
         # Link routing
-        link_dest = col_def.get('link_destination')
-        if link_dest == 'team_sheet' and context and 'team_gids' in context:
+        fmt = col_def.get('format')
+        if fmt == 'team_link' and context and 'team_gids' in context:
             team_gids = context['team_gids']
             if entity_type == 'player':
                 abbr = primary_entity.get('team_abbr') or primary_entity.get('abbr')

@@ -59,13 +59,10 @@ def get_db_connection():
     Caller is responsible for calling conn.close().
     Prefer using db_connection() context manager for short operations.
     """
-    return psycopg2.connect(
-        host=os.getenv('DB_HOST', 'localhost'),
-        port=int(os.getenv('DB_PORT', '5432')),
-        database=os.getenv('DB_NAME', ''),
-        user=os.getenv('DB_USER', ''),
-        password=os.getenv('DB_PASSWORD', '')
-    )
+    db_url = os.getenv('DATABASE_URL')
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is missing.")
+    return psycopg2.connect(db_url)
 
 
 @contextmanager

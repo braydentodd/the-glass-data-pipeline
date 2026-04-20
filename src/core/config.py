@@ -29,6 +29,29 @@ CORE_CONFIG_SCHEMA = {
 }
 
 # ============================================================================
+# STAT DOMAINS
+# ============================================================================
+
+STAT_DOMAINS = {
+    'base': {
+        'minutes_col': 'minutes_x10',
+        'primary': True
+    },
+    'tracking': {
+        'minutes_col': 'tracking_minutes_x10',
+        'primary': False
+    },
+    'hustle': {
+        'minutes_col': 'hustle_minutes_x10',
+        'primary': False
+    },
+    'onoff': {
+        'minutes_col': 'off_minutes_x10',
+        'primary': False
+    }
+}
+
+# ============================================================================
 # SEASON TYPE CLASSIFICATION
 # Season type codes are grouped into "regular_season" vs "postseason".
 # Queries use these groups to decide which season_type values to aggregate.
