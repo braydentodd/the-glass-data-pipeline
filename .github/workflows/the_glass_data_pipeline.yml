@@ -61,7 +61,6 @@ jobs:
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_FILE }}
         GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
-        GOOGLE_SPREADSHEET_NAME: ${{ secrets.GOOGLE_SPREADSHEET_NAME }}
         PYTHONUNBUFFERED: "1"
       run: |
         source venv/bin/activate

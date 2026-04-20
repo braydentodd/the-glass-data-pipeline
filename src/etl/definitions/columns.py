@@ -401,7 +401,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    'tr_games': {
+    'tracking_games': {
         'type': 'SMALLINT',
         'scope': ['stats'],
         'nullable': False,
@@ -426,7 +426,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    'tr_minutes_x10': {
+    'tracking_minutes_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
         'nullable': False,
@@ -453,7 +453,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    'h_games': {
+    'hustle_games': {
         'type': 'SMALLINT',
         'scope': ['stats'],
         'nullable': False,
@@ -470,7 +470,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    'h_minutes_x10': {
+    'hustle_minutes_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
         'nullable': False,
@@ -2288,4 +2288,3 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         },
     },
 }
-

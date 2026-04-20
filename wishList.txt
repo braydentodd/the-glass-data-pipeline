@@ -1,11 +1,10 @@
 Passes Leading to Fouls
-oRAPM (Offensive Real Adjusted Plus Minus)
-dRAPM (Defensive Real Adjusted Plus Minus)
+oRAPM/dRAPM
 On-Off Stats
 Rebound own misses
 Shooting Fouls
 Shooting Foul Locations
-Technical FTs
+non-shooting foul FTs
 And Ones
 Injury data
 Contract data

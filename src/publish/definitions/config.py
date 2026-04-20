@@ -28,7 +28,6 @@ GOOGLE_SHEETS_CONFIG = {
     'nba': {
         'credentials_file': os.getenv('GOOGLE_CREDENTIALS_FILE'),
         'spreadsheet_id': os.getenv('NBA_SPREADSHEET_ID'),
-        'spreadsheet_name': 'The Glass - NBA',
         'scopes': [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
@@ -37,7 +36,6 @@ GOOGLE_SHEETS_CONFIG = {
     'ncaa': {
         'credentials_file': os.getenv('GOOGLE_CREDENTIALS_FILE'),
         'spreadsheet_id': os.getenv('NCAA_SPREADSHEET_ID'),
-        'spreadsheet_name': 'The Glass - NCAA',
         'scopes': [
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
@@ -310,7 +308,7 @@ SUBSECTIONS = {
 
 WIDTH_CLASSES = {
     'auto': None,
-    'measurement': 33,
+    'measurement': 34,
     'four_char': 31,
     'four_char_dec': 31,
     'three_char_dec': 24,
@@ -348,13 +346,12 @@ SUMMARY_THRESHOLDS = [
 GOOGLE_SHEETS_CONFIG_SCHEMA = {
     'credentials_file': {'required': True, 'types': (str, type(None))},
     'spreadsheet_id': {'required': True, 'types': (str, type(None))},
-    'spreadsheet_name': {'required': True, 'types': (str,)},
-    'scopes': {'required': True, 'types': (list,)},
+    'scopes': {'required': True, 'types': (list,)}
 }
 
 STAT_CONSTANTS_SCHEMA = {
     'default_per_minute': {'required': True, 'types': (float, int)},
-    'default_per_possessions': {'required': True, 'types': (float, int)},
+    'default_per_possessions': {'required': True, 'types': (float, int)}
 }
 
 SHEET_FORMATTING_SCHEMA = {
@@ -369,30 +366,30 @@ SHEET_FORMATTING_SCHEMA = {
     'percentile_companion_font_size': {'required': True, 'types': (int,)},
     'frozen_rows': {'required': True, 'types': (int,)},
     'frozen_columns': {'required': True, 'types': (int,)},
-    'sync_delay_seconds': {'required': True, 'types': (int,)},
+    'sync_delay_seconds': {'required': True, 'types': (int,)}
 }
 
 SECTIONS_SCHEMA = {
     'display_name': {'required': True, 'types': (str,)},
     'is_stats_section': {'required': True, 'types': (bool,)},
-    'toggleable': {'required': True, 'types': (bool,)},
+    'toggleable': {'required': True, 'types': (bool,)}
 }
 
 COLORS_SCHEMA = {
     'red': {'required': True, 'types': (int, float)},
     'green': {'required': True, 'types': (int, float)},
-    'blue': {'required': True, 'types': (int, float)},
+    'blue': {'required': True, 'types': (int, float)}
 }
 
 COLOR_THRESHOLDS_SCHEMA = {
     'low': {'required': True, 'types': (int, float)},
     'mid': {'required': True, 'types': (int, float)},
-    'high': {'required': True, 'types': (int, float)},
+    'high': {'required': True, 'types': (int, float)}
 }
 
 MENU_CONFIG_SCHEMA = {
     'display_name': {'required': True, 'types': (str,)},
     'show_label': {'required': False, 'types': (str,)},
-    'hide_label': {'required': False, 'types': (str,)},
+    'hide_label': {'required': False, 'types': (str,)}
 }
 DEFAULT_STAT_RATE = next((k for k, v in STAT_RATES.items() if v.get('default', False)), 'per_game')
