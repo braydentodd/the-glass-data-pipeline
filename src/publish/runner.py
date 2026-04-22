@@ -47,7 +47,7 @@ def main():
                         help=f'Stats rate (default: {DEFAULT_STAT_RATE})')
     parser.add_argument('--historical-timeframe', type=int, default=None,
                         help='Historical timeframe: number of previous seasons to include')
-    parser.add_argument('--partial-update', action='store_true',
+    parser.add_argument('--data-only', action='store_true',
                         help='Fast sync: skip structural formatting, only update data + colors')
     parser.add_argument('--export-config', action='store_true',
                         help='Export Apps Script config JS file and exit (no sheet sync)')
@@ -60,7 +60,7 @@ def main():
     rate = args.rate or os.environ.get('STATS_RATE', DEFAULT_STAT_RATE)
     show_advanced = os.environ.get('SHOW_ADVANCED') == 'true'
     priority_tab = args.tab or os.environ.get('PRIORITY_TAB')
-    partial_update = args.partial_update or os.environ.get('PARTIAL_UPDATE') == 'true'
+    data_only = args.data_only or os.environ.get('DATA_ONLY') == 'true'
     sync_section = os.environ.get('SYNC_SECTION')
 
     # Export Apps Script config if requested (standalone action)
@@ -74,7 +74,7 @@ def main():
     num_seasons = args.historical_timeframe or int(os.environ.get('HISTORICAL_TIMEFRAME', '3'))
     historical_config = {'mode': 'seasons', 'value': num_seasons}
 
-    sync_league(league, rate, show_advanced, historical_config, partial_update, sync_section, priority_tab)
+    sync_league(league, rate, show_advanced, historical_config, data_only, sync_section, priority_tab)
 
     if args.sync:
         import subprocess

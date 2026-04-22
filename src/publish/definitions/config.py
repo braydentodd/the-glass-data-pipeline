@@ -188,7 +188,7 @@ TABS_CONFIG = {
         'footer': 'percentiles',
         'footer_divider_row_height': 4,
     },
-    'team': {
+    'individual_team': {
         'tab_name': tab_subject('abbr'),
         'move_to_front': False,
         'footer': 'team/opponent',
@@ -253,42 +253,42 @@ SUBSECTIONS = {
     'league': {
         'display_name': 'League',
         'sections': ['profile'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     },
     'player': {
         'display_name': 'Player',
         'sections': ['profile'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     },
     'rates': {
         'display_name': 'Rates',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     },
     'scoring': {
         'display_name': 'Scoring',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     },
     'ball_management': {
         'display_name': 'Ball Management',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     },
     'rebounding': {
         'display_name': 'Rebounding',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     },
     'distance': {
         'display_name': 'Distance',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     },
     'defense': {
         'display_name': 'Defense',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     },
     'opponent': {
         'display_name': 'Opponent',
@@ -298,7 +298,7 @@ SUBSECTIONS = {
     'team_ratings': {
         'display_name': 'Team Ratings',
         'sections': ['current_stats', 'historical_stats', 'postseason_stats'],
-        'tabs': ['all_players', 'all_teams', 'team']
+        'tabs': ['all_players', 'all_teams', 'individual_team']
     }
 }
 
@@ -319,7 +319,7 @@ WIDTH_CLASSES = {
 # Maps column values-dict keys to the entity type they represent
 VALUES_KEY_ENTITY = {
     'player': 'player',
-    'team': 'team',
+    'individual_team': 'team',
     'all_teams': 'team',
     'opponents': 'team'
 }

@@ -13,7 +13,7 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
                               n_player_rows: int = 0, link_cells: Optional[List[dict]] = None,
                               tab_type: str = 'team',
                               show_advanced: bool = False,
-                              partial_update: bool = False) -> list:
+                              data_only: bool = False) -> list:
     """
     Build ALL Google Sheets batch_update requests for a worksheet.
     100% config-driven from SHEET_FORMATTING.
@@ -42,6 +42,10 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
         for cell in percentile_cells:
             cell['row'] += data_start
 
+    if link_cells:
+        for cell in link_cells:
+            cell['row'] += data_start
+
     total_rows = data_start + n_data_rows
     header_end = ROW_INDEXES['data_start_row']  # Row after last header row
     frozen_columns = fmt.get('frozen_columns', fmt.get('frozen_columns', 0))
@@ -52,30 +56,8 @@ def build_formatting_requests(ws_id: int, columns_list: List[Tuple],
 
     # --- Fast path for partial update (mode / timeframe changes) ---------
     # Skip all structural formatting, resize, and widths; only reapply data-dependent pieces.
-    if partial_update:
+    if data_only:
         fast = []
-        # Banding (row count may have changed)
-        if n_data_rows > 0:
-            fast.append({
-                'addBanding': {
-                    'bandedRange': {
-                        'range': _range(ws_id, data_start, data_start + n_data_rows, 0, n_cols),
-                        'rowProperties': {
-                            'firstBandColor': get_color_for_raw(COLORS[fmt['data_row_even_bg']]),
-                            'secondBandColor': get_color_for_raw(COLORS[fmt['data_row_odd_bg']]),
-                        },
-                    },
-                }
-            })
-        # Auto-filter (range depends on row count)
-        filter_end = data_start + (n_player_rows if n_player_rows > 0 else n_data_rows)
-        fast.append({
-            'setBasicFilter': {
-                'filter': {
-                    'range': _range(ws_id, ROW_INDEXES['filter_row'], filter_end, 0, n_cols),
-                }
-            }
-        })
         # Percentile shading
         if percentile_cells:
             fast.extend(_build_percentile_shading_requests(ws_id, percentile_cells))
@@ -880,12 +862,7 @@ def _build_percentile_shading_requests(ws_id: int,
         })
     return requests
 def _build_link_requests(ws_id: int, link_cells: list) -> list:
-    """Build cell text format requests for hyperlinks to mask the default styling."""
-    from src.publish.definitions.config import COLORS, SHEET_FORMATTING
-    from src.publish.destinations.sheets.styles import get_color_for_raw
-    fmt = SHEET_FORMATTING
-    default_fg = get_color_for_raw(COLORS[fmt.get('data_fg', 'black')])
-
+    """Build cell text format requests for hyperlinks."""
     requests = []
     for cell in link_cells:
         requests.append({
@@ -895,13 +872,11 @@ def _build_link_requests(ws_id: int, link_cells: list) -> list:
                 'cell': {
                     'userEnteredFormat': {
                         'textFormat': {
-                            'link': {'uri': cell['uri']},
-                            'underline': False,
-                            'foregroundColor': default_fg,
+                            'link': {'uri': cell['uri']}
                         }
                     }
                 },
-                'fields': 'userEnteredFormat.textFormat(link,underline,foregroundColor)',
+                'fields': 'userEnteredFormat.textFormat.link',
             }
         })
     return requests

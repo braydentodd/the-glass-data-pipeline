@@ -19,7 +19,7 @@ def publish_tab(
     spreadsheet,
     tab_name: str,
     ir_payload: dict,
-    partial_update: bool = False,
+    data_only: bool = False,
     show_advanced: bool = False,
 ) -> None:
     """
@@ -38,7 +38,7 @@ def publish_tab(
     """
     logger.info(f"    Publishing IR payload to Sheet tab: {tab_name}...")
     
-    worksheet = get_or_create_worksheet(spreadsheet, tab_name, clear=not partial_update)
+    worksheet = get_or_create_worksheet(spreadsheet, tab_name, clear=not data_only)
     
     write_and_format(
         worksheet=worksheet,
@@ -50,7 +50,7 @@ def publish_tab(
         team_name=ir_payload['display_name'],
         tab_type=ir_payload['tab_type'],
         show_advanced=show_advanced,
-        partial_update=partial_update,
+        data_only=data_only,
         build_fn=build_formatting_requests,
     )
     

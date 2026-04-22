@@ -232,8 +232,9 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
         col_key, col_def = entry[0], entry[1]
         
         # Link routing
+        link_type = col_def.get('link')
         fmt = col_def.get('format')
-        if fmt == 'team_link' and context and 'team_gids' in context:
+        if link_type == 'team_link' and context and 'team_gids' in context:
             team_gids = context['team_gids']
             if entity_type == 'player':
                 abbr = primary_entity.get('team_abbr') or primary_entity.get('abbr')
@@ -394,11 +395,22 @@ def _get_value_at_percentile(sorted_values: List, percentile: float,
         if total_weight <= 0:
             return None
         target = (percentile / 100.0) * total_weight
-        cumulative = 0.0
-        for i, (val, w) in enumerate(sorted_values):
-            cumulative += w
-            if cumulative >= target:
-                return val
+        
+        mids = []
+        cum = 0.0
+        for val, w in sorted_values:
+            mids.append(cum + w/2.0)
+            cum += w
+            
+        if target <= mids[0]:
+            return values[0]
+        if target >= mids[-1]:
+            return values[-1]
+            
+        for i in range(len(mids)-1):
+            if mids[i] <= target <= mids[i+1]:
+                frac = (target - mids[i]) / (mids[i+1] - mids[i])
+                return values[i] + frac * (values[i+1] - values[i])
         return values[-1]
     else:
         idx = percentile / 100 * (n - 1)
@@ -433,6 +445,7 @@ def build_summary_rows(columns_list: List[Tuple],
 
     for label, pct_level in SUMMARY_THRESHOLDS:
         row = []
+        label_appended = False
         for col_idx, entry in enumerate(columns_list):
             col_key, col_def = entry[0], entry[1]
             col_ctx = entry[3] if len(entry) > 3 else None
@@ -441,9 +454,10 @@ def build_summary_rows(columns_list: List[Tuple],
                 row.append('')
                 continue
 
-            # Name column gets the label
-            if col_key == 'name':
+            # Place the label in the first non-separator column
+            if not label_appended:
                 row.append(label)
+                label_appended = True
                 continue
 
             # Generated percentile columns show rank + over/under

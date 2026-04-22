@@ -59,7 +59,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
                            percentile_cells: list, n_player_rows: int, link_cells: list = None,
                            tab_type: str = 'team',
                            show_advanced: bool = False,
-                           partial_update: bool = False,
+                           data_only: bool = False,
                            build_fn: Optional[Callable] = None):
     """
     Apply ALL Google Sheets formatting via batch API requests.
@@ -73,7 +73,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
     For large sheets (500+ players), requests are chunded to stay under
     the Google Sheets API ~10 MB request size limit.
 
-    When partial_update=True, skips structural formatting (fonts, borders, widths,
+    When data_only=True, skips structural formatting (fonts, borders, widths,
     column visibility) and only applies banding, percentile shading, and
     filters.  Used for fast mode/timeframe switches.
 
@@ -129,7 +129,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
         link_cells=link_cells,
         tab_type=tab_type,
         show_advanced=show_advanced,
-        partial_update=partial_update,
+        data_only=data_only,
     )
     if not requests:
         return
@@ -160,7 +160,7 @@ def apply_sheet_formatting(worksheet, columns_list, header_merges: list,
 def write_and_format(worksheet, columns, headers, data_rows,
                       percentile_cells, n_entity_rows,
                       team_name, tab_type, show_advanced,
-                      partial_update, build_fn, link_cells=None):
+                      data_only, build_fn, link_cells=None):
     """Resize worksheet, write values, and apply formatting.
 
     For auto-width columns, header cells are initially blanked so that
@@ -223,7 +223,7 @@ def write_and_format(worksheet, columns, headers, data_rows,
         link_cells=link_cells,
         tab_type=tab_type,
         show_advanced=show_advanced,
-        partial_update=partial_update,
+        data_only=data_only,
         build_fn=build_fn,
     )
 
