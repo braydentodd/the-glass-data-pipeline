@@ -3,18 +3,15 @@ from src.core.config import format_season_label
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.config import (STAT_RATES)
 
-def format_stat_value(value: Any, col_def: dict) -> Any:
+def format_stat_value(value: Any, fmt: str, decimals: int, nullable: bool) -> Any:
     """Format a stat value for display according to column definition."""
     if value is None:
         # Non-nullable columns (games, seasons) show 0 instead of blank
-        if not col_def.get('nullable', True):
+        if not nullable:
             return 0
         return ''
     if isinstance(value, (int, float)) and value == 0:
         return 0
-
-    fmt = col_def.get('format', 'number')
-    decimals = col_def.get('decimal_places', 1)
 
     if fmt == 'percentage':
         # Value is already 0-100 from formula (e.g., (turnovers/possessions)*100)

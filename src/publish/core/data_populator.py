@@ -126,7 +126,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             elif col_def.get('format') == 'measurement':
                 row.append(format_height(value))
             elif col_def.get('percentile') is not None:
-                formatted = format_stat_value(value, col_def)
+                formatted = format_stat_value(value, col_def.get('format', 'number'), col_def.get('decimal_places', 1), col_def.get('nullable', True))
                 row.append(formatted if formatted is not None else '')
             else:
                 row.append(value)
@@ -139,7 +139,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
             _col_mode = col_ctx.rate if isinstance(col_ctx, ColumnContext) and col_ctx.rate else mode
             override = col_def.get('mode_overrides', {}).get(_col_mode)
             active_def = override if override else col_def
-            formatted = format_stat_value(value, active_def)
+            formatted = format_stat_value(value, active_def.get('format', 'number'), active_def.get('decimal_places', 1), active_def.get('nullable', True))
             row.append(formatted if formatted is not None else '')
             continue
 
@@ -148,7 +148,7 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
         _col_mode = col_ctx.rate if isinstance(col_ctx, ColumnContext) and col_ctx.rate else mode
         override = col_def.get('mode_overrides', {}).get(_col_mode)
         active_def = override if override else col_def
-        formatted = format_stat_value(value, active_def)
+        formatted = format_stat_value(value, active_def.get('format', 'number'), active_def.get('decimal_places', 1), active_def.get('nullable', True))
         row.append(formatted if formatted is not None else '')
 
     return row
@@ -517,7 +517,7 @@ def build_summary_rows(columns_list: List[Tuple],
                         reverse = col_def.get('percentile') == 'reverse'
                         val = _get_value_at_percentile(opp_pop, pct_level, reverse)
                         if val is not None:
-                            formatted = format_stat_value(val, col_def)
+                            formatted = format_stat_value(val, col_def.get('format', 'number'), col_def.get('decimal_places', 1), col_def.get('nullable', True))
                             row.append(formatted if formatted is not None else '')
                             pct_cells.append({
                                 'col': col_idx,
@@ -543,7 +543,7 @@ def build_summary_rows(columns_list: List[Tuple],
                     reverse = col_def.get('percentile') == 'reverse'
                     val = _get_value_at_percentile(sorted_vals, pct_level, reverse)
                     if val is not None:
-                        formatted = format_stat_value(val, col_def)
+                        formatted = format_stat_value(val, col_def.get('format', 'number'), col_def.get('decimal_places', 1), col_def.get('nullable', True))
                         row.append(formatted if formatted is not None else '')
                         pct_cells.append({
                             'col': col_idx,
@@ -563,7 +563,7 @@ def build_summary_rows(columns_list: List[Tuple],
                         if col_def.get('format') == 'measurement':
                             formatted = format_height(val)
                         else:
-                            formatted = format_stat_value(val, col_def)
+                            formatted = format_stat_value(val, col_def.get('format', 'number'), col_def.get('decimal_places', 1), col_def.get('nullable', True))
                         row.append(formatted if formatted is not None else '')
                         pct_cells.append({
                             'col': col_idx,

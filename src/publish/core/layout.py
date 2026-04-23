@@ -56,15 +56,24 @@ def _subsection_display_name(subsection: Optional[str]) -> str:
     return str(key).replace('_', ' ').title()
 
 
+def _strip_trailing_decimal_zeros(s: str) -> str:
+    """Strip trailing zeros from the fractional part only, and the decimal
+    point if nothing remains after it. Leaves digits in the integer part
+    alone (e.g., '+10.0' -> '+10', not '+1')."""
+    if '.' not in s:
+        return s
+    int_part, frac_part = s.split('.', 1)
+    frac_part = frac_part.rstrip('0')
+    return f"{int_part}.{frac_part}" if frac_part else int_part
+
+
 def _format_companion(rank: float, diff: Optional[float], base_def: dict) -> str:
     """Format a percentile companion cell as 'rank\\n+/-diff'.
 
     Displays the percentile rank on the first line and the over/under
     vs league average (50th percentile value) on the second line.
     """
-    rank_str = f"{rank:.1f}"
-    if '.' in rank_str:
-        rank_str = rank_str.rstrip('0').rstrip('.')
+    rank_str = _strip_trailing_decimal_zeros(f"{rank:.1f}")
 
     if diff is None:
         return rank_str
@@ -73,9 +82,7 @@ def _format_companion(rank: float, diff: Optional[float], base_def: dict) -> str
     if decimals is None:
         decimals = 1
 
-    diff_str = f"{diff:+.{decimals}f}"
-    if '.' in diff_str:
-        diff_str = diff_str.rstrip('0').rstrip('.')
+    diff_str = _strip_trailing_decimal_zeros(f"{diff:+.{decimals}f}")
 
     if diff_str in ('+', '-'):
         diff_str = '+0'
